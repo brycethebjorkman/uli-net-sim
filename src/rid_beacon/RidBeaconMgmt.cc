@@ -10,6 +10,8 @@
 #include "inet/linklayer/ieee80211/mac/Ieee80211SubtypeTag_m.h"
 #include "inet/physicallayer/wireless/ieee80211/packetlevel/Ieee80211Radio.h"
 
+#include "inet/physicallayer/wireless/common/contract/packetlevel/SignalTag_m.h"
+
 using namespace physicallayer;
 
 Define_Module(RidBeaconMgmt);
@@ -31,6 +33,11 @@ void RidBeaconMgmt::initialize(int stage)
         WATCH(ssid);
         WATCH(channelNumber);
         WATCH(beaconInterval);
+
+        // set descriptive names for the Analysis Tool
+        receivedPowerVector.setName("receivedPowerDbm");
+        receptionTimeVector.setName("receptionTimeSeconds");
+        packetIdVector.setName("packetId");
 
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -85,6 +92,33 @@ void RidBeaconMgmt::sendBeacon()
 
 void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header)
 {
+    msgid_t packetId = packet->getId();
+    if (packetId >= 0) {
+        packetIdVector.record(packetId);
+    }
+
+    auto signalPowerInd = packet->findTag<SignalPowerInd>();
+    if (signalPowerInd != nullptr) {
+        /*
+         * received power ratings for 802.11 networks:
+         *  - Strong: 1e-6  W (-30 dBm)
+         *  - Good  : 1e-9  W (-60 dBm)
+         *  - Okay  : 1e-10 W (-70 dBm)
+         *  - Bad   : 1e-11 W (-80 dBm)
+         *  - Weak  : 1e-12 W (-90 dBm)
+         */
+        W receivedPower = signalPowerInd->getPower();
+        // convert to dBm for more readable values
+        double powerDbm = 10 * std::log10(receivedPower.get() * 1000);
+        receivedPowerVector.record(powerDbm);
+    }
+
+    // get reception time
+    auto signalTimeInd = packet->findTag<SignalTimeInd>();
+    if (signalTimeInd != nullptr) {
+        simtime_t receptionStart = signalTimeInd->getStartTime();
+        receptionTimeVector.record(receptionStart.dbl());
+    }
     dropManagementFrame(packet);
 }
 

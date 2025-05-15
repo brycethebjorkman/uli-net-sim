@@ -21,12 +21,12 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     Ieee80211SupportedRatesElement supportedRates;
     cMessage *beaconTimer = nullptr;
 
-    // Output vectors for recording
-    cOutVector receivedPowerVector;
-    cOutVector receptionTimeVector;
-
-    // To correlate packets across vectors
-    cOutVector packetIdVector;
+    struct OutputVectors {
+        cOutVector power;
+        cOutVector time;
+        cOutVector timestamp;
+        cOutVector packetId;
+    } recvec;
 
   public:
     RidBeaconMgmt() {}

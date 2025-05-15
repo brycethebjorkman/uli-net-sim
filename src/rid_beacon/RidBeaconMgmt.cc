@@ -8,9 +8,10 @@
 
 #include "inet/linklayer/common/MacAddressTag_m.h"
 #include "inet/linklayer/ieee80211/mac/Ieee80211SubtypeTag_m.h"
+#include "inet/physicallayer/wireless/common/contract/packetlevel/SignalTag_m.h"
 #include "inet/physicallayer/wireless/ieee80211/packetlevel/Ieee80211Radio.h"
 
-#include "inet/physicallayer/wireless/common/contract/packetlevel/SignalTag_m.h"
+#include "RidBeaconFrame_m.h"
 
 using namespace physicallayer;
 
@@ -35,9 +36,10 @@ void RidBeaconMgmt::initialize(int stage)
         WATCH(beaconInterval);
 
         // set descriptive names for the Analysis Tool
-        receivedPowerVector.setName("receivedPowerDbm");
-        receptionTimeVector.setName("receptionTimeSeconds");
-        packetIdVector.setName("packetId");
+        recvec.power.setName("Reception Power");
+        recvec.time.setName("Reception Time");
+        recvec.timestamp.setName("Reception Timestamp");
+        recvec.packetId.setName("Packet ID");
 
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -81,12 +83,14 @@ void RidBeaconMgmt::sendManagementFrame(const char *name, const Ptr<Ieee80211Mgm
 void RidBeaconMgmt::sendBeacon()
 {
     EV << "Sending beacon\n";
-    const auto& body = makeShared<Ieee80211BeaconFrame>();
+    const auto& body = makeShared<RidBeaconFrame>();
     body->setSSID(ssid.c_str());
     body->setSupportedRates(supportedRates);
     body->setBeaconInterval(beaconInterval);
     body->setChannelNumber(channelNumber);
     body->setChunkLength(B(8 + 2 + 2 + (2 + ssid.length()) + (2 + supportedRates.numRates)));
+    auto currentTime = simTime();
+    body->setTimestamp(currentTime.inUnit(SimTimeUnit::SIMTIME_MS));
     sendManagementFrame("Beacon", body, ST_BEACON, MacAddress::BROADCAST_ADDRESS);
 }
 
@@ -94,7 +98,7 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
 {
     msgid_t packetId = packet->getId();
     if (packetId >= 0) {
-        packetIdVector.record(packetId);
+        recvec.packetId.record(packetId);
     }
 
     auto signalPowerInd = packet->findTag<SignalPowerInd>();
@@ -110,15 +114,24 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
         W receivedPower = signalPowerInd->getPower();
         // convert to dBm for more readable values
         double powerDbm = 10 * std::log10(receivedPower.get() * 1000);
-        receivedPowerVector.record(powerDbm);
+        recvec.power.record(powerDbm);
     }
 
     // get reception time
     auto signalTimeInd = packet->findTag<SignalTimeInd>();
     if (signalTimeInd != nullptr) {
         simtime_t receptionStart = signalTimeInd->getStartTime();
-        receptionTimeVector.record(receptionStart.dbl());
+        recvec.time.record(receptionStart.dbl());
     }
+
+    auto beaconBody = packet->peekAtFront<RidBeaconFrame>();
+    if (beaconBody != nullptr) {
+        int64_t timestamp = beaconBody->getTimestamp();
+        recvec.timestamp.record(timestamp);
+    } else {
+        throw cRuntimeError("Missing RidBeaconFrame header in received Packet");
+    }
+
     dropManagementFrame(packet);
 }
 

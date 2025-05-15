@@ -11,6 +11,7 @@ simple RidBeaconMgmt like IIeee80211Mgmt
     parameters:
         string ssid = default("SSID");
         double beaconInterval @unit(s) = default(100ms);
+        int serialNumber;
 
 		// like Ieee80211MgmtAp for Ieee80211Interface compatibility
         string mibModule;

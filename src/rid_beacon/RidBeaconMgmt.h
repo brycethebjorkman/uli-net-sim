@@ -16,6 +16,7 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
 {
   protected:
     std::string ssid;
+    int serialNumber;
     int channelNumber = -1;
     simtime_t beaconInterval;
     Ieee80211SupportedRatesElement supportedRates;
@@ -26,6 +27,7 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector time;
         cOutVector timestamp;
         cOutVector packetId;
+        cOutVector serialNumber;
     } recvec;
 
   public:

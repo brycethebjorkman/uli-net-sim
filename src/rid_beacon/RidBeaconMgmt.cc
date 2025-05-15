@@ -29,6 +29,7 @@ void RidBeaconMgmt::initialize(int stage)
     if (stage == INITSTAGE_LOCAL) {
         // read params and init vars
         ssid = par("ssid").stdstringValue();
+        serialNumber = par("serialNumber");
         beaconInterval = par("beaconInterval");
         channelNumber = -1; // value will arrive from physical layer in receiveChangeNotification()
         WATCH(ssid);
@@ -40,6 +41,7 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.time.setName("Reception Time");
         recvec.timestamp.setName("Reception Timestamp");
         recvec.packetId.setName("Packet ID");
+        recvec.serialNumber.setName("Serial Number");
 
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -91,6 +93,7 @@ void RidBeaconMgmt::sendBeacon()
     body->setChunkLength(B(8 + 2 + 2 + (2 + ssid.length()) + (2 + supportedRates.numRates)));
     auto currentTime = simTime();
     body->setTimestamp(currentTime.inUnit(SimTimeUnit::SIMTIME_MS));
+    body->setSerialNumber(serialNumber);
     sendManagementFrame("Beacon", body, ST_BEACON, MacAddress::BROADCAST_ADDRESS);
 }
 
@@ -126,8 +129,8 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
 
     auto beaconBody = packet->peekAtFront<RidBeaconFrame>();
     if (beaconBody != nullptr) {
-        int64_t timestamp = beaconBody->getTimestamp();
-        recvec.timestamp.record(timestamp);
+        recvec.timestamp.record(beaconBody->getTimestamp());
+        recvec.serialNumber.record(beaconBody->getSerialNumber());
     } else {
         throw cRuntimeError("Missing RidBeaconFrame header in received Packet");
     }

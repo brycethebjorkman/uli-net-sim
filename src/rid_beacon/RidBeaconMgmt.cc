@@ -42,6 +42,12 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.timestamp.setName("Reception Timestamp");
         recvec.packetId.setName("Packet ID");
         recvec.serialNumber.setName("Serial Number");
+        recvec.txPosX.setName("Transmission X Coordinate");
+        recvec.txPosY.setName("Transmission Y Coordinate");
+        recvec.txPosZ.setName("Transmission Z Coordinate");
+        recvec.rxPosX.setName("Reception X Coordinate");
+        recvec.rxPosY.setName("Reception Y Coordinate");
+        recvec.rxPosZ.setName("Reception Z Coordinate");
 
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -94,6 +100,18 @@ void RidBeaconMgmt::sendBeacon()
     auto currentTime = simTime();
     body->setTimestamp(currentTime.inUnit(SimTimeUnit::SIMTIME_MS));
     body->setSerialNumber(serialNumber);
+    auto host = getContainingNode(this);
+    auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
+    auto pos = mobility->getCurrentPosition();
+    double posX = pos.getX();
+    double posY = pos.getY();
+    double posZ = pos.getZ();
+    body->setPosX(posX);
+    body->setPosY(posY);
+    body->setPosZ(posZ);
+    recvec.txPosX.record(posX);
+    recvec.txPosY.record(posY);
+    recvec.txPosZ.record(posZ);
     sendManagementFrame("Beacon", body, ST_BEACON, MacAddress::BROADCAST_ADDRESS);
 }
 
@@ -131,6 +149,9 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
     if (beaconBody != nullptr) {
         recvec.timestamp.record(beaconBody->getTimestamp());
         recvec.serialNumber.record(beaconBody->getSerialNumber());
+        recvec.rxPosX.record(beaconBody->getPosX());
+        recvec.rxPosY.record(beaconBody->getPosY());
+        recvec.rxPosZ.record(beaconBody->getPosZ());
     } else {
         throw cRuntimeError("Missing RidBeaconFrame header in received Packet");
     }

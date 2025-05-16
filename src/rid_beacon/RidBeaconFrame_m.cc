@@ -181,6 +181,9 @@ void RidBeaconFrame::copy(const RidBeaconFrame& other)
     this->serialNumber = other.serialNumber;
     this->timestamp = other.timestamp;
     this->emergencyStatus = other.emergencyStatus;
+    this->posX = other.posX;
+    this->posY = other.posY;
+    this->posZ = other.posZ;
 }
 
 void RidBeaconFrame::parsimPack(omnetpp::cCommBuffer *b) const
@@ -189,6 +192,9 @@ void RidBeaconFrame::parsimPack(omnetpp::cCommBuffer *b) const
     doParsimPacking(b,this->serialNumber);
     doParsimPacking(b,this->timestamp);
     doParsimPacking(b,this->emergencyStatus);
+    doParsimPacking(b,this->posX);
+    doParsimPacking(b,this->posY);
+    doParsimPacking(b,this->posZ);
 }
 
 void RidBeaconFrame::parsimUnpack(omnetpp::cCommBuffer *b)
@@ -197,6 +203,9 @@ void RidBeaconFrame::parsimUnpack(omnetpp::cCommBuffer *b)
     doParsimUnpacking(b,this->serialNumber);
     doParsimUnpacking(b,this->timestamp);
     doParsimUnpacking(b,this->emergencyStatus);
+    doParsimUnpacking(b,this->posX);
+    doParsimUnpacking(b,this->posY);
+    doParsimUnpacking(b,this->posZ);
 }
 
 int RidBeaconFrame::getSerialNumber() const
@@ -232,6 +241,39 @@ void RidBeaconFrame::setEmergencyStatus(bool emergencyStatus)
     this->emergencyStatus = emergencyStatus;
 }
 
+double RidBeaconFrame::getPosX() const
+{
+    return this->posX;
+}
+
+void RidBeaconFrame::setPosX(double posX)
+{
+    handleChange();
+    this->posX = posX;
+}
+
+double RidBeaconFrame::getPosY() const
+{
+    return this->posY;
+}
+
+void RidBeaconFrame::setPosY(double posY)
+{
+    handleChange();
+    this->posY = posY;
+}
+
+double RidBeaconFrame::getPosZ() const
+{
+    return this->posZ;
+}
+
+void RidBeaconFrame::setPosZ(double posZ)
+{
+    handleChange();
+    this->posZ = posZ;
+}
+
 class RidBeaconFrameDescriptor : public omnetpp::cClassDescriptor
 {
   private:
@@ -240,6 +282,9 @@ class RidBeaconFrameDescriptor : public omnetpp::cClassDescriptor
         FIELD_serialNumber,
         FIELD_timestamp,
         FIELD_emergencyStatus,
+        FIELD_posX,
+        FIELD_posY,
+        FIELD_posZ,
     };
   public:
     RidBeaconFrameDescriptor();
@@ -306,7 +351,7 @@ const char *RidBeaconFrameDescriptor::getProperty(const char *propertyName) cons
 int RidBeaconFrameDescriptor::getFieldCount() const
 {
     omnetpp::cClassDescriptor *base = getBaseClassDescriptor();
-    return base ? 3+base->getFieldCount() : 3;
+    return base ? 6+base->getFieldCount() : 6;
 }
 
 unsigned int RidBeaconFrameDescriptor::getFieldTypeFlags(int field) const
@@ -321,8 +366,11 @@ unsigned int RidBeaconFrameDescriptor::getFieldTypeFlags(int field) const
         FD_ISEDITABLE,    // FIELD_serialNumber
         FD_ISEDITABLE,    // FIELD_timestamp
         FD_ISEDITABLE,    // FIELD_emergencyStatus
+        FD_ISEDITABLE,    // FIELD_posX
+        FD_ISEDITABLE,    // FIELD_posY
+        FD_ISEDITABLE,    // FIELD_posZ
     };
-    return (field >= 0 && field < 3) ? fieldTypeFlags[field] : 0;
+    return (field >= 0 && field < 6) ? fieldTypeFlags[field] : 0;
 }
 
 const char *RidBeaconFrameDescriptor::getFieldName(int field) const
@@ -337,8 +385,11 @@ const char *RidBeaconFrameDescriptor::getFieldName(int field) const
         "serialNumber",
         "timestamp",
         "emergencyStatus",
+        "posX",
+        "posY",
+        "posZ",
     };
-    return (field >= 0 && field < 3) ? fieldNames[field] : nullptr;
+    return (field >= 0 && field < 6) ? fieldNames[field] : nullptr;
 }
 
 int RidBeaconFrameDescriptor::findField(const char *fieldName) const
@@ -348,6 +399,9 @@ int RidBeaconFrameDescriptor::findField(const char *fieldName) const
     if (strcmp(fieldName, "serialNumber") == 0) return baseIndex + 0;
     if (strcmp(fieldName, "timestamp") == 0) return baseIndex + 1;
     if (strcmp(fieldName, "emergencyStatus") == 0) return baseIndex + 2;
+    if (strcmp(fieldName, "posX") == 0) return baseIndex + 3;
+    if (strcmp(fieldName, "posY") == 0) return baseIndex + 4;
+    if (strcmp(fieldName, "posZ") == 0) return baseIndex + 5;
     return base ? base->findField(fieldName) : -1;
 }
 
@@ -363,8 +417,11 @@ const char *RidBeaconFrameDescriptor::getFieldTypeString(int field) const
         "int",    // FIELD_serialNumber
         "int64_t",    // FIELD_timestamp
         "bool",    // FIELD_emergencyStatus
+        "double",    // FIELD_posX
+        "double",    // FIELD_posY
+        "double",    // FIELD_posZ
     };
-    return (field >= 0 && field < 3) ? fieldTypeStrings[field] : nullptr;
+    return (field >= 0 && field < 6) ? fieldTypeStrings[field] : nullptr;
 }
 
 const char **RidBeaconFrameDescriptor::getFieldPropertyNames(int field) const
@@ -450,6 +507,9 @@ std::string RidBeaconFrameDescriptor::getFieldValueAsString(omnetpp::any_ptr obj
         case FIELD_serialNumber: return long2string(pp->getSerialNumber());
         case FIELD_timestamp: return int642string(pp->getTimestamp());
         case FIELD_emergencyStatus: return bool2string(pp->getEmergencyStatus());
+        case FIELD_posX: return double2string(pp->getPosX());
+        case FIELD_posY: return double2string(pp->getPosY());
+        case FIELD_posZ: return double2string(pp->getPosZ());
         default: return "";
     }
 }
@@ -469,6 +529,9 @@ void RidBeaconFrameDescriptor::setFieldValueAsString(omnetpp::any_ptr object, in
         case FIELD_serialNumber: pp->setSerialNumber(string2long(value)); break;
         case FIELD_timestamp: pp->setTimestamp(string2int64(value)); break;
         case FIELD_emergencyStatus: pp->setEmergencyStatus(string2bool(value)); break;
+        case FIELD_posX: pp->setPosX(string2double(value)); break;
+        case FIELD_posY: pp->setPosY(string2double(value)); break;
+        case FIELD_posZ: pp->setPosZ(string2double(value)); break;
         default: throw omnetpp::cRuntimeError("Cannot set field %d of class 'RidBeaconFrame'", field);
     }
 }
@@ -486,6 +549,9 @@ omnetpp::cValue RidBeaconFrameDescriptor::getFieldValue(omnetpp::any_ptr object,
         case FIELD_serialNumber: return pp->getSerialNumber();
         case FIELD_timestamp: return pp->getTimestamp();
         case FIELD_emergencyStatus: return pp->getEmergencyStatus();
+        case FIELD_posX: return pp->getPosX();
+        case FIELD_posY: return pp->getPosY();
+        case FIELD_posZ: return pp->getPosZ();
         default: throw omnetpp::cRuntimeError("Cannot return field %d of class 'RidBeaconFrame' as cValue -- field index out of range?", field);
     }
 }
@@ -505,6 +571,9 @@ void RidBeaconFrameDescriptor::setFieldValue(omnetpp::any_ptr object, int field,
         case FIELD_serialNumber: pp->setSerialNumber(omnetpp::checked_int_cast<int>(value.intValue())); break;
         case FIELD_timestamp: pp->setTimestamp(omnetpp::checked_int_cast<int64_t>(value.intValue())); break;
         case FIELD_emergencyStatus: pp->setEmergencyStatus(value.boolValue()); break;
+        case FIELD_posX: pp->setPosX(value.doubleValue()); break;
+        case FIELD_posY: pp->setPosY(value.doubleValue()); break;
+        case FIELD_posZ: pp->setPosZ(value.doubleValue()); break;
         default: throw omnetpp::cRuntimeError("Cannot set field %d of class 'RidBeaconFrame'", field);
     }
 }

@@ -42,6 +42,9 @@ namespace ieee80211 {
  *     int serialNumber;
  *     int64_t timestamp;
  *     bool emergencyStatus;
+ *     double posX;
+ *     double posY;
+ *     double posZ;
  * }
  * </pre>
  */
@@ -51,6 +54,9 @@ class RidBeaconFrame : public ::inet::ieee80211::Ieee80211BeaconFrame
     int serialNumber = 0;
     int64_t timestamp = 0;
     bool emergencyStatus = false;
+    double posX = 0;
+    double posY = 0;
+    double posZ = 0;
 
   private:
     void copy(const RidBeaconFrame& other);
@@ -75,6 +81,15 @@ class RidBeaconFrame : public ::inet::ieee80211::Ieee80211BeaconFrame
 
     virtual bool getEmergencyStatus() const;
     virtual void setEmergencyStatus(bool emergencyStatus);
+
+    virtual double getPosX() const;
+    virtual void setPosX(double posX);
+
+    virtual double getPosY() const;
+    virtual void setPosY(double posY);
+
+    virtual double getPosZ() const;
+    virtual void setPosZ(double posZ);
 };
 
 inline void doParsimPacking(omnetpp::cCommBuffer *b, const RidBeaconFrame& obj) {obj.parsimPack(b);}

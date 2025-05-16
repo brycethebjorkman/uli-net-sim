@@ -28,6 +28,12 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector timestamp;
         cOutVector packetId;
         cOutVector serialNumber;
+        cOutVector txPosX;
+        cOutVector txPosY;
+        cOutVector txPosZ;
+        cOutVector rxPosX;
+        cOutVector rxPosY;
+        cOutVector rxPosZ;
     } recvec;
 
   public:

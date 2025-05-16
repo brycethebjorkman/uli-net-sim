@@ -14,4 +14,7 @@ class RidBeaconFrame extends Ieee80211BeaconFrame
     int serialNumber;
     int64_t timestamp;
     bool emergencyStatus;
+    double posX;
+    double posY;
+    double posZ;
 }

@@ -23,3 +23,11 @@ Next, clone this repository and import the contained project into the OMNeT++ ID
 9. Check that things are working by clicking the play button to "Run basic_uav"
 10. In the OMNeT++ Qtenv window that pops up, select the `RandomMobility` config in the "Set Up Inifile Configuration" dialog and click OK
 11. The visualization panel should show some UAVs and the simulation should be runnable via the toolbar buttons
+
+## Project Structure
+Source code for the project is split between:
+- [simulations](./simulations) contains subdirectories defining different simulation scenarios consisting of:
+    - Network Description (`.ned`) files which define the hierarchical structure of a simulation
+    - runtime configuration (`.ini`) files which select the network to run and specify parameters, properties, and scenario variations
+    - analysis configuration (`.anf`) files which define how simulation results are processed and visualized
+- [src](./src) contains Network Description, C++, and Message Description (`.msg`) code defining custom module structures, behaviors, and messages  

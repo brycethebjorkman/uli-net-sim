@@ -5,7 +5,9 @@ The project makes use of [INET Framework](https://inet.omnetpp.org/) for realist
 ## Getting Started
 First, install the following dependencies:
 - [OMNeT++](https://omnetpp.org/download/)
+    - note: follow the instructions to build from source with OSG 3D graphics support, do not use the opp_env installer
 - [INET Framework](https://inet.omnetpp.org/Installation.html)
+    - note: do not use the opp_env installer, go through the OMNeT++ IDE
 
 Next, clone this repository and import the contained project into the OMNeT++ IDE:
 1. Open the OMNeT++ IDE and choose a workspace directory

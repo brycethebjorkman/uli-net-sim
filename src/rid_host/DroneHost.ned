@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 
-package uav_rid.simulations.basic_uav;
+package uav_rid.rid_host;
 
 import inet.node.inet.WirelessHost;
 

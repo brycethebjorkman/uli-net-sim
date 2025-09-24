@@ -22,9 +22,10 @@ Next, clone this repository and import the contained project into the OMNeT++ ID
 7. Click on the `uav-rid` folder and navigate to its Properties dialog
     - Project > Properties or right-click it in Project Explorer and select Properties
 8. Under "Project References" ensure there is a reference to INET such as `inet4.5`
-9. Check that things are working by clicking the play button to "Run basic_uav"
-10. In the OMNeT++ Qtenv window that pops up, select the `RandomMobility` config in the "Set Up Inifile Configuration" dialog and click OK
-11. The visualization panel should show some UAVs and the simulation should be runnable via the toolbar buttons
+9. Click into the inet project Properties > OMNeT++ > Project Features and enable `Visualization OSG (3D)`
+10. Check that things are working by clicking the play button to "Run basic_uav"
+11. In the OMNeT++ Qtenv window that pops up, select the `RandomMobility` config in the "Set Up Inifile Configuration" dialog and click OK
+12. The visualization panel should show some UAVs and the simulation should be runnable via the toolbar buttons
 
 ## Project Structure
 Source code for the project is split between:

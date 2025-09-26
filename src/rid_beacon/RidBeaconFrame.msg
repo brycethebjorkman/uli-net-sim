@@ -17,4 +17,9 @@ class RidBeaconFrame extends Ieee80211BeaconFrame
     double posX;
     double posY;
     double posZ;
+    // speeds in meters per second
+    double speedVertical;
+    double speedHorizontal;
+    // degrees clockwise from true north
+    double heading;
 }

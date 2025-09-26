@@ -48,6 +48,12 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.rxPosX.setName("Reception X Coordinate");
         recvec.rxPosY.setName("Reception Y Coordinate");
         recvec.rxPosZ.setName("Reception Z Coordinate");
+        recvec.txSpeedVertical.setName("Transmission Vertical Speed");
+        recvec.txSpeedHorizontal.setName("Transmission Horizontal Speed");
+        recvec.txHeading.setName("Transmission Heading");
+        recvec.rxSpeedVertical.setName("Reception Vertical Speed");
+        recvec.rxSpeedHorizontal.setName("Reception Horizontal Speed");
+        recvec.rxHeading.setName("Reception Heading");
 
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -103,15 +109,30 @@ void RidBeaconMgmt::sendBeacon()
     auto host = getContainingNode(this);
     auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
     auto pos = mobility->getCurrentPosition();
+    auto velocity = mobility->getCurrentVelocity();
+    EV << "VELOCITY: " << velocity << std::endl;
     double posX = pos.getX();
     double posY = pos.getY();
     double posZ = pos.getZ();
+    // assume that (X,Y,Z) corresponds to (East,North,Up)
+    double speedVertical = velocity.getZ();
+    auto horizontal = Coord(velocity.getX(), velocity.getY(), 0.0);
+    double speedHorizontal = horizontal.length();
+    auto north = Coord(0,1,0);
+    double heading = north.angle(horizontal) * (180.00 / M_PI);
     body->setPosX(posX);
     body->setPosY(posY);
     body->setPosZ(posZ);
+    body->setSpeedVertical(speedVertical);
+    body->setSpeedHorizontal(speedHorizontal);
+    body->setHeading(heading);
+    EV << "BODY: " << body << std::endl;
     recvec.txPosX.record(posX);
     recvec.txPosY.record(posY);
     recvec.txPosZ.record(posZ);
+    recvec.txSpeedVertical.record(speedVertical);
+    recvec.txSpeedHorizontal.record(speedHorizontal);
+    recvec.txHeading.record(heading);
     sendManagementFrame("Beacon", body, ST_BEACON, MacAddress::BROADCAST_ADDRESS);
 }
 
@@ -152,6 +173,9 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
         recvec.rxPosX.record(beaconBody->getPosX());
         recvec.rxPosY.record(beaconBody->getPosY());
         recvec.rxPosZ.record(beaconBody->getPosZ());
+        recvec.rxSpeedVertical.record(beaconBody->getSpeedVertical());
+        recvec.rxSpeedHorizontal.record(beaconBody->getSpeedHorizontal());
+        recvec.rxHeading.record(beaconBody->getHeading());
     } else {
         throw cRuntimeError("Missing RidBeaconFrame header in received Packet");
     }

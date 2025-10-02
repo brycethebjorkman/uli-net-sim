@@ -1,7 +1,16 @@
 .settings/
 .nedexclusions
+.oppfeaturestate
+Makefile
 out/
+simulations/**/run
 src/Makefile
 src/uav-rid*
 src/**/*_m.cc
 src/**/*_m.h
+**/.cmdenv-log
+**/.qtenvrc
+**/.tkenvlog
+**/.tkenvrc
+**/cache/
+**/results/

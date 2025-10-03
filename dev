@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+image="uli-net-sim"
+container="$image-dev"
+
+set -e
+
+cat .gitignore > .dockerignore
+cat containerignore >> .dockerignore
+
+export BUILDAH_FORMAT=docker
+
+docker build -t "$image" -f Containerfile .
+
+docker run \
+    --interactive \
+    --name "$container" \
+    --rm \
+    --tty \
+    "$image"

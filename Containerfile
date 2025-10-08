@@ -65,6 +65,7 @@ RUN wget https://github.com/inet-framework/inet/releases/download/v$VERSION/$I_N
 # build OMNeT++
 WORKDIR /usr/uli-net-sim/$O_NAME
 COPY container/install.sh .
+RUN chmod +x install.sh
 RUN ./install.sh -y --no-gui
 
 # build INET Framework

@@ -88,4 +88,8 @@ COPY container/build.sh .
 RUN chmod +x build.sh
 COPY container/run.sh .
 RUN chmod +x run.sh
+COPY container/rid-one-off.sh .
+RUN chmod +x rid-one-off.sh
+COPY container/rid-csv-extract.py .
+RUN chmod +x rid-csv-extract.py
 RUN ./build.sh

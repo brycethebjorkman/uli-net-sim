@@ -24,6 +24,7 @@ Options:
     -v      float   Remote ID vertical speed
     -g      float   Remote ID horizontal (ground) speed
     -h      float   Remote ID heading
+    -q              Quiet: suppress all script output except final JSON output
 
 Operands:
     n       int     serial number of drone
@@ -40,7 +41,7 @@ usage() {
     exit 1
 }
 
-if ! OPTIONS=$(getopt -o 'n:,t:,x:,y:,z:,v:,g:,h:' -- "$@") ; then
+if ! OPTIONS=$(getopt -o 'n:,t:,x:,y:,z:,v:,g:,h:,q' -- "$@") ; then
     echo "Failed to parse arguments with getopt" >&2
     usage
 fi
@@ -55,6 +56,7 @@ rid_z=""
 rid_v=""
 rid_g=""
 rid_h=""
+quiet=false
 
 while true; do
     case "$1" in
@@ -66,10 +68,19 @@ while true; do
         -v) rid_v=$2;   shift 2 ;;
         -g) rid_g=$2;   shift 2 ;;
         -h) rid_h=$2;   shift 2 ;;
+        -q) quiet=true;    shift ;;
         --) shift; break ;;
         *)  echo "Unrecognized option: $1" >&2; usage ;;
     esac
 done
+
+# save original fds
+exec 3>&1 4>&2
+
+if [ "$quiet" = true ]; then
+    # suppress stdout
+    exec 1> /dev/null
+fi
 
 # enforce required options
 missing=()
@@ -107,6 +118,7 @@ run_args+=' --*.host[*].mobility.typename="LinearMobility"'
 
 # iterate over each tuple argument
 host_num=0
+host_map=()
 for t in "$@"; do
     # split on commas into an array
     IFS=',' read -r -a fields <<< "$t"
@@ -123,6 +135,8 @@ for t in "$@"; do
     s=${fields[4]}
     h=${fields[5]}
     e=${fields[6]}
+
+    host_map+=("$n")
 
     run_args+=" --*.host[$host_num].wlan[0].mgmt.serialNumber=$n"
     run_args+=" --*.host[$host_num].mobility.initialX=${x}m"
@@ -141,7 +155,9 @@ for t in "$@"; do
     host_num=$((host_num+1))
 done
 
-echo "Running simulation with drone $tx_n as transmitter to $rx_count receiver drones and run_args: $run_args"
+if [ "$quiet" = false ]; then
+    echo "Running simulation with drone $tx_n as transmitter to $rx_count receiver drones and run_args: $run_args"
+fi
 
 . setenv
 
@@ -158,11 +174,26 @@ $PROJ_DIR/out/clang-release/uav_rid -m \
     -n "$INET_ROOT/tutorials" \
     -n "$PROJ_DIR/simulations" \
     -n "$PROJ_DIR/src" \
+    -u Cmdenv \
+    --cmdenv-express-mode=true \
+    --cmdenv-status-frequency=0s \
+    --cmdenv-performance-display=false \
+    --cmdenv-event-banners=false \
+    --**.cmdenv-log-level=off \
     $run_args
 
-opp_scavetool export -F CSV-S -o results.csv "$vec_out"
+opp_scavetool export -F CSV-R -x columnNames=true \
+    -f 'type=~"vector" and module=~"BasicUav.host[*].wlan[0].mgmt" and (name=~"Serial Number" or name=~"Reception Power" or name=~"Reception Time")' \
+    -o results.csv "$vec_out"
+
+if [ "$quiet" = true ]; then
+    # restore fds
+    exec 1>&3 2>&4
+    # close the saved descriptors
+    exec 3>&- 4>&-
+fi
 
 ./rid-csv-extract.py results.csv \
-    -c "Serial Number" \
-    -c "Reception Power" \
-    -c "Reception Time"
+    --host-map "${host_map[@]}" \
+    --name-pattern "Serial Number" \
+    --name-pattern "Reception Power"

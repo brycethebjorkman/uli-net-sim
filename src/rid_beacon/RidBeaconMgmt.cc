@@ -52,6 +52,9 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.rxSpeedVertical.setName("Reception Vertical Speed");
         recvec.rxSpeedHorizontal.setName("Reception Horizontal Speed");
         recvec.rxHeading.setName("Reception Heading");
+        recvec.rxMyPosX.setName("Reception My X Coordinate");
+        recvec.rxMyPosY.setName("Reception My Y Coordinate");
+        recvec.rxMyPosZ.setName("Reception My Z Coordinate");
 
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -185,6 +188,13 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
     } else {
         throw cRuntimeError("Missing RidBeaconFrame header in received Packet");
     }
+
+    auto host = getContainingNode(this);
+    auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
+    auto pos = mobility->getCurrentPosition();
+    recvec.rxMyPosX.record(pos.getX());
+    recvec.rxMyPosY.record(pos.getY());
+    recvec.rxMyPosZ.record(pos.getZ());
 
     dropManagementFrame(packet);
 }

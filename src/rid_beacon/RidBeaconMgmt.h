@@ -42,6 +42,9 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector rxSpeedVertical;
         cOutVector rxSpeedHorizontal;
         cOutVector rxHeading;
+        cOutVector rxMyPosX;
+        cOutVector rxMyPosY;
+        cOutVector rxMyPosZ;
     } recvec;
 
   public:

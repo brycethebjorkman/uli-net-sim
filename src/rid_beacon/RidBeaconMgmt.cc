@@ -11,8 +11,6 @@
 #include "inet/physicallayer/wireless/common/contract/packetlevel/SignalTag_m.h"
 #include "inet/physicallayer/wireless/ieee80211/packetlevel/Ieee80211Radio.h"
 
-#include "RidBeaconFrame_m.h"
-
 using namespace physicallayer;
 
 Define_Module(RidBeaconMgmt);
@@ -103,6 +101,22 @@ void RidBeaconMgmt::sendBeacon()
     body->setBeaconInterval(beaconInterval);
     body->setChannelNumber(channelNumber);
     body->setChunkLength(B(8 + 2 + 2 + (2 + ssid.length()) + (2 + supportedRates.numRates)));
+
+    // use specific implementation logic to fill in Remote ID message fields
+    fillRidMsg(body);
+
+    EV << "BODY: " << body << std::endl;
+    recvec.txPosX.record(body->getPosX());
+    recvec.txPosY.record(body->getPosY());
+    recvec.txPosZ.record(body->getPosZ());
+    recvec.txSpeedVertical.record(body->getSpeedVertical());
+    recvec.txSpeedHorizontal.record(body->getSpeedHorizontal());
+    recvec.txHeading.record(body->getHeading());
+    sendManagementFrame("Beacon", body, ST_BEACON, MacAddress::BROADCAST_ADDRESS);
+}
+
+void RidBeaconMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
+{
     auto currentTime = simTime();
     body->setTimestamp(currentTime.inUnit(SimTimeUnit::SIMTIME_MS));
     body->setSerialNumber(serialNumber);
@@ -126,14 +140,6 @@ void RidBeaconMgmt::sendBeacon()
     body->setSpeedVertical(speedVertical);
     body->setSpeedHorizontal(speedHorizontal);
     body->setHeading(heading);
-    EV << "BODY: " << body << std::endl;
-    recvec.txPosX.record(posX);
-    recvec.txPosY.record(posY);
-    recvec.txPosZ.record(posZ);
-    recvec.txSpeedVertical.record(speedVertical);
-    recvec.txSpeedHorizontal.record(speedHorizontal);
-    recvec.txHeading.record(heading);
-    sendManagementFrame("Beacon", body, ST_BEACON, MacAddress::BROADCAST_ADDRESS);
 }
 
 void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header)

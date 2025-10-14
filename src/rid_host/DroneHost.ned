@@ -19,6 +19,6 @@ module DroneHost extends WirelessHost
     parameters:
         @display("bgb=1806,1526");
         wlan[0].agent.typename = "";
-        wlan[0].mgmt.typename = "RidBeaconMgmt";
+        wlan[0].mgmt.typename = default("RidBeaconMgmt");
         wlan[0].radio.typename = "Ieee80211DimensionalRadio";
 }

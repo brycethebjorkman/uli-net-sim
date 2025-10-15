@@ -1,4 +1,6 @@
+from shapely.geometry import Polygon
 import xml.etree.ElementTree as ET
+
 
 # ==== INPUT DATA ====
 coords = [
@@ -111,67 +113,49 @@ coords = [
     (1738836.434537232, 664910.813153863)
 ]
 
-
 z_min_ft = 450.919504583
 z_max_ft = 586.640033667
-
-# ==== SETTINGS ====
 feet_to_m = 0.3048
 
-# Translate so first point is at (0,0)
-x0, y0 = coords[0]
-translated = [(x - x0, y - y0) for x, y in coords]
+# ==== GEOMETRY ====
+poly = Polygon(coords)
+hull = poly.convex_hull
 
-# Convert to meters
-meters = [(x * feet_to_m, y * feet_to_m) for x, y in translated]
+# Get convex hull coordinates and close the polygon explicitly
+hull_coords = list(hull.exterior.coords)
+if hull_coords[0] != hull_coords[-1]:
+    hull_coords.append(hull_coords[0])
 
-# Find max extents for scaling into 1000x1000
-max_x = max(abs(x) for x, _ in meters)
-max_y = max(abs(y) for _, y in meters)
-scale_factor = 1000.0 / max(max_x, max_y)
+# Convert coordinates to meters and shift to origin (optional)
+minx = min(x for x, y in hull_coords)
+miny = min(y for x, y in hull_coords)
+#xml shape field
+shape_points = " ".join(
+    f"{(x - minx) * feet_to_m:.2f} {(y - miny) * feet_to_m:.2f}" for x, y in hull_coords
+)
 
-scaled = [(x * scale_factor, y * scale_factor) for x, y in meters]
+# Convert Z coordinates to meters
+z_min_m = z_min_ft * feet_to_m
+z_max_m = z_max_ft * feet_to_m
+height_m = z_max_m - z_min_m
 
-# Convert z to meters and scale too
-z_min_m = z_min_ft * feet_to_m * scale_factor
-z_max_m = z_max_ft * feet_to_m * scale_factor
-height = z_max_m - z_min_m
+# ==== XML GENERATION ====
+xml_str = f"""<?xml version="1.0"?>
+<environment>
+    <object
+        fill-color="150 150 200"
+        material="concrete"
+        opacity="0.8"
+        orientation="0 0 0"
+        position="min 500 500 0"
+        shape="prism {shape_points}"
+        height="{height_m:.2f}"
+    />
+</environment>
+"""
 
-# ==== BUILD XML ====
-env = ET.Element("environment")
-
-# Define prism shape
-shape = ET.SubElement(env, "shape", {
-    "id": "building1",
-    "type": "prism",
-    "height": f"{height:.2f}",
-    "points": " ".join(f"{x:.2f} {y:.2f}" for x, y in scaled)
-})
-
-# Create material (optional)
-ET.SubElement(env, "material", {
-    "id": "concrete",
-    "resistivity": "10",
-    "relativePermittivity": "4.5",
-    "relativePermeability": "1"
-})
-
-# Object that uses the shape
-ET.SubElement(env, "object", {
-    "shape": "building1",
-    "material": "concrete",
-    "position": f"min 0 0 {z_min_m:.2f}",
-    "orientation": "0 0 0",
-    "fill-color": "150 150 200",
-    "opacity": "0.8"
-})
-
-# Pretty print
-xml_str = ET.tostring(env, encoding="unicode")
+# ==== OUTPUT ====
 print(xml_str)
 
-# Save to file
 with open("building_prism.xml", "w") as f:
-    f.write('<?xml version="1.0"?>\n')
     f.write(xml_str)
-

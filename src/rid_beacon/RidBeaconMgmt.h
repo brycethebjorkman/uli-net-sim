@@ -9,6 +9,8 @@
 
 #include "inet/linklayer/ieee80211/mgmt/Ieee80211MgmtApBase.h"
 
+#include "RidBeaconFrame_m.h"
+
 using namespace inet;
 using namespace inet::ieee80211;
 
@@ -40,6 +42,9 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector rxSpeedVertical;
         cOutVector rxSpeedHorizontal;
         cOutVector rxHeading;
+        cOutVector rxMyPosX;
+        cOutVector rxMyPosY;
+        cOutVector rxMyPosZ;
     } recvec;
 
     struct DetectionSample {
@@ -87,6 +92,9 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
 
     /** Utility function: creates and sends a beacon frame */
     virtual void sendBeacon();
+
+    /** Utility function: fills in Remote ID message fields */
+    virtual void fillRidMsg(const inet::Ptr<RidBeaconFrame> & body);
 
     /** Utility function: handles a received beacon frame */
     virtual void handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;

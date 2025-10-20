@@ -42,6 +42,32 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector rxHeading;
     } recvec;
 
+    struct DetectionSample {
+        double power;
+        double timestamp;
+        int serialNumber;
+
+        double txPosX;
+        double txPosY;
+        double txPosZ;
+
+        double rxPosX;
+        double rxPosY;
+        double rxPosZ;
+
+        double txSpeedVertical;
+        double txSpeedHorizontal;
+        double txHeading;
+
+        double rxSpeedVertical;
+        double rxSpeedHorizontal;
+        double rxHeading;
+
+
+    };
+
+    std::vector<DetectionSample> detectVector;
+
   public:
     RidBeaconMgmt() {}
     virtual ~RidBeaconMgmt();
@@ -64,6 +90,9 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
 
     /** Utility function: handles a received beacon frame */
     virtual void handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
+
+    /** Runs detection algorithm on stored beacon data */
+    virtual void runDetectionAlgo(const DetectionSample& sample);
 
     /** lifecycle support */
     //@{

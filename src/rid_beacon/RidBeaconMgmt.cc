@@ -138,6 +138,7 @@ void RidBeaconMgmt::sendBeacon()
 
 void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header)
 {
+    DetectionSample sample;
     msgid_t packetId = packet->getId();
     if (packetId >= 0) {
         recvec.packetId.record(packetId);
@@ -157,6 +158,8 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
         // convert to dBm for more readable values
         double powerDbm = 10 * std::log10(receivedPower.get() * 1000);
         recvec.power.record(powerDbm);
+        sample.power = powerDbm;
+
     }
 
     // get reception time
@@ -176,6 +179,26 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
         recvec.rxSpeedVertical.record(beaconBody->getSpeedVertical());
         recvec.rxSpeedHorizontal.record(beaconBody->getSpeedHorizontal());
         recvec.rxHeading.record(beaconBody->getHeading());
+
+        // should be tx, because we are recieving from the transmitter
+        sample.timestamp = beaconBody->getTimestamp();
+        sample.serialNumber = beaconBody->getSerialNumber();
+        sample.txPosX = beaconBody->getPosX();
+        sample.txPosY = beaconBody->getPosY();
+        sample.txPosZ = beaconBody->getPosZ();
+        sample.txSpeedVertical = beaconBody->getSpeedVertical();
+        sample.txSpeedHorizontal = beaconBody->getSpeedHorizontal();
+        sample.txHeading = beaconBody->getHeading();
+
+        // get curr positions
+        auto host = getContainingNode(this);
+        auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
+        Coord rxPos = mobility->getCurrentPosition();
+        sample.rxPosX = rxPos.x;
+        sample.rxPosY = rxPos.y;
+        sample.rxPosZ = rxPos.z;
+        runDetectionAlgo(sample);
+        detectVector.push_back(sample);
     } else {
         throw cRuntimeError("Missing RidBeaconFrame header in received Packet");
     }
@@ -194,3 +217,35 @@ void RidBeaconMgmt::stop()
     cancelEvent(beaconTimer);
     Ieee80211MgmtApBase::stop();
 }
+
+void RidBeaconMgmt::runDetectionAlgo(const DetectionSample& sample)
+{
+    // compute expected power using free space path loss model
+
+    //assume the first sample has the correct txPower
+    // const double txPowerDbm = 13.0;
+
+
+    const double pathLossExp = 2.0; // free-space path loss exponent, ~2.0 for no obstructions
+    const double threshold = 10;
+    const double fMHz = 2400.0; // *.host[*].wlan[*].radio.channelNumber = 6, this means 2.4 GHz wifi
+    // compute distance
+    double dx = sample.txPosX - sample.rxPosX;
+    double dy = sample.txPosY - sample.rxPosY;
+    double dz = sample.txPosZ - sample.rxPosZ;
+    double distance = sqrt(dx*dx + dy*dy + dz*dz);
+
+
+    double expectedPowerDbm = txPowerDbm - (32.44 + 10 * pathLossExp * (log10(distance / 1000.0) + log10(fMHz)));
+
+    if (fabs(expectedPowerDbm - sample.power) > threshold) {
+        EV << "Potential spoof detected."
+                << "| Distance=" << distance << " m "
+                << "| Measured=" << sample.power << " dBm "
+                << "| Expected=" << expectedPowerDbm << " dBm "
+                << "| Diff=" << fabs(expectedPowerDbm - sample.power) << " dB"
+                << std::endl;
+    }
+
+}
+

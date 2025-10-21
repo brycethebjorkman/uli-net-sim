@@ -182,12 +182,12 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
     if (beaconBody != nullptr) {
         recvec.timestamp.record(beaconBody->getTimestamp());
         recvec.serialNumber.record(beaconBody->getSerialNumber());
-        recvec.rxPosX.record(beaconBody->getPosX());
-        recvec.rxPosY.record(beaconBody->getPosY());
-        recvec.rxPosZ.record(beaconBody->getPosZ());
-        recvec.rxSpeedVertical.record(beaconBody->getSpeedVertical());
-        recvec.rxSpeedHorizontal.record(beaconBody->getSpeedHorizontal());
-        recvec.rxHeading.record(beaconBody->getHeading());
+        recvec.txPosX.record(beaconBody->getPosX());
+        recvec.txPosY.record(beaconBody->getPosY());
+        recvec.txPosZ.record(beaconBody->getPosZ());
+        recvec.txSpeedVertical.record(beaconBody->getSpeedVertical());
+        recvec.txSpeedHorizontal.record(beaconBody->getSpeedHorizontal());
+        recvec.txHeading.record(beaconBody->getHeading());
 
         // should be tx, because we are recieving from the transmitter
         sample.timestamp = beaconBody->getTimestamp();
@@ -206,7 +206,7 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
         sample.rxPosX = rxPos.x;
         sample.rxPosY = rxPos.y;
         sample.rxPosZ = rxPos.z;
-        runDetectionAlgo(sample);
+
         detectVector.push_back(sample);
     } else {
         throw cRuntimeError("Missing RidBeaconFrame header in received Packet");
@@ -234,34 +234,5 @@ void RidBeaconMgmt::stop()
     Ieee80211MgmtApBase::stop();
 }
 
-void RidBeaconMgmt::runDetectionAlgo(const DetectionSample& sample)
-{
-    // compute expected power using free space path loss model
 
-    //assume the first sample has the correct txPower
-    // const double txPowerDbm = 13.0;
-
-
-    const double pathLossExp = 2.0; // free-space path loss exponent, ~2.0 for no obstructions
-    const double threshold = 10;
-    const double fMHz = 2400.0; // *.host[*].wlan[*].radio.channelNumber = 6, this means 2.4 GHz wifi
-    // compute distance
-    double dx = sample.txPosX - sample.rxPosX;
-    double dy = sample.txPosY - sample.rxPosY;
-    double dz = sample.txPosZ - sample.rxPosZ;
-    double distance = sqrt(dx*dx + dy*dy + dz*dz);
-
-
-    double expectedPowerDbm = txPowerDbm - (32.44 + 10 * pathLossExp * (log10(distance / 1000.0) + log10(fMHz)));
-
-    if (fabs(expectedPowerDbm - sample.power) > threshold) {
-        EV << "Potential spoof detected."
-                << "| Distance=" << distance << " m "
-                << "| Measured=" << sample.power << " dBm "
-                << "| Expected=" << expectedPowerDbm << " dBm "
-                << "| Diff=" << fabs(expectedPowerDbm - sample.power) << " dB"
-                << std::endl;
-    }
-
-}
 

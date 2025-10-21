@@ -99,8 +99,7 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     /** Utility function: handles a received beacon frame */
     virtual void handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
 
-    /** Runs detection algorithm on stored beacon data */
-    virtual void runDetectionAlgo(const DetectionSample& sample);
+
 
     /** lifecycle support */
     //@{

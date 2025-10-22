@@ -149,8 +149,7 @@ xml_str = f"""<?xml version="1.0"?>
         opacity="0.8"
         orientation="0 0 0"
         position="min 500 500 0"
-        shape="prism {shape_points}"
-        height="{height_m:.2f}"
+        shape="prism {height_m:.2f} {shape_points}"
     />
 </environment>
 """

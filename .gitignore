@@ -3,3 +3,4 @@
 out/
 src/Makefile
 src/uav-rid*
+**/.venv/

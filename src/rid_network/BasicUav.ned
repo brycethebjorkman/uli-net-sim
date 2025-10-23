@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 
-package uav_rid.simulations.static_spoofing;
+package uav_rid.rid_network;
 
 import inet.environment.common.PhysicalEnvironment;
 import inet.node.contract.INetworkNode;
@@ -11,7 +11,7 @@ import inet.visualizer.common.IntegratedVisualizer;
 
 import uav_rid.rid_host.DroneHost;
 
-network StaticSpoofing
+network BasicUav
 {
     parameters:
         int numHosts;

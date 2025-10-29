@@ -21,6 +21,10 @@ def collect_time_series(fp, name_patterns, host_map):
     
     rows = list(reader)
 
+    # csv will have no rows if no hosts received the transmission
+    if len(rows) == 0:
+        return {}
+
     # csv should have fieldnames: run,type,module,name,attrname,attrvalue,vectime,vecvalue
     expected_csv_fields = ["module","name","vectime","vecvalue"]
     if not set(expected_csv_fields).issubset(fieldnames):

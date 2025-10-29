@@ -21,4 +21,6 @@ module DroneHost extends WirelessHost
         wlan[0].agent.typename = "";
         wlan[0].mgmt.typename = default("RidBeaconMgmt");
         wlan[0].radio.typename = "Ieee80211DimensionalRadio";
+        wlan[0].radio.channelNumber = 6;
+        wlan[0].radio.transmitter.power = default(13dBm);
 }

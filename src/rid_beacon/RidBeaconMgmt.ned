@@ -15,6 +15,15 @@ simple RidBeaconMgmt like IIeee80211Mgmt
         // use host index by default
         int serialNumber = default(ancestorIndex(2));
 
+        // upper bound on random delay for first transmission
+        double startupJitter @unit(s) = default(beaconInterval);
+        
+        // if false this instance should not transmit at all
+        bool transmitBeacon = default(true);
+        
+        // if true this instance terminates simulation after one transmission
+        bool oneOff = default(false);
+
 		// like Ieee80211MgmtAp for Ieee80211Interface compatibility
         string mibModule;
         string interfaceTableModule;

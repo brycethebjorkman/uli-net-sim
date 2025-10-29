@@ -16,8 +16,9 @@ network BasicUav
     parameters:
         int numHosts;
         @display("bgb=1000,1000");
+        bool hasVisualizer = default(true);
     submodules:
-        visualizer: IntegratedVisualizer {
+        visualizer: IntegratedVisualizer if hasVisualizer {
             @display("p=100,50");
         }
         host[numHosts]: <default("DroneHost")> like INetworkNode {

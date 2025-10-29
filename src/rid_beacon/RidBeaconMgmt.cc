@@ -18,6 +18,7 @@ Define_Module(RidBeaconMgmt);
 RidBeaconMgmt::~RidBeaconMgmt()
 {
     cancelAndDelete(beaconTimer);
+    cancelAndDelete(terminateMsg);
 }
 
 void RidBeaconMgmt::initialize(int stage)
@@ -29,6 +30,9 @@ void RidBeaconMgmt::initialize(int stage)
         ssid = par("ssid").stdstringValue();
         serialNumber = par("serialNumber");
         beaconInterval = par("beaconInterval");
+        startupJitter = par("startupJitter");
+        transmitBeacon = par("transmitBeacon");
+        oneOff = par("oneOff");
         channelNumber = -1; // value will arrive from physical layer in receiveChangeNotification()
         WATCH(ssid);
         WATCH(channelNumber);
@@ -60,8 +64,15 @@ void RidBeaconMgmt::initialize(int stage)
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
         radioModule->subscribe(Ieee80211Radio::radioChannelChangedSignal, this);
 
-        // start beacon timer (randomize startup time)
+        medium = getSimulation()->getModuleByPath("radioMedium");
+        if (!medium) {
+            throw cRuntimeError("radioMedium not found");
+        }
+        medium->subscribe(IRadioMedium::signalRemovedSignal, this);
+
+        // initialize timed messages but do not start them
         beaconTimer = new cMessage("beaconTimer");
+        terminateMsg = new cMessage("terminateMsg");
     }
 }
 
@@ -70,6 +81,8 @@ void RidBeaconMgmt::handleTimer(cMessage *msg)
     if (msg == beaconTimer) {
         sendBeacon();
         scheduleAfter(beaconInterval, beaconTimer);
+    } else if (msg == terminateMsg) {
+        endSimulation();
     }
     else {
         throw cRuntimeError("internal error: unrecognized timer '%s'", msg->getName());
@@ -83,6 +96,16 @@ void RidBeaconMgmt::receiveSignal(cComponent *source, simsignal_t signalID, intv
     if (signalID == Ieee80211Radio::radioChannelChangedSignal) {
         EV << "updating channel number\n";
         channelNumber = value;
+    }
+}
+
+void RidBeaconMgmt::receiveSignal(cComponent *src, simsignal_t id, cObject *obj, cObject *details) {
+    if (id == IRadioMedium::signalRemovedSignal) {
+        if (oneOff) {
+            Enter_Method_Silent();
+            terminateMsg->setSchedulingPriority(SHRT_MIN);
+            scheduleAt(simTime(), terminateMsg);
+        }
     }
 }
 
@@ -202,11 +225,14 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
 void RidBeaconMgmt::start()
 {
     Ieee80211MgmtApBase::start();
-    scheduleAfter(uniform(0, beaconInterval), beaconTimer);
+    if (transmitBeacon) {
+        scheduleAfter(uniform(0, startupJitter), beaconTimer);
+    }
 }
 
 void RidBeaconMgmt::stop()
 {
     cancelEvent(beaconTimer);
+    cancelEvent(terminateMsg);
     Ieee80211MgmtApBase::stop();
 }

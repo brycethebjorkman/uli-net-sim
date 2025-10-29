@@ -113,6 +113,7 @@ run_args+=" --result-dir=$tmp_dir"
 run_args+=" --output-vector-file=$vec_out"
 run_args+=" --*.numHosts=$host_count"
 run_args+=' --sim-time-limit=1s'
+run_args+=' --uav_rid.rid_network.BasicUav.hasVisualizer=false'
 run_args+=' --*.host[*].wlan[0].mgmt.beaconInterval=900ms'
 run_args+=' --*.host[*].mobility.typename="LinearMobility"'
 
@@ -139,6 +140,7 @@ for t in "$@"; do
     host_map+=("$n")
 
     run_args+=" --*.host[$host_num].wlan[0].mgmt.serialNumber=$n"
+    run_args+=" --*.host[$host_num].wlan[0].mgmt.startupJitter=0ms"
     run_args+=" --*.host[$host_num].mobility.initialX=${x}m"
     run_args+=" --*.host[$host_num].mobility.initialY=${y}m"
     run_args+=" --*.host[$host_num].mobility.initialZ=${z}m"
@@ -148,8 +150,11 @@ for t in "$@"; do
 
     if [ -z "$tx_n" ] ; then
         tx_n=$s
+        run_args+=" --*.host[$host_num].wlan[0].mgmt.transmitBeacon=true"
+        run_args+=" --*.host[$host_num].wlan[0].mgmt.oneOff=true"
     else
         rx_count=$((rx_count+1))
+        run_args+=" --*.host[$host_num].wlan[0].mgmt.transmitBeacon=false"
     fi
 
     host_num=$((host_num+1))

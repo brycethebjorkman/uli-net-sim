@@ -21,8 +21,13 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     int serialNumber;
     int channelNumber = -1;
     simtime_t beaconInterval;
+    simtime_t startupJitter;
+    bool transmitBeacon;
+    bool oneOff;
     Ieee80211SupportedRatesElement supportedRates;
     cMessage *beaconTimer = nullptr;
+    cMessage *terminateMsg = nullptr;
+    cModule *medium = nullptr;
 
     struct OutputVectors {
         cOutVector power;
@@ -60,6 +65,7 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
 
     /** Called by the signal handler whenever a change occurs we're interested in */
     virtual void receiveSignal(cComponent *source, simsignal_t signalID, intval_t value, cObject *details) override;
+    virtual void receiveSignal(cComponent *src, simsignal_t id, cObject *obj, cObject *details) override;
 
     /** Utility function: set fields in the given frame and send it out to the address */
     virtual void sendManagementFrame(const char *name, const Ptr<Ieee80211MgmtFrame>& body, int subtype, const MacAddress& destAddr);

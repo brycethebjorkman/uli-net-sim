@@ -30,4 +30,7 @@ network BasicUav
         radioMedium: Ieee80211DimensionalRadioMedium {
             @display("p=624,470");
         }
+        Control: Drone;
+        Spoof: Drone;
+        
 }

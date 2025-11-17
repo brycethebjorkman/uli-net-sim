@@ -175,6 +175,7 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
         recvec.packetId.record(packetId);
     }
 
+    double rssiDbm = 0.0;
     auto signalPowerInd = packet->findTag<SignalPowerInd>();
     if (signalPowerInd != nullptr) {
         /*
@@ -187,8 +188,8 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
          */
         W receivedPower = signalPowerInd->getPower();
         // convert to dBm for more readable values
-        double powerDbm = 10 * std::log10(receivedPower.get() * 1000);
-        recvec.power.record(powerDbm);
+        rssiDbm = 10 * std::log10(receivedPower.get() * 1000);
+        recvec.power.record(rssiDbm);
     }
 
     // get reception time
@@ -218,6 +219,8 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
     recvec.rxMyPosX.record(pos.getX());
     recvec.rxMyPosY.record(pos.getY());
     recvec.rxMyPosZ.record(pos.getZ());
+
+    hookRidMsg(packet, beaconBody, rssiDbm);
 
     dropManagementFrame(packet);
 }

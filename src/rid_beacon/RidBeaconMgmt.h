@@ -79,6 +79,9 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     /** Utility function: handles a received beacon frame */
     virtual void handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
 
+    /** Utility function: hook for derived classes to process received Remote ID message */
+    virtual void hookRidMsg(Packet *packet, const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm) {};
+
     /** lifecycle support */
     //@{
     virtual void start() override;

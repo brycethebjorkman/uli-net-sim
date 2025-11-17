@@ -1,6 +1,8 @@
 .settings/
 .nedexclusions
 .oppfeaturestate
+.venv/
+.devcontainer/
 Makefile
 out/
 simulations/**/run

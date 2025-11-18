@@ -170,6 +170,7 @@ void RidBeaconMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
 
 void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header)
 {
+    DetectionSample sample;
     msgid_t packetId = packet->getId();
     if (packetId >= 0) {
         recvec.packetId.record(packetId);
@@ -190,6 +191,7 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
         // convert to dBm for more readable values
         rssiDbm = 10 * std::log10(receivedPower.get() * 1000);
         recvec.power.record(rssiDbm);
+        sample.power = rssiDbm;
     }
 
     // get reception time
@@ -203,12 +205,32 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
     if (beaconBody != nullptr) {
         recvec.timestamp.record(beaconBody->getTimestamp());
         recvec.serialNumber.record(beaconBody->getSerialNumber());
-        recvec.rxPosX.record(beaconBody->getPosX());
-        recvec.rxPosY.record(beaconBody->getPosY());
-        recvec.rxPosZ.record(beaconBody->getPosZ());
-        recvec.rxSpeedVertical.record(beaconBody->getSpeedVertical());
-        recvec.rxSpeedHorizontal.record(beaconBody->getSpeedHorizontal());
-        recvec.rxHeading.record(beaconBody->getHeading());
+        recvec.txPosX.record(beaconBody->getPosX());
+        recvec.txPosY.record(beaconBody->getPosY());
+        recvec.txPosZ.record(beaconBody->getPosZ());
+        recvec.txSpeedVertical.record(beaconBody->getSpeedVertical());
+        recvec.txSpeedHorizontal.record(beaconBody->getSpeedHorizontal());
+        recvec.txHeading.record(beaconBody->getHeading());
+
+        // should be tx, because we are recieving from the transmitter
+        sample.timestamp = beaconBody->getTimestamp();
+        sample.serialNumber = beaconBody->getSerialNumber();
+        sample.txPosX = beaconBody->getPosX();
+        sample.txPosY = beaconBody->getPosY();
+        sample.txPosZ = beaconBody->getPosZ();
+        sample.txSpeedVertical = beaconBody->getSpeedVertical();
+        sample.txSpeedHorizontal = beaconBody->getSpeedHorizontal();
+        sample.txHeading = beaconBody->getHeading();
+
+        // get curr positions
+        auto host = getContainingNode(this);
+        auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
+        Coord rxPos = mobility->getCurrentPosition();
+        sample.rxPosX = rxPos.x;
+        sample.rxPosY = rxPos.y;
+        sample.rxPosZ = rxPos.z;
+
+        detectVector.push_back(sample);
     } else {
         throw cRuntimeError("Missing RidBeaconFrame header in received Packet");
     }
@@ -239,3 +261,6 @@ void RidBeaconMgmt::stop()
     cancelEvent(terminateMsg);
     Ieee80211MgmtApBase::stop();
 }
+
+
+

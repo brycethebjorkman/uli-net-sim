@@ -52,6 +52,32 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector rxMyPosZ;
     } recvec;
 
+    struct DetectionSample {
+        double power;
+        double timestamp;
+        int serialNumber;
+
+        double txPosX;
+        double txPosY;
+        double txPosZ;
+
+        double rxPosX;
+        double rxPosY;
+        double rxPosZ;
+
+        double txSpeedVertical;
+        double txSpeedHorizontal;
+        double txHeading;
+
+        double rxSpeedVertical;
+        double rxSpeedHorizontal;
+        double rxHeading;
+
+
+    };
+
+    std::vector<DetectionSample> detectVector;
+
   public:
     RidBeaconMgmt() {}
     virtual ~RidBeaconMgmt();

@@ -1,0 +1,17 @@
+<environment>
+  <!-- Materials -->
+  <material id="1" resistivity="10" relativePermittivity="4.5" relativePermeability="1"/>
+  
+  <!-- size is (length x Width x Height) -->
+
+  <!-- AT&T Tower -->
+  <shape id="1" type="cuboid" size="105 105 188"/>
+  <object position="center 500 500 94" orientation="0 0 0" shape="1" material="1" 
+          fill-color="169 169 169" line-color="0 0 0" opacity="1"/>
+
+  <!-- 150 Third Avenue South (Pinnacle building) -->
+  <shape id="2" type="cuboid" size="220 220 127"/>
+  <object position="center 900 500 63.5" orientation="0 0 0" shape="2" material="1" 
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+</environment>

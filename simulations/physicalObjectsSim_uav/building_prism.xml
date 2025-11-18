@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<environment>
+    <object
+        fill-color="150 150 200"
+        material="concrete"
+        opacity="0.8"
+        orientation="0 0 0"
+        position="min 500 500 0"
+        shape="prism 41.37 80.19 0.00 0.00 155.72 240.23 279.43 297.61 305.41 360.02 198.06 364.99 188.40 375.31 154.52 376.88 141.58 364.41 135.16 80.19 0.00"
+    />
+</environment>

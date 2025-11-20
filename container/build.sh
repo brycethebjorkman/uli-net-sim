@@ -8,6 +8,7 @@ opp_makemake -f --deep \
     -DINET_IMPORT \
     -Isrc \
     -I$\(INET4_5_PROJ\)/src \
+    -I$BASE_DIR/eigen-5.0.0 \
     -L$\(INET4_5_PROJ\)/out/clang-release/src \
     -lINET$\(D\)
 

@@ -19,6 +19,8 @@ import inet.environment.common.PhysicalEnvironment;
 import inet.physicallayer.wireless.ieee80211.packetlevel.Ieee80211DimensionalRadioMedium;
 import inet.visualizer.common.IntegratedVisualizer;
 
+import uav_rid.rid_host.DroneHost;
+
 network objectsUAV
 {
     parameters:

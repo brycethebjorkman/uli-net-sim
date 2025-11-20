@@ -77,6 +77,12 @@ RUN . ../omnetpp-6.2.0/setenv \
     && make makefiles \
     && make -j $(nproc) MODE=release
 
+# download eigen library
+WORKDIR /usr/uli-net-sim
+RUN wget https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.tar
+RUN tar xf eigen-5.0.0.tar \
+    && rm eigen-5.0.0.tar
+
 # build uli-net-sim
 WORKDIR /usr/uli-net-sim/uav_rid
 COPY simulations simulations

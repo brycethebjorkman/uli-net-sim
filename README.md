@@ -8,6 +8,12 @@ First, install the following dependencies:
     - note: follow the instructions to build from source with OSG 3D graphics support, do not use the opp_env installer
 - [INET Framework](https://inet.omnetpp.org/Installation.html)
     - note: do not use the opp_env installer, go through the OMNeT++ IDE
+- [eigen library](https://gitlab.com/libeigen/eigen/-/releases)
+    - download version 5.0.0 and place in OMNeT++ workspace alongside INET Framework
+
+Your OMNeT++ workspace should now contain these directories:
+- eigen-5.0.0
+- inet4.5
 
 Next, clone this repository and import the contained project into the OMNeT++ IDE:
 1. Open the OMNeT++ IDE and choose a workspace directory

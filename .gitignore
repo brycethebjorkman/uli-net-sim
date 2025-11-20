@@ -3,6 +3,7 @@
 .oppfeaturestate
 .venv/
 .devcontainer/
+.vscode/
 Makefile
 out/
 simulations/**/run

@@ -16,7 +16,7 @@ using namespace physicallayer;
 
 Define_Module(RssiMlatGcs);
 
-const std::string mlat_script_path = utils::proj_dir + "/src/detectors/rssi_mlat/mlat.py";
+const std::string mlat_script_path = utils::proj_dir + "/src/rssi_mlat.py";
 
 void RssiMlatGcs::initialize()
 {

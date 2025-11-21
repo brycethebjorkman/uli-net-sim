@@ -2,17 +2,20 @@
 """
 trajectories.py
 
-Generates INET TurtleMobility XML with four different trajectory patterns:
- - movement id="1": host[0] follows y = ln(x)
- - movement id="2": host[1] follows y = e^x
- - movement id="3": host[2] follows linear trajectory
- - movement id="4": host[3] follows parabolic trajectory y = x^2
+Generic CLI utility for generating INET TurtleMobility XML files.
+Supports multiple trajectory types: logarithmic, exponential, linear, and parabolic.
 
-This script can be run programmatically to generate all trajectories at once.
+Example usage:
+    python trajectories.py --out trajectories.xml \\
+        --add-log 1 150 75 \\
+        --add-exp 2 150 250 \\
+        --add-linear 3 200 150 0.5 \\
+        --add-parabolic 4 250 100 0.3
 """
 
 import argparse
 import math
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -113,58 +116,130 @@ def write_turtle_xml(outpath: Path, all_trajectories, speed=10.0):
     print(f"Wrote {outpath}")
 
 
+class TrajectoryAction(argparse.Action):
+    """Custom action to collect trajectory specifications."""
+    def __call__(self, parser, namespace, values, option_string=None):
+        trajectories = getattr(namespace, 'trajectories', None)
+        if trajectories is None:
+            trajectories = []
+            setattr(namespace, 'trajectories', trajectories)
+
+        traj_type = option_string.replace('--add-', '')
+        trajectories.append({
+            'type': traj_type,
+            'values': values
+        })
+
+
 def main():
     p = argparse.ArgumentParser(
-        description="Generate INET TurtleMobility XML with 4 different trajectories"
+        description="Generate INET TurtleMobility XML with custom trajectories",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  Generate a single logarithmic trajectory:
+    %(prog)s --out traj.xml --add-log 1 150 75
+
+  Generate multiple trajectories:
+    %(prog)s --out traj.xml \\
+        --add-log 1 150 75 \\
+        --add-exp 2 150 250 \\
+        --add-linear 3 200 150 0.5 \\
+        --add-parabolic 4 250 100 0.3
+
+Trajectory types:
+  --add-log ID X_OFFSET Y_OFFSET
+      Logarithmic curve: y = ln(x)
+
+  --add-exp ID X_OFFSET Y_OFFSET
+      Exponential curve: y = e^x
+
+  --add-linear ID X_OFFSET Y_OFFSET SLOPE
+      Linear trajectory: y = slope * x
+
+  --add-parabolic ID X_OFFSET Y_OFFSET SCALE_Y_FACTOR
+      Parabolic curve: y = x^2 (scale_y multiplied by SCALE_Y_FACTOR)
+"""
     )
+
+    # Output and global parameters
     p.add_argument("--out", default="trajectories.xml",
                    help="output xml path")
     p.add_argument("--points", type=int, default=200,
-                   help="points per curve")
+                   help="points per curve (default: 200)")
     p.add_argument("--xmin", type=float, default=0.1,
-                   help="minimum x for curves (log requires x>0)")
+                   help="minimum x for curves, log requires x>0 (default: 0.1)")
     p.add_argument("--xmax", type=float, default=4.0,
-                   help="maximum x for curves")
+                   help="maximum x for curves (default: 4.0)")
     p.add_argument("--scale-x", type=float, default=20.0,
-                   help="scale applied to x values")
+                   help="scale applied to x values (default: 20.0)")
     p.add_argument("--scale-y", type=float, default=15.0,
-                   help="scale applied to y values")
+                   help="scale applied to y values (default: 15.0)")
     p.add_argument("--z", type=float, default=50.0,
-                   help="z altitude for all trajectories (meters)")
+                   help="z altitude for all trajectories in meters (default: 50.0)")
     p.add_argument("--speed", type=float, default=10.0,
-                   help="movement speed (m/s)")
+                   help="movement speed in m/s (default: 10.0)")
+
+    # Trajectory type arguments
+    p.add_argument("--add-log", nargs=3, type=float, metavar=('ID', 'X_OFFSET', 'Y_OFFSET'),
+                   action=TrajectoryAction, dest='trajectories',
+                   help="add logarithmic trajectory")
+    p.add_argument("--add-exp", nargs=3, type=float, metavar=('ID', 'X_OFFSET', 'Y_OFFSET'),
+                   action=TrajectoryAction, dest='trajectories',
+                   help="add exponential trajectory")
+    p.add_argument("--add-linear", nargs=4, type=float, metavar=('ID', 'X_OFFSET', 'Y_OFFSET', 'SLOPE'),
+                   action=TrajectoryAction, dest='trajectories',
+                   help="add linear trajectory")
+    p.add_argument("--add-parabolic", nargs=4, type=float, metavar=('ID', 'X_OFFSET', 'Y_OFFSET', 'SCALE_Y_FACTOR'),
+                   action=TrajectoryAction, dest='trajectories',
+                   help="add parabolic trajectory")
+
     args = p.parse_args()
 
-    # Generate all 4 trajectories
+    # Check if any trajectories were specified
+    if not hasattr(args, 'trajectories') or not args.trajectories:
+        p.error("No trajectories specified. Use --add-log, --add-exp, --add-linear, or --add-parabolic")
+
+    # Generate all trajectories
     all_trajectories = {}
 
-    # Movement 1: logarithmic curve (host[0])
-    all_trajectories[1] = generate_log_curve(
-        args.xmin, args.xmax, args.points,
-        scale_x=args.scale_x, scale_y=args.scale_y,
-        x_offset=150.0, y_offset=75.0, z=args.z
-    )
+    for traj in args.trajectories:
+        traj_type = traj['type']
+        values = traj['values']
+        traj_id = int(values[0])
+        x_offset = values[1]
+        y_offset = values[2]
 
-    # Movement 2: exponential curve (host[1])
-    all_trajectories[2] = generate_exp_curve(
-        args.xmin, args.xmax, args.points,
-        scale_x=args.scale_x, scale_y=args.scale_y,
-        x_offset=150.0, y_offset=250.0, z=args.z
-    )
+        if traj_type == 'log':
+            all_trajectories[traj_id] = generate_log_curve(
+                args.xmin, args.xmax, args.points,
+                scale_x=args.scale_x, scale_y=args.scale_y,
+                x_offset=x_offset, y_offset=y_offset, z=args.z
+            )
+        elif traj_type == 'exp':
+            all_trajectories[traj_id] = generate_exp_curve(
+                args.xmin, args.xmax, args.points,
+                scale_x=args.scale_x, scale_y=args.scale_y,
+                x_offset=x_offset, y_offset=y_offset, z=args.z
+            )
+        elif traj_type == 'linear':
+            slope = values[3]
+            all_trajectories[traj_id] = generate_linear_trajectory(
+                args.xmin, args.xmax, args.points,
+                scale_x=args.scale_x, scale_y=args.scale_y,
+                x_offset=x_offset, y_offset=y_offset, z=args.z, slope=slope
+            )
+        elif traj_type == 'parabolic':
+            scale_y_factor = values[3]
+            all_trajectories[traj_id] = generate_parabolic_trajectory(
+                args.xmin, args.xmax, args.points,
+                scale_x=args.scale_x, scale_y=args.scale_y * scale_y_factor,
+                x_offset=x_offset, y_offset=y_offset, z=args.z
+            )
 
-    # Movement 3: linear trajectory (host[2])
-    all_trajectories[3] = generate_linear_trajectory(
-        args.xmin, args.xmax, args.points,
-        scale_x=args.scale_x, scale_y=args.scale_y,
-        x_offset=200.0, y_offset=150.0, z=args.z, slope=0.5
-    )
-
-    # Movement 4: parabolic trajectory (host[3])
-    all_trajectories[4] = generate_parabolic_trajectory(
-        args.xmin, args.xmax, args.points,
-        scale_x=args.scale_x, scale_y=args.scale_y * 0.3,  # Scale down parabola
-        x_offset=250.0, y_offset=100.0, z=args.z
-    )
+    if not all_trajectories:
+        print("Error: No trajectories generated", file=sys.stderr)
+        sys.exit(1)
 
     outpath = Path(args.out)
     write_turtle_xml(outpath, all_trajectories, args.speed)

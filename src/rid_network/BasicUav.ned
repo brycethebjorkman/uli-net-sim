@@ -18,9 +18,6 @@ network BasicUav
         @display("bgb=1000,1000");
         bool hasVisualizer = default(true);
     submodules:
-        visualizer: IntegratedVisualizer if hasVisualizer {
-            @display("p=100,50");
-        }
         host[numHosts]: <default("DroneHost")> like INetworkNode {
             @display("i=misc/node_vs;p=217,472");
         }
@@ -29,5 +26,33 @@ network BasicUav
         }
         radioMedium: Ieee80211DimensionalRadioMedium {
             @display("p=624,470");
+            backgroundNoise.power = default(-100dBm);
+        }
+        visualizer: IntegratedVisualizer if hasVisualizer {
+            @display("p=100,50");
+
+			// Note: defaults set here may be spuriously flagged with "no such parameter" by the IDE
+
+            // Scene visualization defaults
+            osgVisualizer.sceneVisualizer.axisLength = default(4000m);
+            osgVisualizer.sceneVisualizer.clearColor = default("skyblue");
+            osgVisualizer.sceneVisualizer.sceneMinZ = default(0m);
+
+            // Medium visualization defaults
+            osgVisualizer.mediumVisualizer.displaySignals = default(true);
+            osgVisualizer.mediumVisualizer.signalColor = default("red");
+            osgVisualizer.mediumVisualizer.signalFadingDistance = default(50m);
+            osgVisualizer.mediumVisualizer.signalRingSize = default(50m);
+            osgVisualizer.mediumVisualizer.signalShape = default("ring");
+
+            // Mobility visualization defaults
+            osgVisualizer.mobilityVisualizer.displayMobility = default(true);
+            osgVisualizer.mobilityVisualizer.displayMovementTrails = default(true);
+            osgVisualizer.mobilityVisualizer.displayOrientations = default(true);
+            osgVisualizer.mobilityVisualizer.displayPositions = default(true);
+            osgVisualizer.mobilityVisualizer.displayVelocities = default(true);
+
+            // Network Node visualization defaults
+            osgVisualizer.networkNodeVisualizer.displayModuleName = default(false);
         }
 }

@@ -31,4 +31,6 @@ module DroneHost extends WirelessHost
 		// 10 to 20 (mid; 20 typical for Wi-Fi access points)
 		// 20 to 30 (max; FCC limit on EIRP is 36 which means conducted power of 30 for typical antenna gain)
         wlan[0].radio.transmitter.power = default(13dBm);
+        
+        osgModel = "3d/drone.ive.25.scale.0,0,90.rot";
 }

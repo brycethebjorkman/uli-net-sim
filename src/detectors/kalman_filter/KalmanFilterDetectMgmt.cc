@@ -4,16 +4,9 @@
 
 #include "KalmanFilterDetectMgmt.h"
 
-#include "inet/linklayer/common/MacAddressTag_m.h"
-#include "inet/linklayer/ieee80211/mac/Ieee80211SubtypeTag_m.h"
-#include "inet/physicallayer/wireless/common/contract/packetlevel/SignalTag_m.h"
-#include "inet/physicallayer/wireless/ieee80211/packetlevel/Ieee80211Radio.h"
-
 #include <cmath>
-#include <iostream>
 
 using namespace inet;
-using namespace physicallayer;
 
 Define_Module(KalmanFilterDetectMgmt);
 
@@ -105,39 +98,17 @@ double KalmanFilterDetectMgmt::computeTxPower(const DetectionSample& sample, dou
 }
 
 // ---------------------------------------------------------------------
-// Handle each beacon frame
+// Hook for processing received Remote ID messages
 // ---------------------------------------------------------------------
-void KalmanFilterDetectMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header)
+void KalmanFilterDetectMgmt::hookRidMsg(Packet *packet, const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm)
 {
-    DetectionSample sample;
+    // The base class has already collected the sample in detectVector
+    // We can use the most recent sample (the one just added)
+    if (detectVector.empty())
+        return;
 
-    // Extract received power (RSSI)
-    if (auto powerInd = packet->findTag<SignalPowerInd>()) {
-        W receivedPower = powerInd->getPower();
-        sample.power = 10.0 * std::log10(receivedPower.get() * 1000.0); // convert W → dBm
-    }
-
-    // Receiver position
-    auto host = getContainingNode(this);
-    auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
-    Coord rxPos = mobility->getCurrentPosition();
-    sample.rxPosX = rxPos.x;
-    sample.rxPosY = rxPos.y;
-    sample.rxPosZ = rxPos.z;
-
-    // Transmitter info (Remote ID)
-    auto beaconBody = packet->peekAtFront<RidBeaconFrame>();
-    if (!beaconBody)
-        throw cRuntimeError("Missing RidBeaconFrame header in received Packet");
-
-    sample.serialNumber = beaconBody->getSerialNumber();
-    sample.txPosX = beaconBody->getPosX();
-    sample.txPosY = beaconBody->getPosY();
-    sample.txPosZ = beaconBody->getPosZ();
-
+    const DetectionSample& sample = detectVector.back();
     runDetectionAlgo(sample);
-
-    dropManagementFrame(packet);
 }
 
 // ---------------------------------------------------------------------

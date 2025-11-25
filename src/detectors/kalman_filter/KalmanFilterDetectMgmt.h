@@ -5,7 +5,6 @@
 #define __KALMAN_FILTER_DETECT_MGMT_H
 
 #include "rid_beacon/RidBeaconMgmt.h"
-#include "inet/mobility/contract/IMobility.h"
 
 #include <Eigen/Dense>
 #include <unordered_map>
@@ -36,7 +35,9 @@ class KalmanFilterDetectMgmt : public RidBeaconMgmt
 
     // Main detection logic
     virtual void runDetectionAlgo(const DetectionSample& sample);
-    virtual void handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
+
+    // Hook for processing received Remote ID messages
+    virtual void hookRidMsg(Packet *packet, const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm) override;
 };
 
 #endif

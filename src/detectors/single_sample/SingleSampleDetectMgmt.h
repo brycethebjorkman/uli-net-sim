@@ -13,10 +13,11 @@ using namespace inet::ieee80211;
 class SingleSampleDetectMgmt : public RidBeaconMgmt
 {
 protected:
+
+    virtual void hookRidMsg(Packet *packet, const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm) override;
+
     virtual void runDetectionAlgo();
 
-    /** Utility function: handles a received beacon frame */
-    virtual void handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
 };
 
 #endif

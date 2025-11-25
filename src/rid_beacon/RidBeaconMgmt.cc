@@ -205,12 +205,12 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
     if (beaconBody != nullptr) {
         recvec.timestamp.record(beaconBody->getTimestamp());
         recvec.serialNumber.record(beaconBody->getSerialNumber());
-        recvec.txPosX.record(beaconBody->getPosX());
-        recvec.txPosY.record(beaconBody->getPosY());
-        recvec.txPosZ.record(beaconBody->getPosZ());
-        recvec.txSpeedVertical.record(beaconBody->getSpeedVertical());
-        recvec.txSpeedHorizontal.record(beaconBody->getSpeedHorizontal());
-        recvec.txHeading.record(beaconBody->getHeading());
+        recvec.rxPosX.record(beaconBody->getPosX());
+        recvec.rxPosY.record(beaconBody->getPosY());
+        recvec.rxPosZ.record(beaconBody->getPosZ());
+        recvec.rxSpeedVertical.record(beaconBody->getSpeedVertical());
+        recvec.rxSpeedHorizontal.record(beaconBody->getSpeedHorizontal());
+        recvec.rxHeading.record(beaconBody->getHeading());
 
         // should be tx, because we are recieving from the transmitter
         sample.timestamp = beaconBody->getTimestamp();

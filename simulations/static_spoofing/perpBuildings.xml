@@ -1,0 +1,101 @@
+<environment>
+  <!-- Materials, these values simulate concrete/brick -->
+  <material id="1" resistivity="1000" relativePermittivity="5" relativePermeability="1"/>
+
+  <!-- Cross-street configuration: -->
+  <!-- N-S street at X=150m -->
+  <!-- E-W street at Y=50m -->
+
+  <!-- ===== NORTH-SOUTH STREET (X=150m) ===== -->
+
+  <!-- EAST SIDE BUILDINGS -->
+
+  <shape id="1" type="cuboid" size="50 45 100"/>
+  <object position="center 190 92.5 50" orientation="0 0 0" shape="1" material="1"
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+  <shape id="2" type="cuboid" size="45 45 120"/>
+  <object position="center 190 152.5 60" orientation="0 0 0" shape="2" material="1"
+          fill-color="169 169 169" line-color="0 0 0" opacity="1"/>
+
+  <shape id="3" type="cuboid" size="50 45 95"/>
+  <object position="center 190 212.5 47.5" orientation="0 0 0" shape="3" material="1"
+          fill-color="160 160 160" line-color="0 0 0" opacity="1"/>
+
+  <shape id="4" type="cuboid" size="45 45 130"/>
+  <object position="center 190 262.5 65" orientation="0 0 0" shape="4" material="1"
+          fill-color="169 169 169" line-color="0 0 0" opacity="1"/>
+
+  <!-- WEST SIDE BUILDINGS -->
+
+  <shape id="5" type="cuboid" size="45 45 110"/>
+  <object position="center 110 92.5 55" orientation="0 0 0" shape="5" material="1"
+          fill-color="169 169 169" line-color="0 0 0" opacity="1"/>
+
+  <shape id="6" type="cuboid" size="50 45 105"/>
+  <object position="center 110 152.5 52.5" orientation="0 0 0" shape="6" material="1"
+          fill-color="165 165 165" line-color="0 0 0" opacity="1"/>
+
+  <shape id="7" type="cuboid" size="45 45 115"/>
+  <object position="center 110 212.5 57.5" orientation="0 0 0" shape="7" material="1"
+          fill-color="158 158 158" line-color="0 0 0" opacity="1"/>
+
+  <shape id="8" type="cuboid" size="50 40 125"/>
+  <object position="center 110 260 62.5" orientation="0 0 0" shape="8" material="1"
+          fill-color="160 160 160" line-color="0 0 0" opacity="1"/>
+
+  <!-- ===== EAST-WEST STREET (Y=50m) ===== -->
+
+  <!-- NORTH SIDE BUILDINGS -->
+
+  <shape id="9" type="cuboid" size="40 45 100"/>
+  <object position="center 5 92.5 50" orientation="0 0 0" shape="9" material="1"
+          fill-color="155 155 155" line-color="0 0 0" opacity="1"/>
+
+  <shape id="10" type="cuboid" size="40 50 95"/>
+  <object position="center 50 95 47.5" orientation="0 0 0" shape="10" material="1"
+          fill-color="169 169 169" line-color="0 0 0" opacity="1"/>
+
+  <shape id="11" type="cuboid" size="45 50 105"/>
+  <object position="center 242.5 92.5 52.5" orientation="0 0 0" shape="11" material="1"
+          fill-color="160 160 160" line-color="0 0 0" opacity="1"/>
+
+  <shape id="12" type="cuboid" size="40 45 95"/>
+  <object position="center 290 90 47.5" orientation="0 0 0" shape="12" material="1"
+          fill-color="169 169 169" line-color="0 0 0" opacity="1"/>
+
+  <shape id="13" type="cuboid" size="45 50 110"/>
+  <object position="center 337.5 92.5 55" orientation="0 0 0" shape="13" material="1"
+          fill-color="155 155 155" line-color="0 0 0" opacity="1"/>
+
+  <!-- SOUTH SIDE BUILDINGS -->
+
+  <shape id="14" type="cuboid" size="40 45 90"/>
+  <object position="center 10 7.5 45" orientation="0 0 0" shape="14" material="1"
+          fill-color="165 165 165" line-color="0 0 0" opacity="1"/>
+
+  <shape id="15" type="cuboid" size="40 50 110"/>
+  <object position="center 55 5 55" orientation="0 0 0" shape="15" material="1"
+          fill-color="158 158 158" line-color="0 0 0" opacity="1"/>
+
+  <shape id="16" type="cuboid" size="40 45 100"/>
+  <object position="center 110 7.5 50" orientation="0 0 0" shape="16" material="1"
+          fill-color="169 169 169" line-color="0 0 0" opacity="1"/>
+
+  <shape id="17" type="cuboid" size="44 50 115"/>
+  <object position="center 190 5 57.5" orientation="0 0 0" shape="17" material="1"
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+  <shape id="18" type="cuboid" size="45 45 100"/>
+  <object position="center 247.5 7.5 50" orientation="0 0 0" shape="18" material="1"
+          fill-color="165 165 165" line-color="0 0 0" opacity="1"/>
+
+  <shape id="19" type="cuboid" size="40 50 115"/>
+  <object position="center 295 5 57.5" orientation="0 0 0" shape="19" material="1"
+          fill-color="158 158 158" line-color="0 0 0" opacity="1"/>
+
+  <shape id="20" type="cuboid" size="45 45 105"/>
+  <object position="center 342.5 7.5 52.5" orientation="0 0 0" shape="20" material="1"
+          fill-color="169 169 169" line-color="0 0 0" opacity="1"/>
+
+</environment>

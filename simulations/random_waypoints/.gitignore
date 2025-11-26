@@ -1,0 +1,6 @@
+# Generated waypoint files
+waypoints_*.xml
+test_waypoints.xml
+
+# Temporary scenario config files
+omnetpp_*.ini

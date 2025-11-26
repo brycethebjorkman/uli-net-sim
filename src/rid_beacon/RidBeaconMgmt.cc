@@ -47,6 +47,7 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.txPosX.setName("Transmission X Coordinate");
         recvec.txPosY.setName("Transmission Y Coordinate");
         recvec.txPosZ.setName("Transmission Z Coordinate");
+        recvec.txPower.setName("Transmission Power");
         recvec.rxPosX.setName("Reception X Coordinate");
         recvec.rxPosY.setName("Reception Y Coordinate");
         recvec.rxPosZ.setName("Reception Z Coordinate");
@@ -59,6 +60,9 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.rxMyPosX.setName("Reception My X Coordinate");
         recvec.rxMyPosY.setName("Reception My Y Coordinate");
         recvec.rxMyPosZ.setName("Reception My Z Coordinate");
+        recvec.rxMySpeedVertical.setName("Reception My Vertical Speed");
+        recvec.rxMySpeedHorizontal.setName("Reception My Horizontal Speed");
+        recvec.rxMyHeading.setName("Reception My Heading");
 
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -138,6 +142,15 @@ void RidBeaconMgmt::sendBeacon()
     recvec.txSpeedVertical.record(body->getSpeedVertical());
     recvec.txSpeedHorizontal.record(body->getSpeedHorizontal());
     recvec.txHeading.record(body->getHeading());
+
+    // Record transmission power from radio
+    cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
+    cModule *transmitter = radioModule->getSubmodule("transmitter");
+    if (transmitter) {
+        double txPowerDbm = transmitter->par("power").doubleValueInUnit("dBm");
+        recvec.txPower.record(txPowerDbm);
+    }
+
     sendManagementFrame("Beacon", body, ST_BEACON, MacAddress::BROADCAST_ADDRESS);
 }
 
@@ -241,6 +254,17 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
     recvec.rxMyPosX.record(pos.getX());
     recvec.rxMyPosY.record(pos.getY());
     recvec.rxMyPosZ.record(pos.getZ());
+
+    // Record receiver's own velocity
+    auto velocity = mobility->getCurrentVelocity();
+    double mySpeedVertical = velocity.getZ();
+    auto myHorizontal = Coord(velocity.getX(), velocity.getY(), 0.0);
+    double mySpeedHorizontal = myHorizontal.length();
+    auto north = Coord(0,1,0);
+    double myHeading = north.angle(myHorizontal) * (180.00 / M_PI);
+    recvec.rxMySpeedVertical.record(mySpeedVertical);
+    recvec.rxMySpeedHorizontal.record(mySpeedHorizontal);
+    recvec.rxMyHeading.record(myHeading);
 
     hookRidMsg(packet, beaconBody, rssiDbm);
 

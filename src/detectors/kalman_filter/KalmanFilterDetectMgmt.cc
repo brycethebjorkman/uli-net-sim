@@ -56,7 +56,7 @@ void KalmanFilterDetectMgmt::update(TxPowerKF &kf, double z, double R, int seria
     Eigen::MatrixXd I = Eigen::MatrixXd::Identity(1,1);
     kf.P = (I - K * H) * kf.P;
 
-    // ---- Spoof detection logic ----
+    // ---- Spoof detection logic and logging ----
     double innov = y(0);
     double appliedCorrection = std::abs(K(0,0) * innov);
     double NIS = (innov * innov) / S(0,0);
@@ -66,6 +66,37 @@ void KalmanFilterDetectMgmt::update(TxPowerKF &kf, double z, double R, int seria
             << "K=" << K(0,0) << ", innov=" << innov
             << ", corr=" << appliedCorrection
             << ", NIS=" << NIS << "\n";
+
+    // Record KF state vectors (initialize on first use)
+    auto& kfVec = kfVectors[serialNum];
+    if (kfVec.kfEstimate == nullptr) {
+        std::string baseName = "Drone " + std::to_string(serialNum);
+        kfVec.nameEstimate = "KF Tx Power Estimate " + baseName;
+        kfVec.nameCovariance = "KF Covariance " + baseName;
+        kfVec.nameGain = "KF Gain " + baseName;
+        kfVec.nameInnovation = "KF Innovation " + baseName;
+        kfVec.nameNIS = "KF NIS " + baseName;
+        kfVec.nameMeasurement = "KF Measurement " + baseName;
+
+        kfVec.kfEstimate = new cOutVector();
+        kfVec.kfEstimate->setName(kfVec.nameEstimate.c_str());
+        kfVec.kfCovariance = new cOutVector();
+        kfVec.kfCovariance->setName(kfVec.nameCovariance.c_str());
+        kfVec.kfGain = new cOutVector();
+        kfVec.kfGain->setName(kfVec.nameGain.c_str());
+        kfVec.kfInnovation = new cOutVector();
+        kfVec.kfInnovation->setName(kfVec.nameInnovation.c_str());
+        kfVec.kfNIS = new cOutVector();
+        kfVec.kfNIS->setName(kfVec.nameNIS.c_str());
+        kfVec.kfMeasurement = new cOutVector();
+        kfVec.kfMeasurement->setName(kfVec.nameMeasurement.c_str());
+    }
+    kfVec.kfEstimate->record(kf.x(0));
+    kfVec.kfCovariance->record(kf.P(0,0));
+    kfVec.kfGain->record(K(0,0));
+    kfVec.kfInnovation->record(innov);
+    kfVec.kfNIS->record(NIS);
+    kfVec.kfMeasurement->record(z);
 
     // Thresholds
     const double CORR_THRESH = 6.0;   // dB

@@ -26,6 +26,31 @@ class KalmanFilterDetectMgmt : public RidBeaconMgmt
     // One Kalman filter per drone (keyed by serial number)
     std::unordered_map<int, TxPowerKF> drones;
 
+    // Output vectors for Kalman Filter state (per-drone tracking requires dynamic naming)
+    struct KFOutputVectors {
+        std::string nameEstimate;
+        std::string nameCovariance;
+        std::string nameGain;
+        std::string nameInnovation;
+        std::string nameNIS;
+        std::string nameMeasurement;
+        cOutVector* kfEstimate = nullptr;
+        cOutVector* kfCovariance = nullptr;
+        cOutVector* kfGain = nullptr;
+        cOutVector* kfInnovation = nullptr;
+        cOutVector* kfNIS = nullptr;
+        cOutVector* kfMeasurement = nullptr;
+        ~KFOutputVectors() {
+            delete kfEstimate;
+            delete kfCovariance;
+            delete kfGain;
+            delete kfInnovation;
+            delete kfNIS;
+            delete kfMeasurement;
+        }
+    };
+    std::unordered_map<int, KFOutputVectors> kfVectors;
+
     // Core filter functions
     void predict(TxPowerKF &kf, double Q);
     void update(TxPowerKF &kf, double z, double R, int serialNum);

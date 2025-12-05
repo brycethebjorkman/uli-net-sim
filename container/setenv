@@ -1,7 +1,32 @@
 #!/usr/bin/env bash
+#
+# setenv - Environment setup for uav_rid project
+#
+# Source this script from the uav_rid directory:
+#   cd /usr/uli-net-sim/uav_rid && . container/setenv
+#
+# This sets up paths for OMNeT++, INET, and the project.
+#
 
-. omnetpp-6.2.0/setenv
-. inet4.5/setenv
+# Determine the base directory (parent of uav_rid)
+# Handle both sourced and executed cases
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Script is being executed
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    # Script is being sourced
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 
-BASE_DIR="/usr/uli-net-sim"
-PROJ_DIR="$BASE_DIR/uav_rid"
+# Project directory is the parent of container/
+export PROJ_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Base directory is the parent of uav_rid/
+export BASE_DIR="$(cd "$PROJ_DIR/.." && pwd)"
+
+# Source OMNeT++ and INET environments
+. "$BASE_DIR/omnetpp-6.2.0/setenv"
+. "$BASE_DIR/inet4.5/setenv"
+
+# Export additional project paths
+export EIGEN_DIR="$BASE_DIR/eigen-5.0.0"

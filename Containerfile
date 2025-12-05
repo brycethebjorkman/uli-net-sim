@@ -85,17 +85,4 @@ RUN tar xf eigen-5.0.0.tar \
 
 # build uli-net-sim
 WORKDIR /usr/uli-net-sim/uav_rid
-COPY simulations simulations
-COPY src src
-WORKDIR /usr/uli-net-sim
-COPY container/setenv .
-RUN chmod +x setenv
-COPY container/build.sh .
-RUN chmod +x build.sh
-COPY container/run.sh .
-RUN chmod +x run.sh
-COPY container/rid-one-off.sh .
-RUN chmod +x rid-one-off.sh
-COPY container/rid-csv-extract.py .
-RUN chmod +x rid-csv-extract.py
-RUN ./build.sh
+COPY . .

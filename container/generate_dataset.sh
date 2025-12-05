@@ -6,12 +6,19 @@
 # Generates random waypoints, runs OMNeT++ simulations, and converts results to CSV.
 #
 # USAGE:
-#   This script must be run from /usr/uli-net-sim with setenv sourced:
-#     cd /usr/uli-net-sim && . setenv
-#     ./generate_dataset.sh [options]
+#   This script must be run from the uav_rid directory with setenv sourced:
+#     cd /usr/uli-net-sim/uav_rid && . container/setenv
+#     ./container/generate_dataset.sh [options]
+#
+#   Output goes to datasets/ by default (visible on host).
 #
 
 set -e
+
+# Determine script location and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJ_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+BASE_DIR="$(cd "$PROJ_DIR/.." && pwd)"
 
 # Default parameters
 NUM_SCENARIOS=5
@@ -22,8 +29,8 @@ WAYPOINTS=15
 GRID_SIZE=1000
 SPEED_RANGE="5-15"
 ALT_RANGE="30-100"
-SIM_DIR="uav_rid/simulations/random_waypoints"
-OUTPUT_DIR="datasets"
+SIM_DIR="$PROJ_DIR/simulations/random_waypoints"
+OUTPUT_DIR="$PROJ_DIR/datasets"
 SEED_START=42
 
 usage() {
@@ -32,9 +39,9 @@ Usage: $0 [options]
 
 Generate datasets for Remote ID spoofing detection analysis.
 
-IMPORTANT: Must be run from /usr/uli-net-sim with setenv sourced:
-  cd /usr/uli-net-sim && . setenv
-  ./generate_dataset.sh [options]
+IMPORTANT: Must be run from the uav_rid directory with setenv sourced:
+  cd /usr/uli-net-sim/uav_rid && . container/setenv
+  ./container/generate_dataset.sh [options]
 
 Options:
     -n NUM        Number of scenario repetitions (default: $NUM_SCENARIOS)
@@ -45,7 +52,7 @@ Options:
     -g SIZE       Grid size in meters (default: $GRID_SIZE)
     -r RANGE      Speed range as 'min-max' (default: $SPEED_RANGE)
     -a RANGE      Altitude range as 'min-max' (default: $ALT_RANGE)
-    -o DIR        Output directory (default: $OUTPUT_DIR)
+    -o DIR        Output directory (default: \$PROJ_DIR/datasets)
     --seed NUM    Starting seed (default: $SEED_START)
     --help        Show this help message
 
@@ -58,6 +65,9 @@ Examples:
 
     # Generate dataset without spoofers
     $0 -n 5 -c RandomWaypoints5Host -h 5 -s 0
+
+    # Generate ghost drone dataset
+    $0 -n 10 -c RandomWaypoints5Host1Ghost -h 5 -s 1 -o datasets/ghost
 EOF
     exit 0
 }
@@ -101,7 +111,7 @@ mkdir -p "$OUTPUT_DIR"
 # Check for required environment variables
 if [ -z "$INET_ROOT" ]; then
     echo "Error: INET_ROOT not set. Please source setenv first."
-    echo "  cd /usr/uli-net-sim && . setenv"
+    echo "  cd $PROJ_DIR && . container/setenv"
     exit 1
 fi
 
@@ -111,22 +121,25 @@ if ! command -v opp_scavetool &> /dev/null; then
     exit 1
 fi
 
-# Check for container binary (has rpath, doesn't need LD_LIBRARY_PATH)
-UAV_RID_BIN="uav_rid/out/clang-release/uav_rid"
+# Check for container binary (out-of-tree build location)
+UAV_RID_BIN="$BASE_DIR/container-build/out/clang-release/uav_rid"
 if [ ! -f "$UAV_RID_BIN" ]; then
     echo "Error: Container binary not found at $UAV_RID_BIN"
-    echo "This script must be run from /usr/uli-net-sim"
+    echo ""
+    echo "To build: cd $PROJ_DIR && . container/setenv && ./container/build.sh"
     exit 1
 fi
 
 # Check for required scripts
-if [ ! -f "vec2csv.py" ]; then
-    echo "Error: vec2csv.py not found at vec2csv.py"
+VEC2CSV="$SCRIPT_DIR/vec2csv.py"
+if [ ! -f "$VEC2CSV" ]; then
+    echo "Error: vec2csv.py not found at $VEC2CSV"
     exit 1
 fi
 
-if [ ! -f "uav_rid/src/utils/random_waypoints.py" ]; then
-    echo "Error: random_waypoints.py not found at uav_rid/src/utils/random_waypoints.py"
+WAYPOINTS_PY="$PROJ_DIR/src/utils/random_waypoints.py"
+if [ ! -f "$WAYPOINTS_PY" ]; then
+    echo "Error: random_waypoints.py not found at $WAYPOINTS_PY"
     exit 1
 fi
 
@@ -142,7 +155,7 @@ for i in $(seq 1 $NUM_SCENARIOS); do
     # Step 1: Generate waypoints XML
     WAYPOINTS_XML="${SIM_DIR}/waypoints_${SCENARIO_NAME}.xml"
     echo "[1/3] Generating waypoints..."
-    python3 uav_rid/src/utils/random_waypoints.py \
+    python3 "$WAYPOINTS_PY" \
         --out "$WAYPOINTS_XML" \
         --hosts "$HOSTS" \
         --spoofer-hosts "$SPOOFERS" \
@@ -168,7 +181,6 @@ for i in $(seq 1 $NUM_SCENARIOS); do
 
 [Config ${SCENARIO_NAME}]
 extends = $CONFIG
-*.host[*].mobility.turtleScript = xmldoc("$WAYPOINTS_REL")
 sim-time-limit = 500s
 repeat = 1
 seed-set = \${runnumber}
@@ -176,7 +188,12 @@ seed-set = \${runnumber}
 **.scalar-recording = true
 EOF
 
-    # Run simulation
+    # Add per-host turtleScript lines (XPath doesn't support variable substitution)
+    for h in $(seq 0 $((HOSTS - 1))); do
+        echo "*.host[$h].mobility.turtleScript = xmldoc(\"$WAYPOINTS_REL\", \"movements/movement[@id='$h']\")" >> "$TMP_INI"
+    done
+
+    # Run simulation (use absolute paths for clarity)
     ${UAV_RID_BIN} -m \
         -u Cmdenv \
         -c "$SCENARIO_NAME" \
@@ -188,8 +205,8 @@ EOF
         -n "$INET_ROOT/tests/validation" \
         -n "$INET_ROOT/tests/networks" \
         -n "$INET_ROOT/tutorials" \
-        -n "./uav_rid/simulations" \
-        -n "./uav_rid/src" \
+        -n "$PROJ_DIR/simulations" \
+        -n "$PROJ_DIR/src" \
         -f "$TMP_INI" \
         --cmdenv-express-mode=true \
         --cmdenv-status-frequency=10s \
@@ -201,7 +218,7 @@ EOF
     if [ -f "$VEC_FILE" ]; then
         echo "[3/3] Converting to CSV..."
         CSV_FILE="${OUTPUT_DIR}/${SCENARIO_NAME}.csv"
-        python3 vec2csv.py "$VEC_FILE" -o "$CSV_FILE"
+        python3 "$VEC2CSV" "$VEC_FILE" -o "$CSV_FILE"
         echo "Created: $CSV_FILE"
     else
         echo "Warning: Vector file not found: $VEC_FILE"

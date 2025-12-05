@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
+#
+# rid-one-off.sh - Run a one-off Remote ID simulation
+#
+# Usage:
+#   cd /usr/uli-net-sim/uav_rid && . container/setenv && ./container/rid-one-off.sh [options]
+#
 
 set -e
+
+# Determine script location and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJ_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+BASE_DIR="$(cd "$PROJ_DIR/.." && pwd)"
 
 usage_text="
 Remote ID One-Off Simulation:
@@ -164,9 +175,20 @@ if [ "$quiet" = false ]; then
     echo "Running simulation with drone $tx_n as transmitter to $rx_count receiver drones and run_args: $run_args"
 fi
 
-. setenv
+# Source environment if not already sourced
+if [ -z "$INET_ROOT" ]; then
+    . "$SCRIPT_DIR/setenv"
+fi
 
-$PROJ_DIR/out/clang-release/uav_rid -m \
+# Use container binary
+UAV_RID_BIN="$BASE_DIR/container-build/out/clang-release/uav_rid"
+if [ ! -f "$UAV_RID_BIN" ]; then
+    echo "Error: Container binary not found at $UAV_RID_BIN" >&2
+    echo "To build: cd $PROJ_DIR && . container/setenv && ./container/build.sh" >&2
+    exit 1
+fi
+
+$UAV_RID_BIN -m \
     -f "$PROJ_DIR/simulations/basic_uav/omnetpp.ini" \
     -c General \
     -l "$INET_ROOT/out/clang-release/src/libINET.so" \
@@ -198,7 +220,7 @@ if [ "$quiet" = true ]; then
     exec 3>&- 4>&-
 fi
 
-./rid-csv-extract.py results.csv \
+"$SCRIPT_DIR/rid-csv-extract.py" results.csv \
     --host-map "${host_map[@]}" \
     --name-pattern "Serial Number" \
     --name-pattern "Reception Power"

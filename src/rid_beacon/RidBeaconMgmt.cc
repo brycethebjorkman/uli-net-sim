@@ -63,6 +63,12 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.rxMySpeedVertical.setName("Reception My Vertical Speed");
         recvec.rxMySpeedHorizontal.setName("Reception My Horizontal Speed");
         recvec.rxMyHeading.setName("Reception My Heading");
+        recvec.txMyPosX.setName("Transmission My X Coordinate");
+        recvec.txMyPosY.setName("Transmission My Y Coordinate");
+        recvec.txMyPosZ.setName("Transmission My Z Coordinate");
+        recvec.txMySpeedVertical.setName("Transmission My Vertical Speed");
+        recvec.txMySpeedHorizontal.setName("Transmission My Horizontal Speed");
+        recvec.txMyHeading.setName("Transmission My Heading");
 
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -142,6 +148,23 @@ void RidBeaconMgmt::sendBeacon()
     recvec.txSpeedVertical.record(body->getSpeedVertical());
     recvec.txSpeedHorizontal.record(body->getSpeedHorizontal());
     recvec.txHeading.record(body->getHeading());
+
+    // Record transmitter's actual position/velocity at TX time
+    auto host = getContainingNode(this);
+    auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
+    auto myPos = mobility->getCurrentPosition();
+    auto myVelocity = mobility->getCurrentVelocity();
+    recvec.txMyPosX.record(myPos.getX());
+    recvec.txMyPosY.record(myPos.getY());
+    recvec.txMyPosZ.record(myPos.getZ());
+    double mySpeedVertical = myVelocity.getZ();
+    auto myHorizontal = Coord(myVelocity.getX(), myVelocity.getY(), 0.0);
+    double mySpeedHorizontal = myHorizontal.length();
+    auto north = Coord(0,1,0);
+    double myHeading = north.angle(myHorizontal) * (180.00 / M_PI);
+    recvec.txMySpeedVertical.record(mySpeedVertical);
+    recvec.txMySpeedHorizontal.record(mySpeedHorizontal);
+    recvec.txMyHeading.record(myHeading);
 
     // Record transmission power from radio
     cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);

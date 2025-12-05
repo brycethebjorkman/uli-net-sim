@@ -54,6 +54,12 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector rxMySpeedVertical;
         cOutVector rxMySpeedHorizontal;
         cOutVector rxMyHeading;
+        cOutVector txMyPosX;
+        cOutVector txMyPosY;
+        cOutVector txMyPosZ;
+        cOutVector txMySpeedVertical;
+        cOutVector txMySpeedHorizontal;
+        cOutVector txMyHeading;
     } recvec;
 
     struct DetectionSample {

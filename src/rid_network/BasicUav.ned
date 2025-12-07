@@ -51,6 +51,7 @@ network BasicUav
             osgVisualizer.mobilityVisualizer.displayOrientations = default(true);
             osgVisualizer.mobilityVisualizer.displayPositions = default(true);
             osgVisualizer.mobilityVisualizer.displayVelocities = default(true);
+            osgVisualizer.mobilityVisualizer.trailLength = default(1000);
 
             // Network Node visualization defaults
             osgVisualizer.networkNodeVisualizer.displayModuleName = default(false);

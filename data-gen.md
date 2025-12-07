@@ -5,7 +5,7 @@
 This pipeline generates datasets to evaluate Remote ID spoofing detection methods:
 
 1. **Kalman Filter-based detection** - Threshold on KF state using RSSI to estimate transmission power
-2. **Multilateration-based detection** - RSSI triangulation from multiple receivers
+2. **Multilateration-based detection** - Multilateration using RSSI from multiple receivers
 3. **Machine learning approaches** - Supervised learning on timeseries features
 
 The pipeline produces CSV files containing timeseries data from OMNeT++ simulations with:
@@ -23,46 +23,47 @@ Varied per scenario:
 
 ## Quick Start
 
-### Setup
+The data generation pipeline needs to run inside a container built from the `Containerfile`.
 
-**IMPORTANT:** Edit code in `/workspaces/uli-net-sim`, run simulations from `/usr/uli-net-sim`.
+### Build the Container
 
 ```bash
-# 1. Build the project
-cd /usr/uli-net-sim && . setenv && cd uav_rid
-make clean && make
-cd /usr/uli-net-sim
-
-# 2. Copy files from workspace
-cp -r /workspaces/uli-net-sim/src /usr/uli-net-sim/uav_rid/
-cp -r /workspaces/uli-net-sim/simulations /usr/uli-net-sim/uav_rid/
-cp /workspaces/uli-net-sim/container/vec2csv.py /usr/uli-net-sim/
-cp /workspaces/uli-net-sim/container/generate_dataset.sh /usr/uli-net-sim/
-chmod +x /usr/uli-net-sim/generate_dataset.sh
+# From your host workspace directory containing the Containerfile
+docker build -t uav-rid -f Containerfile .
 ```
 
-### Generate Datasets
+### Run the Container
 
 ```bash
-# Source environment (required!)
-cd /usr/uli-net-sim && . setenv
+# Mount workspace into the container
+docker run -it --rm -v .:/usr/uli-net-sim/uav_rid uav-rid /bin/bash
+```
 
+### Build the Project (Inside Container)
+
+```bash
+cd /usr/uli-net-sim/uav_rid
+. container/setenv
+./container/build.sh
+```
+
+### Generate Datasets (Inside Container)
+
+```bash
 # Test: 3 scenarios with 5 hosts (1 spoofer)
-./generate_dataset.sh -n 3 -h 5 -s 1 -o test_dataset
+./container/generate_dataset.sh -n 3 -h 5 -s 1
 
 # Baseline: 20 scenarios without spoofers
-./generate_dataset.sh -n 20 -c RandomWaypoints5Host -h 5 -s 0 -o datasets/baseline
+./container/generate_dataset.sh -n 20 -c RandomWaypoints5Host -h 5 -s 0 -o datasets/baseline
 
 # Spoofing: 50 scenarios with 1 spoofer
-./generate_dataset.sh -n 50 -h 5 -s 1 -o datasets/spoofing_1spoofer
+./container/generate_dataset.sh -n 50 -h 5 -s 1 -o datasets/spoofing_1spoofer
+
+# Dynamic trajectory spoofing (spoofer claims ghost's position)
+./container/generate_dataset.sh -n 50 -c RandomWaypoints4Host1Ghost1DynSpoofer -h 6 -s 1 -o datasets/dynamic_spoofer
 ```
 
-### Copy Results to Workspace
-
-```bash
-# Copy datasets for analysis
-cp -r /usr/uli-net-sim/datasets /workspaces/uli-net-sim/
-```
+Output files are written to `datasets/` which is visible on the host via the mount.
 
 ## Pipeline Components
 
@@ -85,17 +86,18 @@ python3 src/utils/random_waypoints.py \
 ### 2. Simulation Configuration (`simulations/random_waypoints/omnetpp.ini`)
 
 Available configs:
-- `RandomWaypoints3Host` - 3 hosts, no spoofers
-- `RandomWaypoints5Host` - 5 hosts, no spoofers
-- `RandomWaypoints5Host1Spoofer` - 5 hosts, 1 spoofer (host[4])
-- `RandomWaypoints10Host2Spoofer` - 10 hosts, 2 spoofers (host[8-9])
+- `RandomWaypoints3Host` - 3 honest drones
+- `RandomWaypoints5Host` - 5 honest drones
+- `RandomWaypoints5Host1Spoofer` - 4 honest + 1 static location spoofer
+- `RandomWaypoints10Host2Spoofer` - 8 honest + 2 static location spoofers
+- `RandomWaypoints4Host1Ghost1DynSpoofer` - 4 honest + 1 ghost (silent) + 1 dynamic trajectory spoofer
 
 Randomized parameters:
 - Beacon interval: uniform(0.25s, 0.75s)
 - Transmission power: uniform(10dBm, 16dBm)
 - Startup jitter: uniform(0ms, 100ms)
 
-### 3. Vector to CSV Conversion (`vec2csv.py`)
+### 3. Vector to CSV Conversion (`container/vec2csv.py`)
 
 Converts OMNeT++ .vec files to CSV format with one row per event.
 
@@ -103,7 +105,7 @@ Converts OMNeT++ .vec files to CSV format with one row per event.
 python3 vec2csv.py results/scenario.vec -o output.csv
 ```
 
-### 4. End-to-End Pipeline (`generate_dataset.sh`)
+### 4. End-to-End Pipeline (`container/generate_dataset.sh`)
 
 Options:
 ```
@@ -115,7 +117,7 @@ Options:
 -g SIZE       Grid size in meters (default: 1000)
 -r RANGE      Speed range as 'min-max' (default: 5-15)
 -a RANGE      Altitude range as 'min-max' (default: 30-100)
--o DIR        Output directory (default: datasets)
+-o DIR        Output directory (default: $PROJ_DIR/datasets)
 --seed NUM    Starting seed (default: 42)
 ```
 
@@ -165,32 +167,43 @@ For RX events, actual position is the receiver's location, Remote ID fields show
 
 ### Data Logging
 
-**RidBeaconMgmt.cc/h** - Transmission power, receiver velocity logging
+**RidBeaconMgmt** - TX/RX event logging
 
-**KalmanFilterDetectMgmt.cc/h** - Per-drone KF state vectors (estimate, covariance, gain, innovation, NIS, measurement)
+**KalmanFilterDetectMgmt** - Per-drone KF state vectors
 
 
 ### File Structure
 
-```
-/workspaces/uli-net-sim/          # Edit here
-├── src/
-│   ├── rid_beacon/RidBeaconMgmt.{cc,h}
-│   ├── detectors/kalman_filter/KalmanFilterDetectMgmt.{cc,h}
-│   └── utils/random_waypoints.py
-├── simulations/random_waypoints/
-│   ├── omnetpp.ini
-│   └── .gitignore
-├── container/
-│   ├── generate_dataset.sh
-│   └── vec2csv.py
-└── DATA_GENERATION_README.md
+The project uses out-of-tree builds to keep container build artifacts separate from IDE builds.
 
-/usr/uli-net-sim/                 # Run here
-├── uav_rid/
-│   ├── src/                      # Copied from workspace
-│   ├── simulations/              # Copied from workspace
+```
+/usr/uli-net-sim/
+├── uav_rid/                      # Mounted from host workspace (or copied at container build time)
+│   ├── src/
+│   │   ├── rid_beacon/RidBeaconMgmt.{cc,h}
+│   │   ├── detectors/kalman_filter/KalmanFilterDetectMgmt.{cc,h}
+│   │   ├── spoofers/
+│   │   │   ├── static_location/      # Static location spoofer
+│   │   │   └── dynamic_trajectory/   # Dynamic trajectory spoofer
+│   │   └── utils/random_waypoints.py
+│   ├── simulations/random_waypoints/
+│   │   └── omnetpp.ini
+│   ├── container/
+│   │   ├── setenv                # Environment setup script
+│   │   ├── build.sh              # Out-of-tree build script
+│   │   ├── generate_dataset.sh   # End-to-end pipeline
+│   │   └── vec2csv.py            # Vector to CSV converter
+│   ├── datasets/                 # Generated output (visible on host)
+│   ├── out/                      # IDE build output (not used by container)
+│   └── Containerfile             # Container build definition
+│
+├── container-build/              # Container build output (separate from IDE)
+│   ├── src -> ../uav_rid/src     # Symlink to source
+│   ├── simulations -> ...        # Symlink to simulations
+│   ├── Makefile                  # Container-specific Makefile
 │   └── out/clang-release/uav_rid # Container binary
-├── generate_dataset.sh           # Copied from workspace
-└── vec2csv.py                    # Copied from workspace
+│
+├── omnetpp-6.2.0/                # OMNeT++ installation
+├── inet4.5/                      # INET framework
+└── eigen-5.0.0/                  # Eigen library
 ```

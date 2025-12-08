@@ -601,12 +601,9 @@ run_urbanenv() {
                         SCENARIO_SEED_COUNTER=$((SCENARIO_SEED_COUNTER + 1))
                         SCENARIO_COUNT=$((SCENARIO_COUNT + 1))
 
-                        # Sample radio parameters
-                        TX_PWR=$(sample_range "$UE_TX_POWER" $SCENARIO_SEED)
-                        BCN_INT=$(sample_range "$UE_BEACON_INTERVAL" $((SCENARIO_SEED + 1)))
-                        BCN_OFF=$(sample_range "$UE_BEACON_OFFSET" $((SCENARIO_SEED + 2)))
-
-                        SCENARIO_NAME="${BLDG_PART}__${TRAJ_PART}__tx${TX_PWR}_bint${BCN_INT}_seed${SCENARIO_SEED}"
+                        # Use original ranges - generate_scenario.py will sample per-host
+                        # Directory name uses seed since per-host values vary
+                        SCENARIO_NAME="${BLDG_PART}__${TRAJ_PART}__seed${SCENARIO_SEED}"
                         SCENARIO_PATH="$CORRIDOR_PATH/scenarios/$SCENARIO_NAME"
 
                         echo "    [$SCENARIO_COUNT/$TOTAL_SCENARIOS] $SCENARIO_NAME"
@@ -618,9 +615,9 @@ run_urbanenv() {
                         if [ ! -f "$INI_FILE" ]; then
                             SCENARIO_ARGS=(
                                 -t "$TRAJ_FILE"
-                                --tx-power "$TX_PWR"
-                                --beacon-interval "$BCN_INT"
-                                --beacon-offset "$BCN_OFF"
+                                --tx-power "$UE_TX_POWER"
+                                --beacon-interval "$UE_BEACON_INTERVAL"
+                                --beacon-offset "$UE_BEACON_OFFSET"
                                 --sim-time-limit "$SIM_TIME"
                                 --config-name "Scenario"
                                 --seed "$SCENARIO_SEED"

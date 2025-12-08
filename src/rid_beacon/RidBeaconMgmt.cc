@@ -31,6 +31,7 @@ void RidBeaconMgmt::initialize(int stage)
         serialNumber = par("serialNumber");
         beaconInterval = par("beaconInterval");
         startupJitter = par("startupJitter");
+        beaconOffset = par("beaconOffset");
         transmitBeacon = par("transmitBeacon");
         oneOff = par("oneOff");
         channelNumber = -1; // value will arrive from physical layer in receiveChangeNotification()
@@ -298,7 +299,7 @@ void RidBeaconMgmt::start()
 {
     Ieee80211MgmtApBase::start();
     if (transmitBeacon) {
-        scheduleAfter(uniform(0, startupJitter), beaconTimer);
+        scheduleAfter(beaconOffset + uniform(0, startupJitter), beaconTimer);
     }
 }
 

@@ -22,6 +22,7 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     int channelNumber = -1;
     simtime_t beaconInterval;
     simtime_t startupJitter;
+    simtime_t beaconOffset;
     bool transmitBeacon;
     bool oneOff;
     Ieee80211SupportedRatesElement supportedRates;

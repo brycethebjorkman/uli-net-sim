@@ -17,7 +17,10 @@ simple RidBeaconMgmt like IIeee80211Mgmt
 
         // upper bound on random delay for first transmission
         double startupJitter @unit(s) = default(beaconInterval);
-        
+
+        // fixed offset added to first transmission time (after jitter)
+        double beaconOffset @unit(s) = default(0s);
+
         // if false this instance should not transmit at all
         bool transmitBeacon = default(true);
         

@@ -1,0 +1,4 @@
+{"id": 0, "direction": "EW", "center": 120.0, "width": 20.0, "altitude_min": 0.0, "altitude_max": 400.0}
+{"id": 1, "direction": "EW", "center": 240.0, "width": 20.0, "altitude_min": 0.0, "altitude_max": 400.0}
+{"id": 2, "direction": "NS", "center": 120.0, "width": 20.0, "altitude_min": 0.0, "altitude_max": 400.0}
+{"id": 3, "direction": "NS", "center": 240.0, "width": 20.0, "altitude_min": 0.0, "altitude_max": 400.0}

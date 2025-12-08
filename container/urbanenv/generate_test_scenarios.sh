@@ -47,6 +47,17 @@ python3 generate_trajectories.py \
     --seed 1 \
     -o "$OUTPUT_DIR/scenario1_waypoints.xml"
 
+mkdir -p "$OUTPUT_DIR/scenario1"
+python3 generate_scenario.py \
+    -t "$OUTPUT_DIR/scenario1_waypoints.xml" \
+    --tx-power 10-16 \
+    --beacon-interval 0.25-0.75 \
+    --beacon-offset 0-0.1 \
+    --sim-time-limit 300 \
+    --config-name Scenario1_Simple2x2 \
+    --seed 1 \
+    -o "$OUTPUT_DIR/scenario1/omnetpp.ini"
+
 echo ""
 
 # ------------------------------------------------------------------------------
@@ -87,6 +98,30 @@ python3 generate_trajectories.py \
     --seed 2 \
     -o "$OUTPUT_DIR/scenario2_waypoints.xml"
 
+mkdir -p "$OUTPUT_DIR/scenario2"
+python3 generate_scenario.py \
+    -t "$OUTPUT_DIR/scenario2_waypoints.xml" \
+    -b "$OUTPUT_DIR/scenario2_buildings.xml" \
+    --tx-power 10-16 \
+    --beacon-interval 0.25-0.75 \
+    --beacon-offset 0-0.1 \
+    --sim-time-limit 300 \
+    --config-name Scenario2_Dense3x3WithBuildings \
+    --seed 2 \
+    -o "$OUTPUT_DIR/scenario2/omnetpp.ini"
+
+# Also generate a no-buildings variant for comparison
+mkdir -p "$OUTPUT_DIR/scenario2_nobuildings"
+python3 generate_scenario.py \
+    -t "$OUTPUT_DIR/scenario2_waypoints.xml" \
+    --tx-power 10-16 \
+    --beacon-interval 0.25-0.75 \
+    --beacon-offset 0-0.1 \
+    --sim-time-limit 300 \
+    --config-name Scenario2_NoBuildingsComparison \
+    --seed 2 \
+    -o "$OUTPUT_DIR/scenario2_nobuildings/omnetpp.ini"
+
 echo ""
 
 # ------------------------------------------------------------------------------
@@ -118,6 +153,18 @@ python3 generate_trajectories.py \
     --waypoint-interval 40-80 \
     --seed 3 \
     -o "$OUTPUT_DIR/scenario3_waypoints.xml"
+
+mkdir -p "$OUTPUT_DIR/scenario3"
+python3 generate_scenario.py \
+    -t "$OUTPUT_DIR/scenario3_waypoints.xml" \
+    -b "$OUTPUT_DIR/scenario3_buildings.xml" \
+    --tx-power 10-16 \
+    --beacon-interval 0.25-0.75 \
+    --beacon-offset 0-0.1 \
+    --sim-time-limit 300 \
+    --config-name Scenario3_WideCorridorsLowBuildings \
+    --seed 3 \
+    -o "$OUTPUT_DIR/scenario3/omnetpp.ini"
 
 echo ""
 
@@ -151,6 +198,18 @@ python3 generate_trajectories.py \
     --seed 4 \
     -o "$OUTPUT_DIR/scenario4_waypoints.xml"
 
+mkdir -p "$OUTPUT_DIR/scenario4"
+python3 generate_scenario.py \
+    -t "$OUTPUT_DIR/scenario4_waypoints.xml" \
+    -b "$OUTPUT_DIR/scenario4_buildings.xml" \
+    --tx-power 10-16 \
+    --beacon-interval 0.25-0.75 \
+    --beacon-offset 0-0.1 \
+    --sim-time-limit 300 \
+    --config-name Scenario4_SkyscraperDistrict \
+    --seed 4 \
+    -o "$OUTPUT_DIR/scenario4/omnetpp.ini"
+
 echo ""
 
 # ------------------------------------------------------------------------------
@@ -161,6 +220,18 @@ echo "Generated files:"
 echo "=============================================="
 ls -la "$OUTPUT_DIR"/*.xml "$OUTPUT_DIR"/*.ndjson 2>/dev/null || true
 echo ""
-echo "Scenarios ready for IDE testing in:"
-echo "  simulations/urbanenv_testing/omnetpp.ini"
+ls -la "$OUTPUT_DIR"/scenario*/omnetpp.ini 2>/dev/null || true
+echo ""
+echo "Generated scenario configs:"
+echo "  scenario1/omnetpp.ini - Simple 2x2 grid (no buildings)"
+echo "  scenario2/omnetpp.ini - Dense 3x3 grid with buildings"
+echo "  scenario2_nobuildings/omnetpp.ini - Same trajectories, no buildings (comparison)"
+echo "  scenario3/omnetpp.ini - Wide corridors, low buildings"
+echo "  scenario4/omnetpp.ini - Skyscraper district"
+echo ""
+echo "To run a scenario:"
+echo "  cd simulations/urbanenv_testing/scenario1"
+echo "  /usr/uli-net-sim/container-build/out/clang-release/uav_rid \\"
+echo "    -u Cmdenv -c Scenario1_Simple2x2 \\"
+echo "    -n ../..:../../../src:\$INET_ROOT/src"
 echo "=============================================="

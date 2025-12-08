@@ -1,0 +1,126 @@
+<environment>
+  <!-- Materials: concrete/brick simulation -->
+  <material id="1" resistivity="1000" relativePermittivity="5" relativePermeability="1"/>
+
+  <!-- Buildings -->
+  <shape id="1" type="cuboid" size="26.7 29.8 154.6"/>
+  <object position="center 48.4 25.4 77.3" orientation="0 0 0" shape="1" material="1"
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+  <shape id="2" type="cuboid" size="30.8 23.4 173.4"/>
+  <object position="center 348.2 23.2 86.7" orientation="0 0 0" shape="2" material="1"
+          fill-color="155 155 155" line-color="0 0 0" opacity="1"/>
+
+  <shape id="3" type="cuboid" size="22.6 28.2 144.4"/>
+  <object position="center 265.9 153.4 72.2" orientation="0 0 0" shape="3" material="1"
+          fill-color="160 160 160" line-color="0 0 0" opacity="1"/>
+
+  <shape id="4" type="cuboid" size="27.3 20.4 65.2"/>
+  <object position="center 275.8 383.4 32.6" orientation="0 0 0" shape="4" material="1"
+          fill-color="165 165 165" line-color="0 0 0" opacity="1"/>
+
+  <shape id="5" type="cuboid" size="20.2 31.3 89.9"/>
+  <object position="center 51.7 246.0 45.0" orientation="0 0 0" shape="5" material="1"
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+  <shape id="6" type="cuboid" size="20.4 25.8 110.5"/>
+  <object position="center 81.6 53.6 55.3" orientation="0 0 0" shape="6" material="1"
+          fill-color="155 155 155" line-color="0 0 0" opacity="1"/>
+
+  <shape id="7" type="cuboid" size="28.6 24.8 135.7"/>
+  <object position="center 36.1 124.4 67.9" orientation="0 0 0" shape="7" material="1"
+          fill-color="160 160 160" line-color="0 0 0" opacity="1"/>
+
+  <shape id="8" type="cuboid" size="34.5 33.1 96.8"/>
+  <object position="center 331.0 130.4 48.4" orientation="0 0 0" shape="8" material="1"
+          fill-color="165 165 165" line-color="0 0 0" opacity="1"/>
+
+  <shape id="9" type="cuboid" size="33.2 20.6 158.3"/>
+  <object position="center 369.5 226.7 79.2" orientation="0 0 0" shape="9" material="1"
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+  <shape id="10" type="cuboid" size="30.1 32.6 171.9"/>
+  <object position="center 142.2 340.5 85.9" orientation="0 0 0" shape="10" material="1"
+          fill-color="155 155 155" line-color="0 0 0" opacity="1"/>
+
+  <shape id="11" type="cuboid" size="33.0 29.1 174.5"/>
+  <object position="center 342.1 64.7 87.3" orientation="0 0 0" shape="11" material="1"
+          fill-color="160 160 160" line-color="0 0 0" opacity="1"/>
+
+  <shape id="12" type="cuboid" size="28.3 21.6 64.7"/>
+  <object position="center 41.3 338.6 32.3" orientation="0 0 0" shape="12" material="1"
+          fill-color="165 165 165" line-color="0 0 0" opacity="1"/>
+
+  <shape id="13" type="cuboid" size="31.8 32.4 61.5"/>
+  <object position="center 262.7 49.9 30.7" orientation="0 0 0" shape="13" material="1"
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+  <shape id="14" type="cuboid" size="21.5 33.7 105.4"/>
+  <object position="center 378.0 349.9 52.7" orientation="0 0 0" shape="14" material="1"
+          fill-color="155 155 155" line-color="0 0 0" opacity="1"/>
+
+  <shape id="15" type="cuboid" size="20.6 20.2 177.9"/>
+  <object position="center 122.4 236.7 89.0" orientation="0 0 0" shape="15" material="1"
+          fill-color="160 160 160" line-color="0 0 0" opacity="1"/>
+
+  <shape id="16" type="cuboid" size="34.5 21.7 85.8"/>
+  <object position="center 243.1 381.6 42.9" orientation="0 0 0" shape="16" material="1"
+          fill-color="165 165 165" line-color="0 0 0" opacity="1"/>
+
+  <shape id="17" type="cuboid" size="26.7 29.8 137.2"/>
+  <object position="center 364.5 159.5 68.6" orientation="0 0 0" shape="17" material="1"
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+  <shape id="18" type="cuboid" size="24.6 24.9 98.0"/>
+  <object position="center 330.3 347.6 49.0" orientation="0 0 0" shape="18" material="1"
+          fill-color="155 155 155" line-color="0 0 0" opacity="1"/>
+
+  <shape id="19" type="cuboid" size="24.5 25.0 125.3"/>
+  <object position="center 229.7 236.0 62.7" orientation="0 0 0" shape="19" material="1"
+          fill-color="160 160 160" line-color="0 0 0" opacity="1"/>
+
+  <shape id="20" type="cuboid" size="23.7 20.3 89.3"/>
+  <object position="center 39.1 219.4 44.6" orientation="0 0 0" shape="20" material="1"
+          fill-color="165 165 165" line-color="0 0 0" opacity="1"/>
+
+  <shape id="21" type="cuboid" size="31.2 30.3 81.4"/>
+  <object position="center 175.2 73.5 40.7" orientation="0 0 0" shape="21" material="1"
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+  <shape id="22" type="cuboid" size="30.7 30.0 90.3"/>
+  <object position="center 39.1 371.4 45.2" orientation="0 0 0" shape="22" material="1"
+          fill-color="155 155 155" line-color="0 0 0" opacity="1"/>
+
+  <shape id="23" type="cuboid" size="25.9 25.1 91.0"/>
+  <object position="center 22.1 254.9 45.5" orientation="0 0 0" shape="23" material="1"
+          fill-color="160 160 160" line-color="0 0 0" opacity="1"/>
+
+  <shape id="24" type="cuboid" size="26.3 28.6 67.5"/>
+  <object position="center 145.8 65.6 33.7" orientation="0 0 0" shape="24" material="1"
+          fill-color="165 165 165" line-color="0 0 0" opacity="1"/>
+
+  <shape id="25" type="cuboid" size="21.9 23.9 159.5"/>
+  <object position="center 161.4 162.8 79.7" orientation="0 0 0" shape="25" material="1"
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+  <shape id="26" type="cuboid" size="27.4 27.2 87.0"/>
+  <object position="center 167.3 222.5 43.5" orientation="0 0 0" shape="26" material="1"
+          fill-color="155 155 155" line-color="0 0 0" opacity="1"/>
+
+  <shape id="27" type="cuboid" size="34.4 22.1 153.1"/>
+  <object position="center 325.0 260.4 76.5" orientation="0 0 0" shape="27" material="1"
+          fill-color="160 160 160" line-color="0 0 0" opacity="1"/>
+
+  <shape id="28" type="cuboid" size="33.6 34.4 74.3"/>
+  <object position="center 236.9 166.4 37.2" orientation="0 0 0" shape="28" material="1"
+          fill-color="165 165 165" line-color="0 0 0" opacity="1"/>
+
+  <shape id="29" type="cuboid" size="34.6 22.0 120.0"/>
+  <object position="center 226.5 128.7 60.0" orientation="0 0 0" shape="29" material="1"
+          fill-color="150 150 150" line-color="0 0 0" opacity="1"/>
+
+  <shape id="30" type="cuboid" size="27.5 25.4 123.4"/>
+  <object position="center 14.1 178.4 61.7" orientation="0 0 0" shape="30" material="1"
+          fill-color="155 155 155" line-color="0 0 0" opacity="1"/>
+
+</environment>

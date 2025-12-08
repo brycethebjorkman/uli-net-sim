@@ -208,9 +208,26 @@ Examples:
         seed=args.seed
     )
 
+    # Build generation parameters for embedding
+    gen_params = {
+        "_generator": "generate_corridors.py",
+        "_params": {
+            "grid_size": args.grid_size,
+            "num_ew": args.num_ew,
+            "num_ns": args.num_ns,
+            "width": args.width,
+            "spacing": args.spacing,
+            "altitude_min": args.altitude_min,
+            "altitude_max": args.altitude_max,
+            "seed": args.seed,
+        }
+    }
+
     # Output as NDJSON
     output = sys.stdout if args.output is None else open(args.output, 'w')
     try:
+        # Write generation parameters as first line (prefixed with #)
+        output.write(f"# {json.dumps(gen_params)}\n")
         for corridor in corridors:
             json.dump(asdict(corridor), output)
             output.write('\n')

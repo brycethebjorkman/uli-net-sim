@@ -1,3 +1,4 @@
+# {"_generator": "generate_corridors.py", "_params": {"grid_size": 400.0, "num_ew": 3, "num_ns": 3, "width": "18", "spacing": "90", "altitude_min": 0.0, "altitude_max": 400.0, "seed": 4}}
 {"id": 0, "direction": "EW", "center": 90.0, "width": 18.0, "altitude_min": 0.0, "altitude_max": 400.0}
 {"id": 1, "direction": "EW", "center": 180.0, "width": 18.0, "altitude_min": 0.0, "altitude_max": 400.0}
 {"id": 2, "direction": "EW", "center": 270.0, "width": 18.0, "altitude_min": 0.0, "altitude_max": 400.0}

@@ -1,3 +1,4 @@
+# {"_generator": "generate_buildings.py", "_params": {"corridors": "/usr/uli-net-sim/uav_rid/simulations/urbanenv_testing/scenario2_corridors.ndjson", "num_buildings": 25, "grid_size": 400.0, "width_x": "20-35", "width_y": "20-35", "height": "60-150", "seed": 2, "max_attempts": 100}}
 {"id": 0, "x": 239.08920706097194, "y": 239.51173326433158, "width_x": 31.03954983602785, "width_y": 30.045956021603313, "height": 87.73228118302298}
 {"id": 1, "x": 131.11457136254654, "y": 154.4550649220924, "width_x": 20.538864940892864, "width_y": 20.411672856362284, "height": 101.84044758875808}
 {"id": 2, "x": 387.06760437486184, "y": 265.9445211950869, "width_x": 24.8771439314174, "width_y": 22.050460894797, "height": 105.92014612534811}

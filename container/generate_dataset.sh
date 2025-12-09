@@ -730,16 +730,13 @@ run_urbanenv() {
                                     python3 "$ADD_HOST_TYPE" "$CSV_FILE" --in-place
                                 fi
 
-                                # Generate federate variants
+                                # Generate federate variants (base CSV is kept)
                                 echo "      Generating federate variants..."
                                 python3 "$LABEL_FEDERATES" "$CSV_FILE" \
                                     --num-federates "$UE_NUM_FEDERATES" \
                                     --max-variants "$UE_MAX_FEDERATE_VARIANTS" \
                                     --seed "$SCENARIO_SEED"
-
-                                # Remove the base CSV (we only keep federate variants)
-                                rm "$CSV_FILE"
-                                echo "      Generated federate variants"
+                                echo "      Created: $CSV_FILE (+ federate variants)"
                             else
                                 echo "      Warning: Vector file not found: $VEC_FILE"
                             fi

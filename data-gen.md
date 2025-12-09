@@ -49,18 +49,44 @@ cd /usr/uli-net-sim/uav_rid
 
 ### Generate Datasets (Inside Container)
 
+The `generate_dataset.sh` script supports two modes: `random_waypoints` and `urbanenv`.
+
+#### Random Waypoints Mode (original)
+
 ```bash
 # Test: 3 scenarios with 5 hosts (1 spoofer)
-./container/generate_dataset.sh -n 3 -h 5 -s 1
+./container/generate_dataset.sh random_waypoints -n 3 -h 5 -s 1
 
 # Baseline: 20 scenarios without spoofers
-./container/generate_dataset.sh -n 20 -c RandomWaypoints5Host -h 5 -s 0 -o datasets/baseline
+./container/generate_dataset.sh random_waypoints -n 20 -c RandomWaypoints5Host -h 5 -s 0 -o datasets/baseline
 
 # Spoofing: 50 scenarios with 1 spoofer
-./container/generate_dataset.sh -n 50 -h 5 -s 1 -o datasets/spoofing_1spoofer
+./container/generate_dataset.sh random_waypoints -n 50 -h 5 -s 1 -o datasets/spoofing_1spoofer
 
 # Dynamic trajectory spoofing (spoofer claims ghost's position)
-./container/generate_dataset.sh -n 50 -c RandomWaypoints4Host1Ghost1DynSpoofer -h 6 -s 1 -o datasets/dynamic_spoofer
+./container/generate_dataset.sh random_waypoints -n 50 -c RandomWaypoints4Host1Ghost1DynSpoofer -h 6 -s 1 -o datasets/dynamic_spoofer
+```
+
+#### Urban Environment Mode (new)
+
+Generates corridor-constrained scenarios with buildings. Supports hierarchical branching for diverse datasets.
+
+```bash
+# Simple: 4 scenarios varying radio params
+./container/generate_dataset.sh urbanenv --num-hosts 5 --scenario-variants 4
+
+# With buildings
+./container/generate_dataset.sh urbanenv --num-hosts 5 --num-buildings 20 --sim-time 300 --scenario-variants 10
+
+# Maximum diversity with branching
+./container/generate_dataset.sh urbanenv \
+    --grid-size "400-800" \
+    --num-hosts "3-8" \
+    --param-variants 2 \
+    --corridor-variants 3 \
+    --building-variants 2 \
+    --trajectory-variants 2 \
+    --scenario-variants 5
 ```
 
 Output files are written to `datasets/` which is visible on the host via the mount.
@@ -107,7 +133,9 @@ python3 vec2csv.py results/scenario.vec -o output.csv
 
 ### 4. End-to-End Pipeline (`container/generate_dataset.sh`)
 
-Options:
+Supports two modes: `random_waypoints` and `urbanenv`.
+
+#### Random Waypoints Mode Options
 ```
 -n NUM        Number of scenario repetitions (default: 5)
 -c CONFIG     OMNeT++ config name (default: RandomWaypoints5Host1Spoofer)
@@ -121,10 +149,82 @@ Options:
 --seed NUM    Starting seed (default: 42)
 ```
 
+#### Urban Environment Mode Options
+```
+Parameter Ranges (use 'min-max' for ranges, or single value):
+--grid-size RANGE         Grid size in meters (default: 400)
+--num-hosts RANGE         Number of hosts (default: 5)
+--sim-time RANGE          Simulation time in seconds (default: 300)
+
+Corridor Parameters:
+--num-ew RANGE            Number of east-west corridors (default: 2)
+--num-ns RANGE            Number of north-south corridors (default: 2)
+--corridor-width RANGE    Corridor width in meters (default: 20)
+--corridor-spacing RANGE  Corridor spacing in meters (default: 120)
+
+Building Parameters:
+--num-buildings RANGE     Number of buildings, 0 for none (default: 20)
+--building-height RANGE   Building height range (default: 60-150)
+
+Trajectory Parameters:
+--speed RANGE             UAV speed in m/s (default: 5-15)
+--altitude RANGE          UAV altitude in m (default: 30-100)
+
+Radio Parameters:
+--tx-power RANGE          TX power in dBm (default: 10-16)
+--beacon-interval RANGE   Beacon interval in s (default: 0.25-0.75)
+--beacon-offset RANGE     Beacon offset in s (default: 0-0.1)
+
+Branching Factors:
+--param-variants N        Number of top-level parameter sets (default: 1)
+--corridor-variants N     Corridor layouts per param set (default: 1)
+--building-variants N     Building layouts per corridor (default: 1)
+--trajectory-variants N   Trajectory sets per corridor (default: 1)
+--scenario-variants N     Scenarios per building+trajectory combo (default: 1)
+
+General Options:
+--seed NUM                Starting seed (default: 42)
+-o DIR                    Output directory (default: $PROJ_DIR/datasets)
+```
+
+#### Urbanenv Output Structure
+```
+datasets/
+├── manifest.json                 ← Top-level manifest for regeneration
+└── urbanenv/
+    └── grid{G}_hosts{H}_sim{T}/
+        └── ew{E}_ns{N}_w{W}_sp{S}/
+            ├── corridors.ndjson
+            ├── buildings/
+            │   └── n{B}_h{H}_seed{S}.xml
+            ├── trajectories/
+            │   └── spd{V}_alt{A}_seed{S}.xml
+            └── scenarios/
+                └── bldg_...__traj_...__seed{S}/
+                    ├── omnetpp.ini
+                    ├── {hash}-o.csv      ← Open-space scenario
+                    └── {hash}-b.csv      ← With-buildings scenario
+```
+
+#### Dataset Manifest
+
+Each dataset includes a `manifest.json` that traces all generation parameters down to individual CSV files. This enables regenerating any CSV after cleanup (e.g., after removing intermediate artifacts to save space).
+
+```bash
+# Regenerate a specific CSV from manifest
+python3 container/regenerate_csv.py datasets/scitech26/manifest.json 872368be-b.csv
+
+# Skip artifact regeneration if they already exist
+python3 container/regenerate_csv.py datasets/scitech26/manifest.json 872368be-b.csv --skip-artifacts
+
+# Regenerate corridors/buildings/trajectories only
+python3 container/urbanenv/regenerate_from_manifest.py datasets/scitech26/manifest.json --all
+```
+
 ## CSV Data Schema
 
 ```csv
-time,event_type,host_id,serial_number,
+time,event_type,host_id,serial_number,host_type,
 pos_x,pos_y,pos_z,speed_vertical,speed_horizontal,heading,
 rid_pos_x,rid_pos_y,rid_pos_z,rid_speed_vertical,rid_speed_horizontal,rid_heading,
 tx_power,rssi,
@@ -136,6 +236,7 @@ kf_estimate,kf_covariance,kf_gain,kf_innovation,kf_nis,kf_measurement
 - `event_type` - "TX" for transmission, "RX" for reception
 - `host_id` - ID of the host logging this event (transmitter for TX, receiver for RX)
 - `serial_number` - Remote ID serial number from the message
+- `host_type` - "benign" or "spoofer" (added by post-processing)
 
 **Actual host position/velocity** (transmitter for TX, receiver for RX):
 - `pos_x, pos_y, pos_z` - Actual position (meters)
@@ -186,13 +287,26 @@ The project uses out-of-tree builds to keep container build artifacts separate f
 │   │   │   ├── static_location/      # Static location spoofer
 │   │   │   └── dynamic_trajectory/   # Dynamic trajectory spoofer
 │   │   └── utils/random_waypoints.py
-│   ├── simulations/random_waypoints/
-│   │   └── omnetpp.ini
+│   ├── simulations/
+│   │   ├── random_waypoints/omnetpp.ini
+│   │   ├── urbanenv/omnetpp.ini      # Urban environment base config
+│   │   └── urbanenv_testing/         # Test scenarios (generated)
 │   ├── container/
 │   │   ├── setenv                # Environment setup script
 │   │   ├── build.sh              # Out-of-tree build script
-│   │   ├── generate_dataset.sh   # End-to-end pipeline
-│   │   └── vec2csv.py            # Vector to CSV converter
+│   │   ├── generate_dataset.sh   # End-to-end pipeline (random_waypoints + urbanenv)
+│   │   ├── run_scenario.sh       # Run single scenario (used by generate_dataset.sh)
+│   │   ├── vec2csv.py            # Vector to CSV converter
+│   │   ├── add_host_type.py      # Add host_type column to CSV
+│   │   ├── regenerate_csv.py     # Regenerate specific CSV from manifest
+│   │   └── urbanenv/             # Urban environment generation tools
+│   │       ├── generate_corridors.py       # Corridor generator
+│   │       ├── generate_buildings.py       # Building generator
+│   │       ├── generate_trajectories.py    # Trajectory generator
+│   │       ├── generate_scenario.py        # Scenario ini generator
+│   │       ├── generate_dataset_manifest.py # Top-level manifest generator
+│   │       ├── regenerate_from_manifest.py  # Regenerate artifacts from manifest
+│   │       └── generate_test_scenarios.sh
 │   ├── datasets/                 # Generated output (visible on host)
 │   ├── out/                      # IDE build output (not used by container)
 │   └── Containerfile             # Container build definition

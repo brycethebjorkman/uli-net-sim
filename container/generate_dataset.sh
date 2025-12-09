@@ -640,6 +640,11 @@ run_urbanenv() {
                         RESULTS_DIR="$SCENARIO_PATH/results"
                         mkdir -p "$RESULTS_DIR"
 
+                        # Compute hash for CSV naming based on relative path from urbanenv/
+                        # Path: grid400_hosts3_sim30/ew2_ns2_w20_sp120/scenarios/bldg_...__seed42
+                        SCENARIO_REL_PATH="${PARAM_DIR}/${CORRIDOR_DIR}/scenarios/${SCENARIO_NAME}"
+                        SCENARIO_HASH=$(echo -n "$SCENARIO_REL_PATH" | md5sum | cut -c1-8)
+
                         # Run each config
                         for CONFIG_NAME in "${CONFIGS_TO_RUN[@]}"; do
                             echo "      Running $CONFIG_NAME..."
@@ -666,11 +671,17 @@ run_urbanenv() {
                                 2>&1 | grep -v "^$" || true
                             popd > /dev/null
 
-                            # Convert to CSV with config-specific name
+                            # Convert to CSV with hash-based name
+                            # -o suffix for OpenSpace, -b suffix for WithBuildings
                             VEC_FILE="$RESULTS_DIR/${CONFIG_NAME}-#0.vec"
                             if [ -f "$VEC_FILE" ]; then
+                                if [ "$CONFIG_NAME" = "ScenarioOpenSpace" ]; then
+                                    CSV_SUFFIX="-o"
+                                else
+                                    CSV_SUFFIX="-b"
+                                fi
+                                CSV_FILE="$SCENARIO_PATH/${SCENARIO_HASH}${CSV_SUFFIX}.csv"
                                 echo "      Converting to CSV..."
-                                CSV_FILE="$SCENARIO_PATH/${CONFIG_NAME}.csv"
                                 python3 "$VEC2CSV" "$VEC_FILE" -o "$CSV_FILE"
                                 echo "      Created: $CSV_FILE"
                             else

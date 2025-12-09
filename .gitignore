@@ -19,3 +19,4 @@ src/**/*_m.h
 **/.tkenvrc
 **/cache/
 **/results/
+__pycache__

@@ -71,9 +71,7 @@ def regenerate_artifacts(manifest_path: Path, corridor_key: str, corridor_path: 
     return result.returncode == 0
 
 
-def run_scenario(scenario_path: Path, spoofer_host: int, num_federates: int,
-                 max_federate_variants: int, scenario_seed: int,
-                 dry_run: bool = False) -> bool:
+def run_scenario(scenario_path: Path, spoofer_host: int, dry_run: bool = False) -> bool:
     """Run the simulation for a specific scenario."""
     script_dir = find_script_dir()
     run_script = script_dir / "run_scenario.sh"
@@ -85,21 +83,15 @@ def run_scenario(scenario_path: Path, spoofer_host: int, num_federates: int,
     # Set up environment variables
     env = os.environ.copy()
 
-    # Check required environment variables
-    required_vars = ["UAV_RID_BIN", "INET_ROOT", "PROJ_DIR", "VEC2CSV", "ADD_HOST_TYPE", "LABEL_FEDERATES"]
-    missing_vars = [v for v in required_vars if v not in env]
+    # Try to set required env vars from known paths
+    proj_dir = script_dir.parent
+    base_dir = proj_dir.parent
 
-    if missing_vars:
-        # Try to set them from known paths
-        proj_dir = script_dir.parent
-        base_dir = proj_dir.parent
-
-        env.setdefault("PROJ_DIR", str(proj_dir))
-        env.setdefault("UAV_RID_BIN", str(base_dir / "container-build" / "out" / "clang-release" / "uav_rid"))
-        env.setdefault("INET_ROOT", str(base_dir / "inet4.5"))
-        env.setdefault("VEC2CSV", str(script_dir / "vec2csv.py"))
-        env.setdefault("ADD_HOST_TYPE", str(script_dir / "add_host_type.py"))
-        env.setdefault("LABEL_FEDERATES", str(script_dir / "label_federates.py"))
+    env.setdefault("PROJ_DIR", str(proj_dir))
+    env.setdefault("UAV_RID_BIN", str(base_dir / "container-build" / "out" / "clang-release" / "uav_rid"))
+    env.setdefault("INET_ROOT", str(base_dir / "inet4.5"))
+    env.setdefault("VEC2CSV", str(script_dir / "vec2csv.py"))
+    env.setdefault("ADD_HOST_TYPE", str(script_dir / "add_host_type.py"))
 
     # Validate binary exists
     if not Path(env["UAV_RID_BIN"]).exists():
@@ -113,14 +105,11 @@ def run_scenario(scenario_path: Path, spoofer_host: int, num_federates: int,
     cmd = [
         str(run_script),
         str(scenario_path),
-        spoofer_arg,
-        str(num_federates),
-        str(max_federate_variants),
-        str(scenario_seed)
+        spoofer_arg
     ]
 
     print(f"Running scenario: {scenario_path.name}")
-    print(f"  spoofer_host={spoofer_arg}, num_federates={num_federates}, scenario_seed={scenario_seed}")
+    print(f"  spoofer_host={spoofer_arg}")
 
     if dry_run:
         print(f"  [dry-run] Would run: {' '.join(cmd)}")
@@ -201,17 +190,9 @@ def main():
     # Step 2: Run simulation
     print("Step 2: Running simulation...")
 
-    # Get generation params for federates
-    gen_params = manifest.get("generation_params", {})
-    num_federates = gen_params.get("num_federates", 4)
-    max_federate_variants = gen_params.get("max_federate_variants", 8)
-
     success = run_scenario(
         scenario_path=scenario_path,
         spoofer_host=scenario_info["spoofer_host"],
-        num_federates=num_federates,
-        max_federate_variants=max_federate_variants,
-        scenario_seed=scenario_info["scenario_seed"],
         dry_run=args.dry_run
     )
 

@@ -244,10 +244,6 @@ UE_SIM_TIME="300"
 # Spoofer/ghost settings (optional)
 UE_ENABLE_SPOOFER=false
 
-# Federate labeling
-UE_NUM_FEDERATES=4
-UE_MAX_FEDERATE_VARIANTS=8
-
 # Parallelization
 UE_PARALLEL=1  # Default: sequential execution
 
@@ -311,10 +307,6 @@ Radio Parameters:
 
 Spoofer/Ghost Configuration:
     --enable-spoofer          Enable spoofer (randomly selects ghost and spoofer hosts)
-
-Federate Labeling:
-    --num-federates N         Number of federates for multilateration (default: $UE_NUM_FEDERATES)
-    --max-federate-variants N Max federate combination variants (default: $UE_MAX_FEDERATE_VARIANTS)
 
 Branching Factors:
     --param-variants N        Number of top-level parameter sets (default: $UE_PARAM_VARIANTS)
@@ -418,8 +410,6 @@ run_urbanenv() {
             --beacon-offset) UE_BEACON_OFFSET="$2"; shift 2 ;;
             --background-noise) UE_BACKGROUND_NOISE="$2"; shift 2 ;;
             --enable-spoofer) UE_ENABLE_SPOOFER=true; shift ;;
-            --num-federates) UE_NUM_FEDERATES="$2"; shift 2 ;;
-            --max-federate-variants) UE_MAX_FEDERATE_VARIANTS="$2"; shift 2 ;;
             --param-variants) UE_PARAM_VARIANTS="$2"; shift 2 ;;
             --corridor-variants) UE_CORRIDOR_VARIANTS="$2"; shift 2 ;;
             --building-variants) UE_BUILDING_VARIANTS="$2"; shift 2 ;;
@@ -466,9 +456,6 @@ run_urbanenv() {
     echo "  Beacon offset:     $UE_BEACON_OFFSET s"
     echo "  Background noise:  $UE_BACKGROUND_NOISE dBm"
     echo "Spoofer:             $UE_ENABLE_SPOOFER"
-    echo "Federate labeling:"
-    echo "  Num federates:     $UE_NUM_FEDERATES"
-    echo "  Max variants:      $UE_MAX_FEDERATE_VARIANTS"
     echo "Branching factors:"
     echo "  Param variants:    $UE_PARAM_VARIANTS"
     echo "  Corridor variants: $UE_CORRIDOR_VARIANTS"
@@ -695,9 +682,9 @@ run_urbanenv() {
                             SPOOFER_HOST=$(grep -oP 'spoofer_host": \K\d+' "$INI_FILE" || true)
                         fi
 
-                        # Write to manifest: scenario_path|spoofer_host|num_federates|max_federate_variants|scenario_seed
+                        # Write to manifest: scenario_path|spoofer_host
                         # Use "-" for empty spoofer host
-                        echo "${SCENARIO_PATH}|${SPOOFER_HOST:--}|${UE_NUM_FEDERATES}|${UE_MAX_FEDERATE_VARIANTS}|${SCENARIO_SEED}" >> "$SCENARIO_MANIFEST_FILE"
+                        echo "${SCENARIO_PATH}|${SPOOFER_HOST:--}" >> "$SCENARIO_MANIFEST_FILE"
                     done
                 done
             done
@@ -718,7 +705,7 @@ run_urbanenv() {
 
     # Export environment variables for run_scenario.sh
     RUN_SCENARIO="$SCRIPT_DIR/run_scenario.sh"
-    export UAV_RID_BIN INET_ROOT PROJ_DIR VEC2CSV ADD_HOST_TYPE LABEL_FEDERATES RUN_SCENARIO
+    export UAV_RID_BIN INET_ROOT PROJ_DIR VEC2CSV ADD_HOST_TYPE RUN_SCENARIO
 
     if [ ! -f "$RUN_SCENARIO" ]; then
         echo "Error: run_scenario.sh not found at $RUN_SCENARIO"
@@ -728,10 +715,10 @@ run_urbanenv() {
     if [ "$UE_PARALLEL" -eq 1 ]; then
         # Sequential execution
         SCENARIO_NUM=0
-        while IFS='|' read -r SCENARIO_PATH SPOOFER_HOST NUM_FED MAX_FED_VAR SCENARIO_SEED; do
+        while IFS='|' read -r SCENARIO_PATH SPOOFER_HOST; do
             SCENARIO_NUM=$((SCENARIO_NUM + 1))
             echo "[$SCENARIO_NUM/$TOTAL_SCENARIOS] Running $(basename "$SCENARIO_PATH")..."
-            "$RUN_SCENARIO" "$SCENARIO_PATH" "$SPOOFER_HOST" "$NUM_FED" "$MAX_FED_VAR" "$SCENARIO_SEED"
+            "$RUN_SCENARIO" "$SCENARIO_PATH" "$SPOOFER_HOST"
             echo ""
         done < "$SCENARIO_MANIFEST_FILE"
     else
@@ -740,10 +727,10 @@ run_urbanenv() {
         echo ""
 
         # Use xargs for parallel execution
-        # Format: scenario_path|spoofer_host|num_federates|max_federate_variants|scenario_seed
+        # Format: scenario_path|spoofer_host
         cat "$SCENARIO_MANIFEST_FILE" | xargs -P "$UE_PARALLEL" -I {} bash -c '
-            IFS="|" read -r SCENARIO_PATH SPOOFER_HOST NUM_FED MAX_FED_VAR SCENARIO_SEED <<< "$1"
-            "$RUN_SCENARIO" "$SCENARIO_PATH" "$SPOOFER_HOST" "$NUM_FED" "$MAX_FED_VAR" "$SCENARIO_SEED"
+            IFS="|" read -r SCENARIO_PATH SPOOFER_HOST <<< "$1"
+            "$RUN_SCENARIO" "$SCENARIO_PATH" "$SPOOFER_HOST"
         ' _ {}
     fi
 
@@ -788,9 +775,7 @@ run_urbanenv() {
   "beacon_interval": "$UE_BEACON_INTERVAL",
   "beacon_offset": "$UE_BEACON_OFFSET",
   "background_noise": $UE_BACKGROUND_NOISE,
-  "enable_spoofer": $JSON_ENABLE_SPOOFER,
-  "num_federates": $UE_NUM_FEDERATES,
-  "max_federate_variants": $UE_MAX_FEDERATE_VARIANTS
+  "enable_spoofer": $JSON_ENABLE_SPOOFER
 }
 EOF
 )
@@ -857,13 +842,6 @@ fi
 ADD_HOST_TYPE="$SCRIPT_DIR/add_host_type.py"
 if [ ! -f "$ADD_HOST_TYPE" ]; then
     echo "Error: add_host_type.py not found at $ADD_HOST_TYPE"
-    exit 1
-fi
-
-# Check for label_federates
-LABEL_FEDERATES="$SCRIPT_DIR/label_federates.py"
-if [ ! -f "$LABEL_FEDERATES" ]; then
-    echo "Error: label_federates.py not found at $LABEL_FEDERATES"
     exit 1
 fi
 

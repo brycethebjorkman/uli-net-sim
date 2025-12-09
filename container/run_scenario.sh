@@ -6,19 +6,16 @@
 # Designed to be called in parallel by generate_dataset.sh.
 #
 # Usage:
-#   ./run_scenario.sh <scenario_path> <spoofer_host> <num_federates> <max_federate_variants> <scenario_seed>
+#   ./run_scenario.sh <scenario_path> <spoofer_host>
 #
 # Environment variables required (set by parent script):
-#   UAV_RID_BIN, INET_ROOT, PROJ_DIR, VEC2CSV, ADD_HOST_TYPE, LABEL_FEDERATES
+#   UAV_RID_BIN, INET_ROOT, PROJ_DIR, VEC2CSV, ADD_HOST_TYPE
 #
 
 set -e
 
 SCENARIO_PATH="$1"
 SPOOFER_HOST="$2"
-NUM_FEDERATES="$3"
-MAX_FEDERATE_VARIANTS="$4"
-SCENARIO_SEED="$5"
 
 if [ -z "$SCENARIO_PATH" ]; then
     echo "Error: scenario_path required"
@@ -98,13 +95,7 @@ for CONFIG_NAME in "${CONFIGS_TO_RUN[@]}"; do
             python3 "$ADD_HOST_TYPE" "$CSV_FILE" --in-place
         fi
 
-        # Generate federate variants (base CSV is kept)
-        echo "  [$SCENARIO_NAME] Generating federate variants..."
-        python3 "$LABEL_FEDERATES" "$CSV_FILE" \
-            --num-federates "$NUM_FEDERATES" \
-            --max-variants "$MAX_FEDERATE_VARIANTS" \
-            --seed "$SCENARIO_SEED"
-        echo "  [$SCENARIO_NAME] Created: $(basename "$CSV_FILE") (+ federate variants)"
+        echo "  [$SCENARIO_NAME] Created: $(basename "$CSV_FILE")"
     else
         echo "  [$SCENARIO_NAME] Warning: Vector file not found: $VEC_FILE"
     fi

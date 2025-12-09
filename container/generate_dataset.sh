@@ -629,43 +629,54 @@ run_urbanenv() {
                             python3 "$GEN_SCENARIO" "${SCENARIO_ARGS[@]}"
                         fi
 
-                        # Run simulation
-                        echo "      Running simulation..."
+                        # Determine which configs to run
+                        # ScenarioOpenSpace is always present
+                        # ScenarioWithBuildings is only present if buildings were specified
+                        CONFIGS_TO_RUN=("ScenarioOpenSpace")
+                        if [ -n "$BLDG_FILE" ]; then
+                            CONFIGS_TO_RUN+=("ScenarioWithBuildings")
+                        fi
+
                         RESULTS_DIR="$SCENARIO_PATH/results"
                         mkdir -p "$RESULTS_DIR"
 
-                        # Run from the scenario directory so relative paths in ini work
-                        pushd "$SCENARIO_PATH" > /dev/null
-                        ${UAV_RID_BIN} -m \
-                            -u Cmdenv \
-                            -c "Scenario" \
-                            -l "$INET_ROOT/out/clang-release/src/libINET.so" \
-                            -n "$INET_ROOT/src" \
-                            -n "$INET_ROOT/src/inet/visualizer/common" \
-                            -n "$INET_ROOT/examples" \
-                            -n "$INET_ROOT/showcases" \
-                            -n "$INET_ROOT/tests/validation" \
-                            -n "$INET_ROOT/tests/networks" \
-                            -n "$INET_ROOT/tutorials" \
-                            -n "$PROJ_DIR/simulations" \
-                            -n "$PROJ_DIR/src" \
-                            -f "omnetpp.ini" \
-                            --cmdenv-express-mode=true \
-                            --cmdenv-status-frequency=10s \
-                            --result-dir="results" \
-                            2>&1 | grep -v "^$" || true
-                        popd > /dev/null
+                        # Run each config
+                        for CONFIG_NAME in "${CONFIGS_TO_RUN[@]}"; do
+                            echo "      Running $CONFIG_NAME..."
 
-                        # Convert to CSV
-                        VEC_FILE="$RESULTS_DIR/Scenario-#0.vec"
-                        if [ -f "$VEC_FILE" ]; then
-                            echo "      Converting to CSV..."
-                            CSV_FILE="$SCENARIO_PATH/output.csv"
-                            python3 "$VEC2CSV" "$VEC_FILE" -o "$CSV_FILE"
-                            echo "      Created: $CSV_FILE"
-                        else
-                            echo "      Warning: Vector file not found: $VEC_FILE"
-                        fi
+                            # Run from the scenario directory so relative paths in ini work
+                            pushd "$SCENARIO_PATH" > /dev/null
+                            ${UAV_RID_BIN} -m \
+                                -u Cmdenv \
+                                -c "$CONFIG_NAME" \
+                                -l "$INET_ROOT/out/clang-release/src/libINET.so" \
+                                -n "$INET_ROOT/src" \
+                                -n "$INET_ROOT/src/inet/visualizer/common" \
+                                -n "$INET_ROOT/examples" \
+                                -n "$INET_ROOT/showcases" \
+                                -n "$INET_ROOT/tests/validation" \
+                                -n "$INET_ROOT/tests/networks" \
+                                -n "$INET_ROOT/tutorials" \
+                                -n "$PROJ_DIR/simulations" \
+                                -n "$PROJ_DIR/src" \
+                                -f "omnetpp.ini" \
+                                --cmdenv-express-mode=true \
+                                --cmdenv-status-frequency=10s \
+                                --result-dir="results" \
+                                2>&1 | grep -v "^$" || true
+                            popd > /dev/null
+
+                            # Convert to CSV with config-specific name
+                            VEC_FILE="$RESULTS_DIR/${CONFIG_NAME}-#0.vec"
+                            if [ -f "$VEC_FILE" ]; then
+                                echo "      Converting to CSV..."
+                                CSV_FILE="$SCENARIO_PATH/${CONFIG_NAME}.csv"
+                                python3 "$VEC2CSV" "$VEC_FILE" -o "$CSV_FILE"
+                                echo "      Created: $CSV_FILE"
+                            else
+                                echo "      Warning: Vector file not found: $VEC_FILE"
+                            fi
+                        done
 
                         echo ""
                     done

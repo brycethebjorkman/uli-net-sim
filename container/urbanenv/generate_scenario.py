@@ -184,6 +184,11 @@ Examples:
     lines.append(f"# Trajectories: {trajectories_path}")
     if args.buildings:
         lines.append(f"# Buildings: {args.buildings}")
+    lines.append(f"#")
+    lines.append(f"# Available configs:")
+    lines.append(f"#   - ScenarioOpenSpace: No buildings (open sky)")
+    if args.buildings:
+        lines.append(f"#   - ScenarioWithBuildings: With buildings (extends ScenarioOpenSpace)")
     lines.append("")
 
     # Embed the base configuration directly (IDE doesn't support include)
@@ -193,34 +198,6 @@ Examples:
         base_content = f.read().rstrip()
     lines.append(base_content)
     lines.append("")
-    lines.append("")
-    lines.append("# ==============================================================================")
-    lines.append(f"# {config_name}")
-    lines.append("# ==============================================================================")
-    lines.append(f"[Config {config_name}]")
-    lines.append("extends = UrbanEnvBase")
-
-    # Description
-    desc_parts = [f"{num_hosts} hosts"]
-    if args.buildings:
-        desc_parts.append("with buildings")
-    else:
-        desc_parts.append("no buildings")
-    if args.ghost_host is not None:
-        desc_parts.append(f"ghost[{args.ghost_host}]+spoofer[{args.spoofer_host}]")
-    lines.append(f'description = "{", ".join(desc_parts)}"')
-    lines.append("")
-
-    # Basic parameters
-    lines.append(f"sim-time-limit = {int(args.sim_time_limit)}s")
-    lines.append(f"*.numHosts = {num_hosts}")
-    lines.append("")
-
-    # Physical environment
-    if args.buildings:
-        lines.append(f'*.physicalEnvironment.config = xmldoc("{buildings_rel}")')
-    else:
-        lines.append('*.physicalEnvironment.config = xml("<environment/>")')
     lines.append("")
 
     # Sample per-host parameters deterministically based on seed
@@ -235,6 +212,31 @@ Examples:
             'beacon_interval': beacon_interval,
             'beacon_offset': beacon_offset,
         })
+
+    # ===========================================================================
+    # ScenarioOpenSpace - base config without buildings
+    # ===========================================================================
+    lines.append("# ==============================================================================")
+    lines.append("# ScenarioOpenSpace - No buildings (open sky)")
+    lines.append("# ==============================================================================")
+    lines.append("[Config ScenarioOpenSpace]")
+    lines.append("extends = UrbanEnvBase")
+
+    # Description
+    desc_parts = [f"{num_hosts} hosts", "open space"]
+    if args.ghost_host is not None:
+        desc_parts.append(f"ghost[{args.ghost_host}]+spoofer[{args.spoofer_host}]")
+    lines.append(f'description = "{", ".join(desc_parts)}"')
+    lines.append("")
+
+    # Basic parameters
+    lines.append(f"sim-time-limit = {int(args.sim_time_limit)}s")
+    lines.append(f"*.numHosts = {num_hosts}")
+    lines.append("")
+
+    # No buildings - empty physical environment
+    lines.append('*.physicalEnvironment.config = xml("<environment/>")')
+    lines.append("")
 
     # Host types and configurations
     if args.ghost_host is not None:
@@ -265,13 +267,31 @@ Examples:
         lines.append(f'*.host[{i}].mobility.turtleScript = xmldoc("{traj_rel}", "movements/movement[@id=\'{i}\']")')
     lines.append("")
 
+    # ===========================================================================
+    # ScenarioWithBuildings - extends ScenarioOpenSpace with buildings
+    # ===========================================================================
+    if args.buildings:
+        lines.append("")
+        lines.append("# ==============================================================================")
+        lines.append("# ScenarioWithBuildings - With buildings (extends ScenarioOpenSpace)")
+        lines.append("# ==============================================================================")
+        lines.append("[Config ScenarioWithBuildings]")
+        lines.append("extends = ScenarioOpenSpace")
+        desc_parts = [f"{num_hosts} hosts", "with buildings"]
+        if args.ghost_host is not None:
+            desc_parts.append(f"ghost[{args.ghost_host}]+spoofer[{args.spoofer_host}]")
+        lines.append(f'description = "{", ".join(desc_parts)}"')
+        lines.append("")
+        lines.append(f'*.physicalEnvironment.config = xmldoc("{buildings_rel}")')
+        lines.append("")
+
     # Write the output file
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, 'w') as f:
         f.write('\n'.join(lines))
 
     print(f"Generated scenario: {output_path}")
-    print(f"  Config name: {config_name}")
+    print(f"  Configs: ScenarioOpenSpace" + (", ScenarioWithBuildings" if args.buildings else ""))
     print(f"  Hosts: {num_hosts}")
     print(f"  TX Power: {tx_power_min}-{tx_power_max} dBm (per-host sampled)")
     print(f"  Beacon Interval: {beacon_interval_min}-{beacon_interval_max}s (per-host sampled)")

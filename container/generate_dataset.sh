@@ -244,6 +244,10 @@ UE_SIM_TIME="300"
 # Spoofer/ghost settings (optional)
 UE_ENABLE_SPOOFER=false
 
+# Federate labeling
+UE_NUM_FEDERATES=4
+UE_MAX_FEDERATE_VARIANTS=8
+
 # Corridor parameters
 UE_NUM_EW="2"
 UE_NUM_NS="2"
@@ -304,6 +308,10 @@ Radio Parameters:
 
 Spoofer/Ghost Configuration:
     --enable-spoofer          Enable spoofer (randomly selects ghost and spoofer hosts)
+
+Federate Labeling:
+    --num-federates N         Number of federates for multilateration (default: $UE_NUM_FEDERATES)
+    --max-federate-variants N Max federate combination variants (default: $UE_MAX_FEDERATE_VARIANTS)
 
 Branching Factors:
     --param-variants N        Number of top-level parameter sets (default: $UE_PARAM_VARIANTS)
@@ -403,6 +411,8 @@ run_urbanenv() {
             --beacon-offset) UE_BEACON_OFFSET="$2"; shift 2 ;;
             --background-noise) UE_BACKGROUND_NOISE="$2"; shift 2 ;;
             --enable-spoofer) UE_ENABLE_SPOOFER=true; shift ;;
+            --num-federates) UE_NUM_FEDERATES="$2"; shift 2 ;;
+            --max-federate-variants) UE_MAX_FEDERATE_VARIANTS="$2"; shift 2 ;;
             --param-variants) UE_PARAM_VARIANTS="$2"; shift 2 ;;
             --corridor-variants) UE_CORRIDOR_VARIANTS="$2"; shift 2 ;;
             --building-variants) UE_BUILDING_VARIANTS="$2"; shift 2 ;;
@@ -443,6 +453,9 @@ run_urbanenv() {
     echo "  Beacon offset:     $UE_BEACON_OFFSET s"
     echo "  Background noise:  $UE_BACKGROUND_NOISE dBm"
     echo "Spoofer:             $UE_ENABLE_SPOOFER"
+    echo "Federate labeling:"
+    echo "  Num federates:     $UE_NUM_FEDERATES"
+    echo "  Max variants:      $UE_MAX_FEDERATE_VARIANTS"
     echo "Branching factors:"
     echo "  Param variants:    $UE_PARAM_VARIANTS"
     echo "  Corridor variants: $UE_CORRIDOR_VARIANTS"
@@ -716,7 +729,17 @@ run_urbanenv() {
                                 else
                                     python3 "$ADD_HOST_TYPE" "$CSV_FILE" --in-place
                                 fi
-                                echo "      Created: $CSV_FILE"
+
+                                # Generate federate variants
+                                echo "      Generating federate variants..."
+                                python3 "$LABEL_FEDERATES" "$CSV_FILE" \
+                                    --num-federates "$UE_NUM_FEDERATES" \
+                                    --max-variants "$UE_MAX_FEDERATE_VARIANTS" \
+                                    --seed "$SCENARIO_SEED"
+
+                                # Remove the base CSV (we only keep federate variants)
+                                rm "$CSV_FILE"
+                                echo "      Generated federate variants"
                             else
                                 echo "      Warning: Vector file not found: $VEC_FILE"
                             fi
@@ -773,6 +796,13 @@ fi
 ADD_HOST_TYPE="$SCRIPT_DIR/add_host_type.py"
 if [ ! -f "$ADD_HOST_TYPE" ]; then
     echo "Error: add_host_type.py not found at $ADD_HOST_TYPE"
+    exit 1
+fi
+
+# Check for label_federates
+LABEL_FEDERATES="$SCRIPT_DIR/label_federates.py"
+if [ ! -f "$LABEL_FEDERATES" ]; then
+    echo "Error: label_federates.py not found at $LABEL_FEDERATES"
     exit 1
 fi
 

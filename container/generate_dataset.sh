@@ -241,6 +241,9 @@ UE_GRID_SIZE="400"
 UE_NUM_HOSTS="5"
 UE_SIM_TIME="300"
 
+# Spoofer/ghost settings (optional)
+UE_ENABLE_SPOOFER=false
+
 # Corridor parameters
 UE_NUM_EW="2"
 UE_NUM_NS="2"
@@ -297,6 +300,9 @@ Radio Parameters:
     --beacon-interval RANGE   Beacon interval in s (default: $UE_BEACON_INTERVAL)
     --beacon-offset RANGE     Beacon offset in s (default: $UE_BEACON_OFFSET)
 
+Spoofer/Ghost Configuration:
+    --enable-spoofer          Enable spoofer (randomly selects ghost and spoofer hosts)
+
 Branching Factors:
     --param-variants N        Number of top-level parameter sets (default: $UE_PARAM_VARIANTS)
     --corridor-variants N     Corridor layouts per param set (default: $UE_CORRIDOR_VARIANTS)
@@ -337,6 +343,9 @@ Examples:
 
     # Large grid, more hosts, no buildings
     $0 urbanenv --grid-size 800 --num-hosts 10 --num-buildings 0
+
+    # With spoofer (randomly selected ghost and spoofer hosts)
+    $0 urbanenv --num-hosts 6 --enable-spoofer
 EOF
     exit 0
 }
@@ -390,6 +399,7 @@ run_urbanenv() {
             --tx-power) UE_TX_POWER="$2"; shift 2 ;;
             --beacon-interval) UE_BEACON_INTERVAL="$2"; shift 2 ;;
             --beacon-offset) UE_BEACON_OFFSET="$2"; shift 2 ;;
+            --enable-spoofer) UE_ENABLE_SPOOFER=true; shift ;;
             --param-variants) UE_PARAM_VARIANTS="$2"; shift 2 ;;
             --corridor-variants) UE_CORRIDOR_VARIANTS="$2"; shift 2 ;;
             --building-variants) UE_BUILDING_VARIANTS="$2"; shift 2 ;;
@@ -428,6 +438,7 @@ run_urbanenv() {
     echo "  TX power:          $UE_TX_POWER dBm"
     echo "  Beacon interval:   $UE_BEACON_INTERVAL s"
     echo "  Beacon offset:     $UE_BEACON_OFFSET s"
+    echo "Spoofer:             $UE_ENABLE_SPOOFER"
     echo "Branching factors:"
     echo "  Param variants:    $UE_PARAM_VARIANTS"
     echo "  Corridor variants: $UE_CORRIDOR_VARIANTS"
@@ -626,7 +637,17 @@ run_urbanenv() {
                             if [ -n "$BLDG_FILE" ]; then
                                 SCENARIO_ARGS+=(-b "$BLDG_FILE")
                             fi
-                            python3 "$GEN_SCENARIO" "${SCENARIO_ARGS[@]}"
+                            if [ "$UE_ENABLE_SPOOFER" = true ]; then
+                                SCENARIO_ARGS+=(--enable-spoofer)
+                            fi
+                            # Capture output to extract SPOOFER_HOST
+                            SCENARIO_OUTPUT=$(python3 "$GEN_SCENARIO" "${SCENARIO_ARGS[@]}")
+                            echo "$SCENARIO_OUTPUT"
+                            # Extract spoofer host from output (format: SPOOFER_HOST=N)
+                            SPOOFER_HOST=$(echo "$SCENARIO_OUTPUT" | grep -oP 'SPOOFER_HOST=\K\d+' || true)
+                        else
+                            # INI already exists, extract spoofer host from it
+                            SPOOFER_HOST=$(grep -oP 'spoofer_host": \K\d+' "$INI_FILE" || true)
                         fi
 
                         # Determine which configs to run
@@ -683,6 +704,13 @@ run_urbanenv() {
                                 CSV_FILE="$SCENARIO_PATH/${SCENARIO_HASH}${CSV_SUFFIX}.csv"
                                 echo "      Converting to CSV..."
                                 python3 "$VEC2CSV" "$VEC_FILE" -o "$CSV_FILE"
+
+                                # Add host_type column
+                                if [ -n "$SPOOFER_HOST" ]; then
+                                    python3 "$ADD_HOST_TYPE" "$CSV_FILE" --in-place --spoofer-hosts "$SPOOFER_HOST"
+                                else
+                                    python3 "$ADD_HOST_TYPE" "$CSV_FILE" --in-place
+                                fi
                                 echo "      Created: $CSV_FILE"
                             else
                                 echo "      Warning: Vector file not found: $VEC_FILE"
@@ -733,6 +761,13 @@ fi
 VEC2CSV="$SCRIPT_DIR/vec2csv.py"
 if [ ! -f "$VEC2CSV" ]; then
     echo "Error: vec2csv.py not found at $VEC2CSV"
+    exit 1
+fi
+
+# Check for add_host_type
+ADD_HOST_TYPE="$SCRIPT_DIR/add_host_type.py"
+if [ ! -f "$ADD_HOST_TYPE" ]; then
+    echo "Error: add_host_type.py not found at $ADD_HOST_TYPE"
     exit 1
 fi
 

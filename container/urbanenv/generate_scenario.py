@@ -56,7 +56,10 @@ Examples:
   # Custom radio parameters
   %(prog)s -t waypoints.xml --tx-power 10-16 --beacon-interval 0.25-0.75 -o scenario.ini
 
-  # Scenario with spoofer (host 4 is ghost, host 5 is spoofer claiming ghost's position)
+  # Scenario with spoofer (randomly selected ghost and spoofer)
+  %(prog)s -t waypoints.xml -b buildings.xml --enable-spoofer --seed 42 -o scenario.ini
+
+  # Scenario with specific spoofer hosts
   %(prog)s -t waypoints.xml -b buildings.xml --ghost-host 4 --spoofer-host 5 -o scenario.ini
 """
     )
@@ -77,6 +80,8 @@ Examples:
                         help='Host index to use as ghost (silent drone)')
     parser.add_argument('--spoofer-host', type=int, default=None,
                         help='Host index to use as spoofer (claims ghost position)')
+    parser.add_argument('--enable-spoofer', action='store_true',
+                        help='Randomly select ghost and spoofer hosts (requires >= 2 hosts)')
     parser.add_argument('--config-name', default=None,
                         help='Config name (default: derived from output filename)')
     parser.add_argument('--seed', type=int, default=None,
@@ -86,14 +91,17 @@ Examples:
 
     args = parser.parse_args()
 
-    # Validate spoofer/ghost pair
+    # Validate spoofer/ghost options
+    if args.enable_spoofer and (args.ghost_host is not None or args.spoofer_host is not None):
+        parser.error("--enable-spoofer cannot be used with --ghost-host or --spoofer-host")
+
     if (args.ghost_host is None) != (args.spoofer_host is None):
         parser.error("--ghost-host and --spoofer-host must be used together")
 
     if args.ghost_host is not None and args.ghost_host == args.spoofer_host:
         parser.error("--ghost-host and --spoofer-host must be different hosts")
 
-    # Set seed if provided
+    # Set seed if provided (before any random operations)
     if args.seed is not None:
         random.seed(args.seed)
 
@@ -113,13 +121,27 @@ Examples:
     num_hosts = count_hosts_in_waypoints(trajectories_path)
     print(f"Found {num_hosts} hosts in waypoints file")
 
-    # Validate host indices
-    if args.ghost_host is not None:
-        if args.ghost_host < 0 or args.ghost_host >= num_hosts:
-            print(f"Error: ghost-host index {args.ghost_host} out of range [0, {num_hosts-1}]", file=sys.stderr)
+    # Handle --enable-spoofer: randomly select ghost and spoofer
+    ghost_host = args.ghost_host
+    spoofer_host = args.spoofer_host
+
+    if args.enable_spoofer:
+        if num_hosts < 2:
+            print(f"Error: --enable-spoofer requires at least 2 hosts, found {num_hosts}", file=sys.stderr)
             sys.exit(1)
-        if args.spoofer_host < 0 or args.spoofer_host >= num_hosts:
-            print(f"Error: spoofer-host index {args.spoofer_host} out of range [0, {num_hosts-1}]", file=sys.stderr)
+        # Randomly select two different hosts
+        selected = random.sample(range(num_hosts), 2)
+        ghost_host = selected[0]
+        spoofer_host = selected[1]
+        print(f"Randomly selected: ghost={ghost_host}, spoofer={spoofer_host}")
+
+    # Validate host indices (only for explicit --ghost-host/--spoofer-host, not --enable-spoofer)
+    if ghost_host is not None and not args.enable_spoofer:
+        if ghost_host < 0 or ghost_host >= num_hosts:
+            print(f"Error: ghost-host index {ghost_host} out of range [0, {num_hosts-1}]", file=sys.stderr)
+            sys.exit(1)
+        if spoofer_host < 0 or spoofer_host >= num_hosts:
+            print(f"Error: spoofer-host index {spoofer_host} out of range [0, {num_hosts-1}]", file=sys.stderr)
             sys.exit(1)
 
     # Parse ranges
@@ -169,8 +191,8 @@ Examples:
             "beacon_interval": args.beacon_interval,
             "beacon_offset": args.beacon_offset,
             "sim_time_limit": args.sim_time_limit,
-            "ghost_host": args.ghost_host,
-            "spoofer_host": args.spoofer_host,
+            "ghost_host": ghost_host,
+            "spoofer_host": spoofer_host,
             "config_name": config_name,
             "seed": args.seed,
         }
@@ -224,8 +246,8 @@ Examples:
 
     # Description
     desc_parts = [f"{num_hosts} hosts", "open space"]
-    if args.ghost_host is not None:
-        desc_parts.append(f"ghost[{args.ghost_host}]+spoofer[{args.spoofer_host}]")
+    if ghost_host is not None:
+        desc_parts.append(f"ghost[{ghost_host}]+spoofer[{spoofer_host}]")
     lines.append(f'description = "{", ".join(desc_parts)}"')
     lines.append("")
 
@@ -239,20 +261,20 @@ Examples:
     lines.append("")
 
     # Host types and configurations
-    if args.ghost_host is not None:
+    if ghost_host is not None:
         lines.append(f"# Ghost host (silent, no RF)")
-        lines.append(f'*.host[{args.ghost_host}].typename = "GhostHost"')
+        lines.append(f'*.host[{ghost_host}].typename = "GhostHost"')
         lines.append("")
         lines.append(f"# Spoofer host (claims ghost's position)")
-        lines.append(f'*.host[{args.spoofer_host}].typename = "DynamicTrajectorySpooferHost"')
-        lines.append(f"*.host[{args.spoofer_host}].wlan[0].mgmt.targetHostIndex = {args.ghost_host}")
+        lines.append(f'*.host[{spoofer_host}].typename = "DynamicTrajectorySpooferHost"')
+        lines.append(f"*.host[{spoofer_host}].wlan[0].mgmt.targetHostIndex = {ghost_host}")
         lines.append("")
 
     # Per-host radio and beacon parameters
     lines.append("# Per-host parameters (sampled deterministically from seed)")
     for i in range(num_hosts):
         # Skip radio params for ghost host (no wlan)
-        if args.ghost_host is not None and i == args.ghost_host:
+        if ghost_host is not None and i == ghost_host:
             continue
         params = host_params[i]
         lines.append(f"*.host[{i}].wlan[0].radio.transmitter.power = {params['tx_power']:.6f}dBm")
@@ -278,8 +300,8 @@ Examples:
         lines.append("[Config ScenarioWithBuildings]")
         lines.append("extends = ScenarioOpenSpace")
         desc_parts = [f"{num_hosts} hosts", "with buildings"]
-        if args.ghost_host is not None:
-            desc_parts.append(f"ghost[{args.ghost_host}]+spoofer[{args.spoofer_host}]")
+        if ghost_host is not None:
+            desc_parts.append(f"ghost[{ghost_host}]+spoofer[{spoofer_host}]")
         lines.append(f'description = "{", ".join(desc_parts)}"')
         lines.append("")
         lines.append(f'*.physicalEnvironment.config = xmldoc("{buildings_rel}")')
@@ -297,8 +319,13 @@ Examples:
     print(f"  Beacon Interval: {beacon_interval_min}-{beacon_interval_max}s (per-host sampled)")
     if beacon_offset_min != 0 or beacon_offset_max != 0:
         print(f"  Beacon Offset: {beacon_offset_min}-{beacon_offset_max}s (per-host sampled)")
-    if args.ghost_host is not None:
-        print(f"  Ghost: host[{args.ghost_host}], Spoofer: host[{args.spoofer_host}]")
+    if ghost_host is not None:
+        print(f"  Ghost: host[{ghost_host}], Spoofer: host[{spoofer_host}]")
+
+    # Output machine-readable metadata for downstream tools
+    # Format: SPOOFER_HOST=N (only if spoofer is configured)
+    if spoofer_host is not None:
+        print(f"SPOOFER_HOST={spoofer_host}")
 
 
 if __name__ == '__main__':

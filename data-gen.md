@@ -87,6 +87,12 @@ Generates corridor-constrained scenarios with buildings. Supports hierarchical b
     --building-variants 2 \
     --trajectory-variants 2 \
     --scenario-variants 5
+
+# With spoofer (1 ghost + 1 dynamic trajectory spoofer)
+./container/generate_dataset.sh urbanenv \
+    --num-hosts 6 \
+    --enable-spoofer \
+    --scenario-variants 10
 ```
 
 Output files are written to `datasets/` which is visible on the host via the mount.
@@ -174,6 +180,10 @@ Radio Parameters:
 --tx-power RANGE          TX power in dBm (default: 10-16)
 --beacon-interval RANGE   Beacon interval in s (default: 0.25-0.75)
 --beacon-offset RANGE     Beacon offset in s (default: 0-0.1)
+--background-noise dBm    Background noise power (default: -90)
+
+Spoofer Configuration:
+--enable-spoofer          Enable spoofer (randomly selects ghost and spoofer hosts)
 
 Branching Factors:
 --param-variants N        Number of top-level parameter sets (default: 1)
@@ -181,6 +191,10 @@ Branching Factors:
 --building-variants N     Building layouts per corridor (default: 1)
 --trajectory-variants N   Trajectory sets per corridor (default: 1)
 --scenario-variants N     Scenarios per building+trajectory combo (default: 1)
+
+Parallelization:
+--parallel N              Run N scenarios in parallel (default: 1)
+                          Use --parallel 0 for auto-detect (nproc)
 
 General Options:
 --seed NUM                Starting seed (default: 42)
@@ -224,19 +238,23 @@ python3 container/urbanenv/regenerate_from_manifest.py datasets/scitech26/manife
 ## CSV Data Schema
 
 ```csv
-time,event_type,host_id,serial_number,host_type,
+time,event_type,host_id,host_type,is_spoofed,serial_number,rid_timestamp,
 pos_x,pos_y,pos_z,speed_vertical,speed_horizontal,heading,
 rid_pos_x,rid_pos_y,rid_pos_z,rid_speed_vertical,rid_speed_horizontal,rid_heading,
 tx_power,rssi,
 kf_estimate,kf_covariance,kf_gain,kf_innovation,kf_nis,kf_measurement
 ```
 
-### Common Fields (both TX and RX)
-- `time` - Simulation time (seconds)
+### Event Identification
+- `time` - Event time (RX time for receptions, TX time for transmissions)
 - `event_type` - "TX" for transmission, "RX" for reception
 - `host_id` - ID of the host logging this event (transmitter for TX, receiver for RX)
 - `serial_number` - Remote ID serial number from the message
+- `rid_timestamp` - RID message timestamp in milliseconds (uniquely identifies a transmission with serial_number)
 - `host_type` - "benign" or "spoofer" (added by post-processing)
+- `is_spoofed` - 1 if this event is from a spoofer, 0 otherwise (added by post-processing)
+
+**Transmission grouping:** To identify all RX events from a single transmission, group by `(serial_number, rid_timestamp)`.
 
 **Actual host position/velocity** (transmitter for TX, receiver for RX):
 - `pos_x, pos_y, pos_z` - Actual position (meters)

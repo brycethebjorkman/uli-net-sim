@@ -56,10 +56,6 @@ BACKGROUND_NOISE="-90"         # Realistic urban noise floor
 # Spoofer: always enabled (1 ghost + 1 spoofer)
 ENABLE_SPOOFER="--enable-spoofer"
 
-# Federates: always 4
-NUM_FEDERATES=4
-MAX_FEDERATE_VARIANTS=8
-
 # Parallelization: 0 = auto-detect (nproc)
 PARALLEL_JOBS=0
 
@@ -76,8 +72,8 @@ PARALLEL_JOBS=0
 #   scenario-variants: Different radio params + random spoofer selection
 #
 # Total scenarios = param * corridor * building * trajectory * scenario
-# Each scenario produces: 2 configs (open/buildings) * up to 8 federate variants
-# = up to 16 CSV files per scenario
+# Each scenario produces: 2 configs (open/buildings)
+# = 2 CSV files per scenario
 
 PARAM_VARIANTS=10              # different grid/host/time combinations
 CORRIDOR_VARIANTS=2            # corridor layouts per param set
@@ -90,7 +86,7 @@ TOTAL_SCENARIOS=$((PARAM_VARIANTS * CORRIDOR_VARIANTS * BUILDING_VARIANTS * TRAJ
 
 # Time estimate: ~5 seconds per scenario (based on benchmark with similar params)
 # This includes: corridor gen, building gen, trajectory gen, 2x simulation runs,
-#                2x CSV conversion, 2x federate variant generation
+#                2x CSV conversion
 SECONDS_PER_SCENARIO=5
 
 # Resolve parallel jobs for time estimate (0 = auto-detect)
@@ -145,7 +141,6 @@ echo "  Beacon offset:     $BEACON_OFFSET s"
 echo "  Background noise:  $BACKGROUND_NOISE dBm"
 echo ""
 echo "Spoofer:             enabled (1 ghost + 1 spoofer per scenario)"
-echo "Federates:           $NUM_FEDERATES (up to $MAX_FEDERATE_VARIANTS variants)"
 echo "Parallel jobs:       $EFFECTIVE_PARALLEL"
 echo ""
 echo "Branching Factors:"
@@ -157,7 +152,7 @@ echo "  Scenario variants:   $SCENARIO_VARIANTS"
 echo ""
 echo "Estimates:"
 echo "  Total scenarios:     $TOTAL_SCENARIOS"
-echo "  Max CSV files:       $((TOTAL_SCENARIOS * 2 * (MAX_FEDERATE_VARIANTS + 1)))"
+echo "  CSV files:           $((TOTAL_SCENARIOS * 2))"
 echo "  Est. time:           ${TOTAL_HOURS}h ${REMAINING_MINUTES}m (~${SECONDS_PER_SCENARIO}s/scenario)"
 echo ""
 echo "Output directory:      $OUTPUT_DIR"
@@ -185,8 +180,6 @@ if [ "$DRY_RUN" = true ]; then
     echo "    --beacon-offset \"$BEACON_OFFSET\" \\"
     echo "    --background-noise \"$BACKGROUND_NOISE\" \\"
     echo "    $ENABLE_SPOOFER \\"
-    echo "    --num-federates $NUM_FEDERATES \\"
-    echo "    --max-federate-variants $MAX_FEDERATE_VARIANTS \\"
     echo "    --param-variants $PARAM_VARIANTS \\"
     echo "    --corridor-variants $CORRIDOR_VARIANTS \\"
     echo "    --building-variants $BUILDING_VARIANTS \\"
@@ -223,8 +216,6 @@ exec ./container/generate_dataset.sh urbanenv \
     --beacon-offset "$BEACON_OFFSET" \
     --background-noise "$BACKGROUND_NOISE" \
     $ENABLE_SPOOFER \
-    --num-federates $NUM_FEDERATES \
-    --max-federate-variants $MAX_FEDERATE_VARIANTS \
     --param-variants $PARAM_VARIANTS \
     --corridor-variants $CORRIDOR_VARIANTS \
     --building-variants $BUILDING_VARIANTS \

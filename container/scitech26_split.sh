@@ -12,6 +12,7 @@
 #   --input DIR       Input dataset directory (default: datasets/scitech26)
 #   --train-ratio N   Training set ratio 0.0-1.0 (default: 0.8)
 #   --seed N          Random seed for deterministic splitting (default: 42)
+#   --symlink         Use symlinks instead of copying (saves disk space)
 #   --dry-run         Show what would be done without copying files
 #   --help            Show this help message
 #
@@ -30,28 +31,29 @@ INPUT_DIR="$PROJ_DIR/datasets/scitech26"
 TRAIN_RATIO=0.8
 SEED=42
 DRY_RUN=false
+USE_SYMLINKS=false
 
 usage() {
-    cat <<EOF
-Usage: $0 [options]
-
-Partition the SciTech 2026 dataset into train/test sets at the scenario level.
-All CSV variants for a given scenario stay together in the same partition.
-
-Options:
-    --input DIR       Input dataset directory (default: datasets/scitech26)
-    --train-ratio N   Training set ratio 0.0-1.0 (default: 0.8)
-    --seed N          Random seed for deterministic splitting (default: 42)
-    --dry-run         Show what would be done without copying files
-    --help            Show this help message
-
-Output:
-    datasets/scitech26/train/*.csv   (train_ratio of scenarios)
-    datasets/scitech26/test/*.csv    (1 - train_ratio of scenarios)
-
-Example:
-    $0 --train-ratio 0.8 --seed 42
-EOF
+    echo "Usage: $0 [options]"
+    echo ""
+    echo "Partition the SciTech 2026 dataset into train/test sets at the scenario level."
+    echo "All CSV variants for a given scenario stay together in the same partition."
+    echo ""
+    echo "Options:"
+    echo "    --input DIR       Input dataset directory (default: datasets/scitech26)"
+    echo "    --train-ratio N   Training set ratio 0.0-1.0 (default: 0.8)"
+    echo "    --seed N          Random seed for deterministic splitting (default: 42)"
+    echo "    --symlink         Use symlinks instead of copying (saves disk space)"
+    echo "    --dry-run         Show what would be done without copying files"
+    echo "    --help            Show this help message"
+    echo ""
+    echo "Output:"
+    echo "    datasets/scitech26/train/*.csv   (train_ratio of scenarios)"
+    echo "    datasets/scitech26/test/*.csv    (1 - train_ratio of scenarios)"
+    echo ""
+    echo "Example:"
+    echo "    $0 --train-ratio 0.8 --seed 42"
+    echo "    $0 --symlink  # Use symlinks to save disk space"
     exit 0
 }
 
@@ -61,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --input) INPUT_DIR="$2"; shift 2 ;;
         --train-ratio) TRAIN_RATIO="$2"; shift 2 ;;
         --seed) SEED="$2"; shift 2 ;;
+        --symlink) USE_SYMLINKS=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         --help) usage ;;
         *) echo "Unknown option: $1"; usage ;;
@@ -189,33 +192,53 @@ echo "Creating output directories..."
 mkdir -p "$TRAIN_DIR"
 mkdir -p "$TEST_DIR"
 
-# Copy train CSVs
-echo "Copying train set ($TRAIN_COUNT scenarios)..."
+# Determine copy command
+if [ "$USE_SYMLINKS" = true ]; then
+    COPY_CMD="ln -s"
+    COPY_VERB="Symlinking"
+    COPIED_VERB="Symlinked"
+else
+    COPY_CMD="cp"
+    COPY_VERB="Copying"
+    COPIED_VERB="Copied"
+fi
+
+# Copy/symlink train CSVs
+echo "$COPY_VERB train set ($TRAIN_COUNT scenarios)..."
 TRAIN_CSV_COUNT=0
 for idx in "${TRAIN_INDICES[@]}"; do
     scenario_dir="${SCENARIO_DIRS[$idx]}"
     for csv in "$scenario_dir"/*.csv; do
         if [ -f "$csv" ]; then
-            cp "$csv" "$TRAIN_DIR/"
+            if [ "$USE_SYMLINKS" = true ]; then
+                # Use absolute path for symlink target
+                ln -s "$(realpath "$csv")" "$TRAIN_DIR/"
+            else
+                cp "$csv" "$TRAIN_DIR/"
+            fi
             TRAIN_CSV_COUNT=$((TRAIN_CSV_COUNT + 1))
         fi
     done
 done
-echo "  Copied $TRAIN_CSV_COUNT CSV files"
+echo "  $COPIED_VERB $TRAIN_CSV_COUNT CSV files"
 
-# Copy test CSVs
-echo "Copying test set ($TEST_COUNT scenarios)..."
+# Copy/symlink test CSVs
+echo "$COPY_VERB test set ($TEST_COUNT scenarios)..."
 TEST_CSV_COUNT=0
 for idx in "${TEST_INDICES[@]}"; do
     scenario_dir="${SCENARIO_DIRS[$idx]}"
     for csv in "$scenario_dir"/*.csv; do
         if [ -f "$csv" ]; then
-            cp "$csv" "$TEST_DIR/"
+            if [ "$USE_SYMLINKS" = true ]; then
+                ln -s "$(realpath "$csv")" "$TEST_DIR/"
+            else
+                cp "$csv" "$TEST_DIR/"
+            fi
             TEST_CSV_COUNT=$((TEST_CSV_COUNT + 1))
         fi
     done
 done
-echo "  Copied $TEST_CSV_COUNT CSV files"
+echo "  $COPIED_VERB $TEST_CSV_COUNT CSV files"
 
 echo ""
 echo "============================================================"

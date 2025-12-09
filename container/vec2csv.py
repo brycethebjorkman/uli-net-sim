@@ -49,6 +49,7 @@ class Event:
     event_type: str  # "TX" or "RX"
     host_id: int
     serial_number: Optional[int] = None
+    rid_timestamp: Optional[int] = None  # RID message timestamp (ms since sim start)
     # Actual position/velocity of the host (transmitter for TX, receiver for RX)
     pos_x: Optional[float] = None
     pos_y: Optional[float] = None
@@ -142,11 +143,14 @@ def generate_events(host_vectors: Dict[int, Dict[str, VectorData]]) -> List[Even
         tx_times = vectors.get('Transmission X Coordinate')
         if tx_times and tx_times.times:
             for i, time in enumerate(tx_times.times):
+                # RID timestamp is TX time in milliseconds
+                rid_ts = int(time * 1000)
                 event = Event(
                     time=time,
                     event_type='TX',
                     host_id=host_id,
                     serial_number=host_id,  # Assume serial_number = host_id for TX
+                    rid_timestamp=rid_ts,
                     # Actual transmitter position/velocity
                     pos_x=vectors['Transmission X Coordinate'].get_value_at_index(i),
                     pos_y=vectors['Transmission Y Coordinate'].get_value_at_index(i),
@@ -173,6 +177,10 @@ def generate_events(host_vectors: Dict[int, Dict[str, VectorData]]) -> List[Even
                 if serial_num is not None:
                     serial_num = int(serial_num)
 
+                # Get RID timestamp from the message (recorded as Reception Timestamp)
+                rid_ts_val = vectors.get('Reception Timestamp', VectorData([], [])).get_value_at_index(i)
+                rid_ts = int(rid_ts_val) if rid_ts_val is not None else None
+
                 # Find KF vectors for this serial number if they exist
                 kf_estimate_vec = vectors.get(f'KF Tx Power Estimate Drone {serial_num}', VectorData([], []))
                 kf_covariance_vec = vectors.get(f'KF Covariance Drone {serial_num}', VectorData([], []))
@@ -186,6 +194,7 @@ def generate_events(host_vectors: Dict[int, Dict[str, VectorData]]) -> List[Even
                     event_type='RX',
                     host_id=host_id,
                     serial_number=serial_num,
+                    rid_timestamp=rid_ts,
                     # Actual receiver position/velocity
                     pos_x=vectors.get('Reception My X Coordinate', VectorData([], [])).get_value_at_index(i),
                     pos_y=vectors.get('Reception My Y Coordinate', VectorData([], [])).get_value_at_index(i),
@@ -219,7 +228,7 @@ def generate_events(host_vectors: Dict[int, Dict[str, VectorData]]) -> List[Even
 def write_csv(events: List[Event], output_file: str):
     """Write events to CSV file."""
     fieldnames = [
-        'time', 'event_type', 'host_id', 'serial_number',
+        'time', 'event_type', 'host_id', 'serial_number', 'rid_timestamp',
         'pos_x', 'pos_y', 'pos_z',
         'speed_vertical', 'speed_horizontal', 'heading',
         'rid_pos_x', 'rid_pos_y', 'rid_pos_z',
@@ -239,6 +248,7 @@ def write_csv(events: List[Event], output_file: str):
                 'event_type': event.event_type,
                 'host_id': event.host_id,
                 'serial_number': event.serial_number if event.serial_number is not None else '',
+                'rid_timestamp': event.rid_timestamp if event.rid_timestamp is not None else '',
                 'pos_x': event.pos_x if event.pos_x is not None else '',
                 'pos_y': event.pos_y if event.pos_y is not None else '',
                 'pos_z': event.pos_z if event.pos_z is not None else '',

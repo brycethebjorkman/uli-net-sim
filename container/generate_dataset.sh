@@ -248,6 +248,9 @@ UE_ENABLE_SPOOFER=false
 UE_NUM_FEDERATES=4
 UE_MAX_FEDERATE_VARIANTS=8
 
+# Parallelization
+UE_PARALLEL=1  # Default: sequential execution
+
 # Corridor parameters
 UE_NUM_EW="2"
 UE_NUM_NS="2"
@@ -319,6 +322,10 @@ Branching Factors:
     --building-variants N     Building layouts per corridor (default: $UE_BUILDING_VARIANTS)
     --trajectory-variants N   Trajectory sets per corridor (default: $UE_TRAJECTORY_VARIANTS)
     --scenario-variants N     Scenarios per building+trajectory combo (default: $UE_SCENARIO_VARIANTS)
+
+Parallelization:
+    --parallel N              Run N scenarios in parallel (default: 1, sequential)
+                              Use --parallel 0 for auto-detect (nproc)
 
 General Options:
     --seed NUM                Starting seed (default: $SEED_START)
@@ -418,6 +425,7 @@ run_urbanenv() {
             --building-variants) UE_BUILDING_VARIANTS="$2"; shift 2 ;;
             --trajectory-variants) UE_TRAJECTORY_VARIANTS="$2"; shift 2 ;;
             --scenario-variants) UE_SCENARIO_VARIANTS="$2"; shift 2 ;;
+            --parallel) UE_PARALLEL="$2"; shift 2 ;;
             --seed) SEED_START="$2"; shift 2 ;;
             -o) OUTPUT_DIR="$2"; shift 2 ;;
             --help) usage_urbanenv ;;
@@ -427,6 +435,11 @@ run_urbanenv() {
 
     # Calculate total scenarios
     TOTAL_SCENARIOS=$((UE_PARAM_VARIANTS * UE_CORRIDOR_VARIANTS * UE_BUILDING_VARIANTS * UE_TRAJECTORY_VARIANTS * UE_SCENARIO_VARIANTS))
+
+    # Handle parallel=0 (auto-detect)
+    if [ "$UE_PARALLEL" -eq 0 ]; then
+        UE_PARALLEL=$(nproc 2>/dev/null || echo 4)
+    fi
 
     echo "=================================================="
     echo "Remote ID Dataset Generation Pipeline"
@@ -463,6 +476,7 @@ run_urbanenv() {
     echo "  Trajectory variants: $UE_TRAJECTORY_VARIANTS"
     echo "  Scenario variants: $UE_SCENARIO_VARIANTS"
     echo "Total scenarios:     $TOTAL_SCENARIOS"
+    echo "Parallel jobs:       $UE_PARALLEL"
     echo "Starting seed:       $SEED_START"
     echo "Output directory:    $OUTPUT_DIR"
     echo "=================================================="
@@ -497,6 +511,19 @@ run_urbanenv() {
     # scenario_seed = sequential counter
 
     SCENARIO_SEED_COUNTER=$SEED_START
+
+    # =========================================================================
+    # PHASE 1: Generate all configurations (corridors, buildings, trajectories, ini files)
+    # =========================================================================
+    echo ""
+    echo "=========================================="
+    echo "PHASE 1: Generating scenario configurations"
+    echo "=========================================="
+    echo ""
+
+    # Manifest file to track scenarios for parallel execution
+    MANIFEST_FILE="$URBANENV_DIR/.scenario_manifest"
+    > "$MANIFEST_FILE"
 
     # Loop through parameter variants
     for p in $(seq 0 $((UE_PARAM_VARIANTS - 1))); do
@@ -607,7 +634,7 @@ run_urbanenv() {
                 fi
             done
 
-            # Generate scenarios: cross-product of buildings × trajectories × scenario variants
+            # Generate scenario ini files (no simulation yet)
             for b in $(seq 0 $((UE_BUILDING_VARIANTS - 1))); do
                 BLDG_FILE="${BUILDING_FILES[$b]}"
 
@@ -634,7 +661,7 @@ run_urbanenv() {
                         SCENARIO_NAME="${BLDG_PART}__${TRAJ_PART}__seed${SCENARIO_SEED}"
                         SCENARIO_PATH="$CORRIDOR_PATH/scenarios/$SCENARIO_NAME"
 
-                        echo "    [$SCENARIO_COUNT/$TOTAL_SCENARIOS] $SCENARIO_NAME"
+                        echo "    [$SCENARIO_COUNT/$TOTAL_SCENARIOS] Generating $SCENARIO_NAME"
 
                         mkdir -p "$SCENARIO_PATH"
 
@@ -668,86 +695,60 @@ run_urbanenv() {
                             SPOOFER_HOST=$(grep -oP 'spoofer_host": \K\d+' "$INI_FILE" || true)
                         fi
 
-                        # Determine which configs to run
-                        # ScenarioOpenSpace is always present
-                        # ScenarioWithBuildings is only present if buildings were specified
-                        CONFIGS_TO_RUN=("ScenarioOpenSpace")
-                        if [ -n "$BLDG_FILE" ]; then
-                            CONFIGS_TO_RUN+=("ScenarioWithBuildings")
-                        fi
-
-                        RESULTS_DIR="$SCENARIO_PATH/results"
-                        mkdir -p "$RESULTS_DIR"
-
-                        # Compute hash for CSV naming based on relative path from urbanenv/
-                        # Path: grid400_hosts3_sim30/ew2_ns2_w20_sp120/scenarios/bldg_...__seed42
-                        SCENARIO_REL_PATH="${PARAM_DIR}/${CORRIDOR_DIR}/scenarios/${SCENARIO_NAME}"
-                        SCENARIO_HASH=$(echo -n "$SCENARIO_REL_PATH" | md5sum | cut -c1-8)
-
-                        # Run each config
-                        for CONFIG_NAME in "${CONFIGS_TO_RUN[@]}"; do
-                            echo "      Running $CONFIG_NAME..."
-
-                            # Run from the scenario directory so relative paths in ini work
-                            pushd "$SCENARIO_PATH" > /dev/null
-                            ${UAV_RID_BIN} -m \
-                                -u Cmdenv \
-                                -c "$CONFIG_NAME" \
-                                -l "$INET_ROOT/out/clang-release/src/libINET.so" \
-                                -n "$INET_ROOT/src" \
-                                -n "$INET_ROOT/src/inet/visualizer/common" \
-                                -n "$INET_ROOT/examples" \
-                                -n "$INET_ROOT/showcases" \
-                                -n "$INET_ROOT/tests/validation" \
-                                -n "$INET_ROOT/tests/networks" \
-                                -n "$INET_ROOT/tutorials" \
-                                -n "$PROJ_DIR/simulations" \
-                                -n "$PROJ_DIR/src" \
-                                -f "omnetpp.ini" \
-                                --cmdenv-express-mode=true \
-                                --cmdenv-status-frequency=10s \
-                                --result-dir="results" \
-                                2>&1 | grep -v "^$" || true
-                            popd > /dev/null
-
-                            # Convert to CSV with hash-based name
-                            # -o suffix for OpenSpace, -b suffix for WithBuildings
-                            VEC_FILE="$RESULTS_DIR/${CONFIG_NAME}-#0.vec"
-                            if [ -f "$VEC_FILE" ]; then
-                                if [ "$CONFIG_NAME" = "ScenarioOpenSpace" ]; then
-                                    CSV_SUFFIX="-o"
-                                else
-                                    CSV_SUFFIX="-b"
-                                fi
-                                CSV_FILE="$SCENARIO_PATH/${SCENARIO_HASH}${CSV_SUFFIX}.csv"
-                                echo "      Converting to CSV..."
-                                python3 "$VEC2CSV" "$VEC_FILE" -o "$CSV_FILE"
-
-                                # Add host_type column
-                                if [ -n "$SPOOFER_HOST" ]; then
-                                    python3 "$ADD_HOST_TYPE" "$CSV_FILE" --in-place --spoofer-hosts "$SPOOFER_HOST"
-                                else
-                                    python3 "$ADD_HOST_TYPE" "$CSV_FILE" --in-place
-                                fi
-
-                                # Generate federate variants (base CSV is kept)
-                                echo "      Generating federate variants..."
-                                python3 "$LABEL_FEDERATES" "$CSV_FILE" \
-                                    --num-federates "$UE_NUM_FEDERATES" \
-                                    --max-variants "$UE_MAX_FEDERATE_VARIANTS" \
-                                    --seed "$SCENARIO_SEED"
-                                echo "      Created: $CSV_FILE (+ federate variants)"
-                            else
-                                echo "      Warning: Vector file not found: $VEC_FILE"
-                            fi
-                        done
-
-                        echo ""
+                        # Write to manifest: scenario_path|spoofer_host|num_federates|max_federate_variants|scenario_seed
+                        # Use "-" for empty spoofer host
+                        echo "${SCENARIO_PATH}|${SPOOFER_HOST:--}|${UE_NUM_FEDERATES}|${UE_MAX_FEDERATE_VARIANTS}|${SCENARIO_SEED}" >> "$MANIFEST_FILE"
                     done
                 done
             done
         done
     done
+
+    echo ""
+    echo "Phase 1 complete: $SCENARIO_COUNT scenario configurations generated"
+    echo ""
+
+    # =========================================================================
+    # PHASE 2: Execute simulations (parallel or sequential)
+    # =========================================================================
+    echo "=========================================="
+    echo "PHASE 2: Running simulations (parallel=$UE_PARALLEL)"
+    echo "=========================================="
+    echo ""
+
+    # Export environment variables for run_scenario.sh
+    RUN_SCENARIO="$SCRIPT_DIR/run_scenario.sh"
+    export UAV_RID_BIN INET_ROOT PROJ_DIR VEC2CSV ADD_HOST_TYPE LABEL_FEDERATES RUN_SCENARIO
+
+    if [ ! -f "$RUN_SCENARIO" ]; then
+        echo "Error: run_scenario.sh not found at $RUN_SCENARIO"
+        exit 1
+    fi
+
+    if [ "$UE_PARALLEL" -eq 1 ]; then
+        # Sequential execution
+        SCENARIO_NUM=0
+        while IFS='|' read -r SCENARIO_PATH SPOOFER_HOST NUM_FED MAX_FED_VAR SCENARIO_SEED; do
+            SCENARIO_NUM=$((SCENARIO_NUM + 1))
+            echo "[$SCENARIO_NUM/$TOTAL_SCENARIOS] Running $(basename "$SCENARIO_PATH")..."
+            "$RUN_SCENARIO" "$SCENARIO_PATH" "$SPOOFER_HOST" "$NUM_FED" "$MAX_FED_VAR" "$SCENARIO_SEED"
+            echo ""
+        done < "$MANIFEST_FILE"
+    else
+        # Parallel execution using xargs
+        echo "Running $TOTAL_SCENARIOS scenarios with $UE_PARALLEL parallel jobs..."
+        echo ""
+
+        # Use xargs for parallel execution
+        # Format: scenario_path|spoofer_host|num_federates|max_federate_variants|scenario_seed
+        cat "$MANIFEST_FILE" | xargs -P "$UE_PARALLEL" -I {} bash -c '
+            IFS="|" read -r SCENARIO_PATH SPOOFER_HOST NUM_FED MAX_FED_VAR SCENARIO_SEED <<< "$1"
+            "$RUN_SCENARIO" "$SCENARIO_PATH" "$SPOOFER_HOST" "$NUM_FED" "$MAX_FED_VAR" "$SCENARIO_SEED"
+        ' _ {}
+    fi
+
+    # Clean up manifest
+    rm -f "$MANIFEST_FILE"
 
     echo "=================================================="
     echo "Dataset generation complete!"

@@ -122,9 +122,10 @@ test_count = total - train_count
 print(train_count, test_count)
 ")
 
+TEST_RATIO=$(python3 -c "print(round(1 - $TRAIN_RATIO, 2))")
 echo "Split:"
 echo "  Train scenarios: $TRAIN_COUNT ($TRAIN_RATIO)"
-echo "  Test scenarios:  $TEST_COUNT ($(echo "1 - $TRAIN_RATIO" | bc))"
+echo "  Test scenarios:  $TEST_COUNT ($TEST_RATIO)"
 echo ""
 
 # Get shuffled indices using Python for determinism

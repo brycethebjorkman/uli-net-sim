@@ -14,7 +14,6 @@ from pathlib import Path
 
 from .detectors import KalmanFilterDetector, MultilatDetector
 from .evaluate import run_evaluation
-from .optimize import grid_search
 from .data import load_dataset
 
 
@@ -34,31 +33,37 @@ def run_kf(args):
 
 
 def run_mlat(args):
-    """Run multilateration detector evaluation with grid search."""
-    print("=== Grid Search for Multilateration Parameters ===")
+    """Run multilateration detector evaluation with line search over path loss exponent."""
+    print("=== Line Search for Path Loss Exponent ===")
 
     train_scenarios = load_dataset(args.train_dir, limit=args.train_limit)
     print(f"Loaded {len(train_scenarios)} training scenarios")
 
-    # Grid search over path loss exponent and score type
-    # Note: MultilatDetector now jointly estimates position and TX power
-    param_grid = {
-        "path_loss_exp": [1.6, 1.8, 2.0, 2.2, 2.4],
-        "use_filtered_error": [True, False],
-    }
+    # Line search over path loss exponent only
+    # n=2.0 is free space, but buildings/obstacles can increase it
+    path_loss_values = [1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0]
 
-    best_opt, best_params = grid_search(
-        MultilatDetector,
-        param_grid,
-        train_scenarios,
-        verbose=True,
-    )
+    from .optimize import optimize_threshold
 
-    print(f"\nBest parameters: {best_params}")
-    print(f"Best AUC: {best_opt.best_auc:.4f}")
+    best_auc = -1
+    best_ple = 2.0
+    best_opt = None
 
-    # Evaluate with best params
-    detector = MultilatDetector(**best_params)
+    for ple in path_loss_values:
+        detector = MultilatDetector(path_loss_exp=ple)
+        opt = optimize_threshold(detector, train_scenarios, verbose=False)
+        print(f"  path_loss_exp={ple:.1f}: AUC={opt.best_auc:.4f}")
+
+        if opt.best_auc > best_auc:
+            best_auc = opt.best_auc
+            best_ple = ple
+            best_opt = opt
+
+    print(f"\nBest path_loss_exp: {best_ple}")
+    print(f"Best AUC: {best_auc:.4f}")
+
+    # Evaluate with best path loss exponent
+    detector = MultilatDetector(path_loss_exp=best_ple)
     opt, eval_result = run_evaluation(
         detector,
         train_dir=args.train_dir,
@@ -87,24 +92,39 @@ def run_all(args):
     mlat_opt, mlat_eval = run_mlat(args)
     results["mlat"] = mlat_eval.to_dict()
 
-    # Save combined results
+    # Load train and test results from saved files for comparison
+    train_test_results = {}
     if args.output:
+        for detector_name in ["kf", "mlat"]:
+            results_file = args.output / f"{detector_name}_results.json"
+            if results_file.exists():
+                with open(results_file) as f:
+                    train_test_results[detector_name] = json.load(f)
+
+        # Save combined results
         combined_path = args.output / "all_results.json"
         with open(combined_path, "w") as f:
-            json.dump(results, f, indent=2)
+            json.dump(train_test_results, f, indent=2)
         print(f"\nCombined results saved to {combined_path}")
 
-    # Print comparison
-    print("\n" + "=" * 60)
-    print("COMPARISON")
-    print("=" * 60)
-    print(f"{'Detector':<15} {'AUC':>8} {'TPR':>8} {'FPR':>8} {'Mean TTD':>10}")
-    print("-" * 60)
-    for name, r in results.items():
-        ttd = r.get("mean_time_to_detection")
-        ttd_str = f"{ttd:.3f}s" if ttd else "N/A"
-        print(f"{name:<15} {r['metrics']['auc']:>8.4f} {r['metrics']['tpr']:>8.4f} "
-              f"{r['metrics']['fpr']:>8.4f} {ttd_str:>10}")
+    # Print comparison with both train and test
+    print("\n" + "=" * 80)
+    print("COMPARISON (Train / Test)")
+    print("=" * 80)
+    print(f"{'Detector':<12} {'Split':<6} {'AUC':>8} {'TPR':>8} {'FPR':>8} {'Mean TTD':>10}")
+    print("-" * 80)
+    for name in ["kf", "mlat"]:
+        if name in train_test_results:
+            r = train_test_results[name]
+            for split in ["train", "test"]:
+                eval_key = f"{split}_evaluation"
+                if eval_key in r:
+                    e = r[eval_key]
+                    ttd = e.get("mean_time_to_detection")
+                    ttd_str = f"{ttd:.3f}s" if ttd else "N/A"
+                    print(f"{name:<12} {split:<6} {e['metrics']['auc']:>8.4f} {e['metrics']['tpr']:>8.4f} "
+                          f"{e['metrics']['fpr']:>8.4f} {ttd_str:>10}")
+            print("-" * 80)
 
 
 def main():

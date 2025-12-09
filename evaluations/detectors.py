@@ -159,19 +159,26 @@ class MultilatDetector(Detector):
 
     This avoids assuming the claimed position is correct when estimating TX power.
 
+    Detection pipeline:
+        1. NLLS estimates transmitter position (x, y, z) and TX power
+        2. Compute position error = |estimated_pos - claimed_pos|
+        3. Feed error to per-transmitter Kalman filter for smoothing
+        4. Return filtered error as detection score (large error = likely spoofing)
+
     Parameters:
-        path_loss_exp: Path loss exponent (default 2.0 for free space)
+        path_loss_exp: Path loss exponent n in the model P = P_tx / d^n.
+                       In free space n=2 (inverse square law). Called "exponent"
+                       because power falls as d^(-n); appears as multiplier in
+                       log domain: RSSI = P_tx - 10*n*log10(d).
         min_federates: Minimum federates needed for multilateration (default 4)
         kf_process_noise: KF process noise for error tracking
         kf_measurement_noise: KF measurement noise (based on typical error variance)
-        use_filtered_error: If True, return filtered error. If False, return NIS.
     """
 
     path_loss_exp: float = 2.0
     min_federates: int = 4
     kf_process_noise: float = 100.0  # Error can change moderately between measurements
     kf_measurement_noise: float = 250000.0  # ~500m std dev for position error
-    use_filtered_error: bool = True  # Return filtered error instead of NIS
 
     @property
     def name(self) -> str:
@@ -184,7 +191,6 @@ class MultilatDetector(Detector):
             "min_federates": self.min_federates,
             "kf_process_noise": self.kf_process_noise,
             "kf_measurement_noise": self.kf_measurement_noise,
-            "use_filtered_error": self.use_filtered_error,
         }
 
     def score(self, scenario: ScenarioData) -> np.ndarray:
@@ -251,13 +257,12 @@ class MultilatDetector(Detector):
                     measurement_noise=self.kf_measurement_noise,
                 )
 
-            # Update KF and get detection score
+            # Update KF and get detection score (always use filtered error)
             nis, filtered_error, innovation = kf_per_transmitter[sn].update(raw_error)
-            score = filtered_error if self.use_filtered_error else nis
 
             # Apply same score to all RX events from this transmission
             for i in indices:
-                scores[i] = score
+                scores[i] = filtered_error
 
         return scores
 

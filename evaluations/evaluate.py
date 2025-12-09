@@ -143,7 +143,7 @@ def run_evaluation(
     verbose: bool = True,
 ) -> tuple[OptimizationResult, EvaluationResult]:
     """
-    Full evaluation pipeline: optimize on train, evaluate on test.
+    Full evaluation pipeline: optimize on train, evaluate on both train and test.
 
     Args:
         detector: Detector to evaluate
@@ -155,7 +155,7 @@ def run_evaluation(
         verbose: Print progress
 
     Returns:
-        Tuple of (OptimizationResult, EvaluationResult)
+        Tuple of (OptimizationResult, EvaluationResult for test set)
     """
     from .optimize import optimize_threshold
 
@@ -173,14 +173,22 @@ def run_evaluation(
 
     opt_result = optimize_threshold(detector, train_scenarios, verbose=verbose)
 
+    # Evaluate on training data (to show train performance)
+    if verbose:
+        print(f"\n=== Evaluation on Training Set ===")
+
+    train_eval_result = evaluate_detector(
+        detector, opt_result.best_threshold, train_scenarios, verbose=verbose
+    )
+
     # Evaluate on test data
     if verbose:
-        print(f"\n=== Evaluation Phase ===")
+        print(f"\n=== Evaluation on Test Set ===")
         print(f"Loading test data from {test_dir}...")
 
     test_scenarios = iter_dataset(test_dir, limit=test_limit)
 
-    eval_result = evaluate_detector(
+    test_eval_result = evaluate_detector(
         detector, opt_result.best_threshold, test_scenarios, verbose=verbose
     )
 
@@ -196,7 +204,8 @@ def run_evaluation(
                 "best_auc": opt_result.best_auc,
                 "best_params": opt_result.best_params,
             },
-            "evaluation": eval_result.to_dict(),
+            "train_evaluation": train_eval_result.to_dict(),
+            "test_evaluation": test_eval_result.to_dict(),
         }
 
         with open(output_path, "w") as f:
@@ -205,4 +214,4 @@ def run_evaluation(
         if verbose:
             print(f"\nResults saved to {output_path}")
 
-    return opt_result, eval_result
+    return opt_result, test_eval_result

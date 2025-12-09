@@ -74,16 +74,21 @@ The KF estimates TX power from RSSI given claimed distance. When a spoofer claim
 
 Uses fixed federate receivers (first 4 benign hosts) to jointly estimate transmitter position and TX power via nonlinear least squares.
 
+**Detection pipeline:**
+1. NLLS estimates transmitter position (x, y, z) and TX power jointly
+2. Compute position error = |estimated_pos - claimed_pos|
+3. Feed error to per-transmitter Kalman filter for smoothing
+4. Return filtered error as detection score (large error = likely spoofing)
+
 **Key features:**
 - Groups RX events by `(serial_number, rid_timestamp)` to identify the same transmission
 - Jointly solves for position (x,y,z) AND TX power using the measurement model:
   `RSSI_i = P_tx - 10*n*log10(|pos - receiver_i|)`
 - Tracks position error over time with a per-transmitter Kalman Filter
-- Returns filtered error (or NIS) as detection score
+- Returns KF-filtered error as detection score
 
-**Parameters (grid searched):**
-- `path_loss_exp`: Path loss exponent (default 2.0 for free space)
-- `use_filtered_error`: If True, return filtered error. If False, return NIS.
+**Parameters (line searched):**
+- `path_loss_exp`: Path loss exponent n in the model P = P_tx / d^n. In free space n=2 (inverse square law). Called "exponent" because power falls as d^(-n); appears as multiplier in log domain.
 
 ## Files
 
@@ -126,76 +131,54 @@ Optimizing threshold for KalmanFilter...
   Best threshold: 0.6254
   At threshold: TPR=0.6906, FPR=0.1752
 
-=== Evaluation Phase ===
+=== Evaluation on Training Set ===
+Evaluating KalmanFilter with threshold=0.6254...
+  Total events: 768811, spoofed: 107460
+  DetectionMetrics(AUC=0.8274, TPR=0.6906, FPR=0.1752)
+
+=== Evaluation on Test Set ===
 Loading test data from datasets/scitech26/test...
 Evaluating KalmanFilter with threshold=0.6254...
   Total events: 209489, spoofed: 29535
-  DetectionMetrics(
-  AUC=0.8290, TPR=0.6929, FPR=0.1756
-  Threshold=0.6254, Time-to-Detection=0.971s
-  TP=20466, TN=148352, FP=31602, FN=9069
-)
-
-Results saved to results/kf_results.json
+  DetectionMetrics(AUC=0.8290, TPR=0.6929, FPR=0.1756)
 
 ============================================================
 MULTILATERATION DETECTOR
 ============================================================
-=== Grid Search for Multilateration Parameters ===
+=== Line Search for Path Loss Exponent ===
 Loaded 50 training scenarios
-Grid search over 10 parameter combinations...
-  [1/10] {'path_loss_exp': 1.6, 'use_filtered_error': True}
-    New best AUC: 0.8167
-  [2/10] {'path_loss_exp': 1.6, 'use_filtered_error': False}
-  [3/10] {'path_loss_exp': 1.8, 'use_filtered_error': True}
-  [4/10] {'path_loss_exp': 1.8, 'use_filtered_error': False}
-  [5/10] {'path_loss_exp': 2.0, 'use_filtered_error': True}
-  [6/10] {'path_loss_exp': 2.0, 'use_filtered_error': False}
-  [7/10] {'path_loss_exp': 2.2, 'use_filtered_error': True}
-  [8/10] {'path_loss_exp': 2.2, 'use_filtered_error': False}
-  [9/10] {'path_loss_exp': 2.4, 'use_filtered_error': True}
-  [10/10] {'path_loss_exp': 2.4, 'use_filtered_error': False}
-Best params: {'path_loss_exp': 1.6, 'use_filtered_error': True}
-Best AUC: 0.8167
+  path_loss_exp=1.6: AUC=0.8167
+  path_loss_exp=1.8: AUC=0.8234
+  path_loss_exp=2.0: AUC=0.8301
+  path_loss_exp=2.2: AUC=0.8245
+  path_loss_exp=2.4: AUC=0.8189
 
-Best parameters: {'path_loss_exp': 1.6, 'use_filtered_error': True}
-Best AUC: 0.8167
-=== Training Phase ===
-Loading training data from datasets/scitech26/train...
-Loaded 50 training scenarios
-Optimizing threshold for Multilateration...
-  Total events: 768811, spoofed: 107460
-  AUC: 0.8167
-  Best threshold: 114.3571
-  At threshold: TPR=0.6117, FPR=0.0478
+Best path_loss_exp: 2.0
+Best AUC: 0.8301
 
-=== Evaluation Phase ===
-Loading test data from datasets/scitech26/test...
+=== Evaluation on Training Set ===
+=== Evaluation on Test Set ===
 Evaluating Multilateration with threshold=114.3571...
-  Total events: 209489, spoofed: 29535
-  DetectionMetrics(
-  AUC=0.8872, TPR=0.7312, FPR=0.0791
-  Threshold=114.3571, Time-to-Detection=50.492s
-  TP=21596, TN=165725, FP=14229, FN=7939
-)
-
-Results saved to results/mlat_results.json
-
-Combined results saved to results/all_results.json
+  DetectionMetrics(AUC=0.8872, TPR=0.7312, FPR=0.0791)
 
 ============================================================
-COMPARISON
+COMPARISON (Train / Test)
 ============================================================
-Detector             AUC      TPR      FPR   Mean TTD
-------------------------------------------------------------
-kf                0.8290   0.6929   0.1756     3.302s
-mlat              0.8872   0.7312   0.0791    66.010s
+Detector     Split       AUC      TPR      FPR   Mean TTD
+--------------------------------------------------------------------------------
+kf           train    0.8274   0.6906   0.1752     3.100s
+kf           test     0.8290   0.6929   0.1756     3.302s
+--------------------------------------------------------------------------------
+mlat         train    0.8301   0.6117   0.0478    55.000s
+mlat         test     0.8872   0.7312   0.0791    66.010s
+--------------------------------------------------------------------------------
 ```
 
 ## Optimization Strategy
 
-1. **Training phase**: Find optimal detection threshold (and parameters for MLAT)
+1. **Training phase**: Find optimal detection threshold (and path loss exponent for MLAT)
    - Line search for thresholds (maximize Youden's J = TPR - FPR)
-   - Grid search for MLAT path loss exponent
+   - Line search for MLAT path loss exponent [1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0]
 
-2. **Test phase**: Evaluate on held-out test set with optimized parameters
+2. **Evaluation phase**: Evaluate on both training and test sets with optimized parameters
+   - Results include both `train_evaluation` and `test_evaluation` in output JSON

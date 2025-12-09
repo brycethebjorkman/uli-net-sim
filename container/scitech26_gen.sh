@@ -80,10 +80,10 @@ PARALLEL_JOBS=0
 # = up to 16 CSV files per scenario
 
 PARAM_VARIANTS=10              # different grid/host/time combinations
-CORRIDOR_VARIANTS=5            # corridor layouts per param set
-BUILDING_VARIANTS=6            # building layouts per corridor
-TRAJECTORY_VARIANTS=7          # trajectory sets per corridor
-SCENARIO_VARIANTS=8            # radio/spoofer variants per combo
+CORRIDOR_VARIANTS=2            # corridor layouts per param set
+BUILDING_VARIANTS=2            # building layouts per corridor
+TRAJECTORY_VARIANTS=4          # trajectory sets per corridor
+SCENARIO_VARIANTS=6            # radio/spoofer variants per combo
 
 # Compute totals
 TOTAL_SCENARIOS=$((PARAM_VARIANTS * CORRIDOR_VARIANTS * BUILDING_VARIANTS * TRAJECTORY_VARIANTS * SCENARIO_VARIANTS))

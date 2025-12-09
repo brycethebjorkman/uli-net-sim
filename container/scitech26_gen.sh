@@ -75,7 +75,7 @@ PARALLEL_JOBS=0
 # Each scenario produces: 2 configs (open/buildings)
 # = 2 CSV files per scenario
 
-PARAM_VARIANTS=10              # different grid/host/time combinations
+PARAM_VARIANTS=25              # different grid/host/time combinations
 CORRIDOR_VARIANTS=2            # corridor layouts per param set
 BUILDING_VARIANTS=2            # building layouts per corridor
 TRAJECTORY_VARIANTS=4          # trajectory sets per corridor

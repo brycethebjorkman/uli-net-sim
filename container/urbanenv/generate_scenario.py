@@ -74,6 +74,8 @@ Examples:
                         help='Beacon interval range in seconds (default: 0.25-0.75)')
     parser.add_argument('--beacon-offset', default='0-0',
                         help='Beacon offset range in seconds (default: 0, no offset)')
+    parser.add_argument('--background-noise', type=float, default=-90,
+                        help='Background noise power in dBm (default: -90, realistic urban)')
     parser.add_argument('--sim-time-limit', type=float, default=300,
                         help='Simulation time limit in seconds (default: 300)')
     parser.add_argument('--ghost-host', type=int, default=None,
@@ -190,6 +192,7 @@ Examples:
             "tx_power": args.tx_power,
             "beacon_interval": args.beacon_interval,
             "beacon_offset": args.beacon_offset,
+            "background_noise": args.background_noise,
             "sim_time_limit": args.sim_time_limit,
             "ghost_host": ghost_host,
             "spoofer_host": spoofer_host,
@@ -254,6 +257,7 @@ Examples:
     # Basic parameters
     lines.append(f"sim-time-limit = {int(args.sim_time_limit)}s")
     lines.append(f"*.numHosts = {num_hosts}")
+    lines.append(f"*.radioMedium.backgroundNoise.power = {args.background_noise}dBm")
     lines.append("")
 
     # No buildings - empty physical environment

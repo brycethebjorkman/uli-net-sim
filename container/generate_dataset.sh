@@ -262,6 +262,7 @@ UE_ALTITUDE="30-100"
 UE_TX_POWER="10-16"
 UE_BEACON_INTERVAL="0.25-0.75"
 UE_BEACON_OFFSET="0-0.1"
+UE_BACKGROUND_NOISE="-90"
 
 # Branching factors (all default to 1)
 UE_PARAM_VARIANTS=1
@@ -299,6 +300,7 @@ Radio Parameters:
     --tx-power RANGE          TX power in dBm (default: $UE_TX_POWER)
     --beacon-interval RANGE   Beacon interval in s (default: $UE_BEACON_INTERVAL)
     --beacon-offset RANGE     Beacon offset in s (default: $UE_BEACON_OFFSET)
+    --background-noise dBm    Background noise power (default: $UE_BACKGROUND_NOISE)
 
 Spoofer/Ghost Configuration:
     --enable-spoofer          Enable spoofer (randomly selects ghost and spoofer hosts)
@@ -399,6 +401,7 @@ run_urbanenv() {
             --tx-power) UE_TX_POWER="$2"; shift 2 ;;
             --beacon-interval) UE_BEACON_INTERVAL="$2"; shift 2 ;;
             --beacon-offset) UE_BEACON_OFFSET="$2"; shift 2 ;;
+            --background-noise) UE_BACKGROUND_NOISE="$2"; shift 2 ;;
             --enable-spoofer) UE_ENABLE_SPOOFER=true; shift ;;
             --param-variants) UE_PARAM_VARIANTS="$2"; shift 2 ;;
             --corridor-variants) UE_CORRIDOR_VARIANTS="$2"; shift 2 ;;
@@ -438,6 +441,7 @@ run_urbanenv() {
     echo "  TX power:          $UE_TX_POWER dBm"
     echo "  Beacon interval:   $UE_BEACON_INTERVAL s"
     echo "  Beacon offset:     $UE_BEACON_OFFSET s"
+    echo "  Background noise:  $UE_BACKGROUND_NOISE dBm"
     echo "Spoofer:             $UE_ENABLE_SPOOFER"
     echo "Branching factors:"
     echo "  Param variants:    $UE_PARAM_VARIANTS"
@@ -629,6 +633,7 @@ run_urbanenv() {
                                 --tx-power "$UE_TX_POWER"
                                 --beacon-interval "$UE_BEACON_INTERVAL"
                                 --beacon-offset "$UE_BEACON_OFFSET"
+                                --background-noise "$UE_BACKGROUND_NOISE"
                                 --sim-time-limit "$SIM_TIME"
                                 --config-name "Scenario"
                                 --seed "$SCENARIO_SEED"

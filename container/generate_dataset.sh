@@ -522,8 +522,8 @@ run_urbanenv() {
     echo ""
 
     # Manifest file to track scenarios for parallel execution
-    MANIFEST_FILE="$URBANENV_DIR/.scenario_manifest"
-    > "$MANIFEST_FILE"
+    SCENARIO_MANIFEST_FILE="$URBANENV_DIR/.scenario_manifest"
+    > "$SCENARIO_MANIFEST_FILE"
 
     # Loop through parameter variants
     for p in $(seq 0 $((UE_PARAM_VARIANTS - 1))); do
@@ -697,7 +697,7 @@ run_urbanenv() {
 
                         # Write to manifest: scenario_path|spoofer_host|num_federates|max_federate_variants|scenario_seed
                         # Use "-" for empty spoofer host
-                        echo "${SCENARIO_PATH}|${SPOOFER_HOST:--}|${UE_NUM_FEDERATES}|${UE_MAX_FEDERATE_VARIANTS}|${SCENARIO_SEED}" >> "$MANIFEST_FILE"
+                        echo "${SCENARIO_PATH}|${SPOOFER_HOST:--}|${UE_NUM_FEDERATES}|${UE_MAX_FEDERATE_VARIANTS}|${SCENARIO_SEED}" >> "$SCENARIO_MANIFEST_FILE"
                     done
                 done
             done
@@ -733,7 +733,7 @@ run_urbanenv() {
             echo "[$SCENARIO_NUM/$TOTAL_SCENARIOS] Running $(basename "$SCENARIO_PATH")..."
             "$RUN_SCENARIO" "$SCENARIO_PATH" "$SPOOFER_HOST" "$NUM_FED" "$MAX_FED_VAR" "$SCENARIO_SEED"
             echo ""
-        done < "$MANIFEST_FILE"
+        done < "$SCENARIO_MANIFEST_FILE"
     else
         # Parallel execution using xargs
         echo "Running $TOTAL_SCENARIOS scenarios with $UE_PARALLEL parallel jobs..."
@@ -741,19 +741,82 @@ run_urbanenv() {
 
         # Use xargs for parallel execution
         # Format: scenario_path|spoofer_host|num_federates|max_federate_variants|scenario_seed
-        cat "$MANIFEST_FILE" | xargs -P "$UE_PARALLEL" -I {} bash -c '
+        cat "$SCENARIO_MANIFEST_FILE" | xargs -P "$UE_PARALLEL" -I {} bash -c '
             IFS="|" read -r SCENARIO_PATH SPOOFER_HOST NUM_FED MAX_FED_VAR SCENARIO_SEED <<< "$1"
             "$RUN_SCENARIO" "$SCENARIO_PATH" "$SPOOFER_HOST" "$NUM_FED" "$MAX_FED_VAR" "$SCENARIO_SEED"
         ' _ {}
     fi
 
-    # Clean up manifest
-    rm -f "$MANIFEST_FILE"
+    # Clean up scenario manifest (used for parallel execution)
+    rm -f "$SCENARIO_MANIFEST_FILE"
+
+    # =========================================================================
+    # PHASE 3: Generate top-level dataset manifest
+    # =========================================================================
+    echo ""
+    echo "=========================================="
+    echo "PHASE 3: Generating dataset manifest"
+    echo "=========================================="
+    echo ""
+
+    GEN_DATASET_MANIFEST="$SCRIPT_DIR/urbanenv/generate_dataset_manifest.py"
+    DATASET_MANIFEST="$OUTPUT_DIR/manifest.json"
+
+    # Build generation params JSON
+    # Convert bash boolean to JSON boolean
+    if [ "$UE_ENABLE_SPOOFER" = true ]; then
+        JSON_ENABLE_SPOOFER="true"
+    else
+        JSON_ENABLE_SPOOFER="false"
+    fi
+
+    GEN_PARAMS=$(cat <<EOF
+{
+  "seed": $SEED_START,
+  "grid_size": "$UE_GRID_SIZE",
+  "num_hosts": "$UE_NUM_HOSTS",
+  "sim_time": "$UE_SIM_TIME",
+  "num_ew": "$UE_NUM_EW",
+  "num_ns": "$UE_NUM_NS",
+  "corridor_width": "$UE_CORRIDOR_WIDTH",
+  "corridor_spacing": "$UE_CORRIDOR_SPACING",
+  "num_buildings": "$UE_NUM_BUILDINGS",
+  "building_height": "$UE_BUILDING_HEIGHT",
+  "speed": "$UE_SPEED",
+  "altitude": "$UE_ALTITUDE",
+  "tx_power": "$UE_TX_POWER",
+  "beacon_interval": "$UE_BEACON_INTERVAL",
+  "beacon_offset": "$UE_BEACON_OFFSET",
+  "background_noise": $UE_BACKGROUND_NOISE,
+  "enable_spoofer": $JSON_ENABLE_SPOOFER,
+  "num_federates": $UE_NUM_FEDERATES,
+  "max_federate_variants": $UE_MAX_FEDERATE_VARIANTS
+}
+EOF
+)
+
+    # Build branching params JSON
+    BRANCHING_PARAMS=$(cat <<EOF
+{
+  "param_variants": $UE_PARAM_VARIANTS,
+  "corridor_variants": $UE_CORRIDOR_VARIANTS,
+  "building_variants": $UE_BUILDING_VARIANTS,
+  "trajectory_variants": $UE_TRAJECTORY_VARIANTS,
+  "scenario_variants": $UE_SCENARIO_VARIANTS
+}
+EOF
+)
+
+    python3 "$GEN_DATASET_MANIFEST" from-existing "$URBANENV_DIR" \
+        -o "$DATASET_MANIFEST" \
+        --generation-params "$GEN_PARAMS" \
+        --branching "$BRANCHING_PARAMS"
 
     echo "=================================================="
     echo "Dataset generation complete!"
     echo "Total scenarios: $SCENARIO_COUNT"
     echo "Output directory: $URBANENV_DIR"
+    echo "Manifest: $DATASET_MANIFEST"
     echo "=================================================="
 }
 

@@ -1,31 +1,57 @@
 # Spoofing Detection Evaluation Framework
 
-This package evaluates two spoofing detection methods on RX event classification:
+This package evaluates three spoofing detection methods on transmission-level classification:
 
 1. **Kalman Filter (KF)** - Uses pre-computed KF NIS (Normalized Innovation Squared) from simulation. High NIS indicates RSSI inconsistent with claimed position.
 
 2. **RSSI Multilateration (MLAT)** - Jointly estimates transmitter position and TX power from RSSI measurements at multiple federate receivers, compares to claimed position. Large discrepancy indicates spoofing.
 
+3. **Multilayer Perceptron (MLP)** - Supervised learning on timeseries features extracted from RX events.
+
+## Reproducing Paper Results
+
+To reproduce the exact results presented in the SciTech26 paper:
+
+```bash
+cd /usr/uli-net-sim/uav_rid
+. container/setenv
+./evaluations/scitech26_eval.sh
+```
+
+This runs the full train+test pipeline on the `scitech26-1920-scenarios` dataset and produces:
+- `evaluations/results/unified_results.json` - Numeric results (AUC, TPR, FPR)
+- `evaluations/results/roc_curves.pdf` - ROC curve figure for the paper
+- `evaluations/results/roc_curves.png` - ROC curve preview
+
 ## Quick Start
 
-Run full evaluation on the scitech26 dataset:
+For development and testing with smaller datasets:
 
 ```bash
 cd /usr/uli-net-sim/uav_rid
 . container/setenv
 
-# Run both detectors with full dataset
-python -m evaluations.run all datasets/scitech26/train datasets/scitech26/test -o evaluations/results/
+# Unified evaluation comparing all three methods
+python -m evaluations.unified_eval \
+    --train-dir datasets/scitech26-mini/train \
+    --test-dir datasets/scitech26-mini/test \
+    --mlp-predictions datasets/mlp_test_predictions.csv \
+    -o evaluations/results/
 
-# Or run individually:
-python -m evaluations.run kf datasets/scitech26/train datasets/scitech26/test -o evaluations/results/
-python -m evaluations.run mlat datasets/scitech26/train datasets/scitech26/test -o evaluations/results/
+# Test-only mode with pre-trained thresholds
+python -m evaluations.unified_eval \
+    --test-dir datasets/scitech26-1920-scenarios/test \
+    --mlp-predictions datasets/mlp_test_predictions.csv \
+    --test-only \
+    --kf-threshold 0.6254 \
+    --mlat-threshold 114.3571 \
+    --mlat-ple 1.6 \
+    -o evaluations/results/
 ```
 
-For quick testing with limited scenarios:
+For individual detector evaluation (legacy):
 ```bash
-python -m evaluations.run all datasets/scitech26/train datasets/scitech26/test \
-    --train-limit 10 --test-limit 10 -o evaluations/results/
+python -m evaluations.run all datasets/scitech26/train datasets/scitech26/test -o evaluations/results/
 ```
 
 ## Task

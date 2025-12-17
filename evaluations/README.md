@@ -45,7 +45,12 @@ python -m evaluations.unified_eval \
     --test-only \
     --kf-threshold 0.6254 \
     --mlat-threshold 114.3571 \
-    --mlat-ple 1.6 \
+    -o evaluations/results/
+
+# KF and MLAT only (skip MLP)
+python -m evaluations.unified_eval \
+    --train-dir datasets/scitech26-mini/train \
+    --test-dir datasets/scitech26-mini/test \
     -o evaluations/results/
 ```
 
@@ -120,13 +125,11 @@ Uses fixed federate receivers (first 4 benign hosts) to jointly estimate transmi
 
 **Key features:**
 - Groups RX events by `(serial_number, rid_timestamp)` to identify the same transmission
-- Jointly solves for position (x,y,z) AND TX power using the measurement model:
-  `RSSI_i = P_tx - 10*n*log10(|pos - receiver_i|)`
+- Uses the same 2.4 GHz free space path loss model as KF:
+  `RSSI_i = P_tx - 20*log10(d_i) - 40.04`
+- Jointly solves for position (x,y,z) AND TX power via nonlinear least squares
 - Tracks position error over time with a per-transmitter Kalman Filter
 - Returns KF-filtered error as detection score
-
-**Parameters (line searched):**
-- `path_loss_exp`: Path loss exponent n in the model P = P_tx / d^n. In free space n=2 (inverse square law). Called "exponent" because power falls as d^(-n); appears as multiplier in log domain.
 
 ## Files
 
@@ -185,18 +188,13 @@ Evaluating KalmanFilter with threshold=0.6254...
 ============================================================
 MULTILATERATION DETECTOR
 ============================================================
-=== Line Search for Path Loss Exponent ===
-Loaded 50 training scenarios
-  path_loss_exp=1.6: AUC=0.8167
-  path_loss_exp=1.8: AUC=0.8234
-  path_loss_exp=2.0: AUC=0.8301
-  path_loss_exp=2.2: AUC=0.8245
-  path_loss_exp=2.4: AUC=0.8189
+=== Training Phase ===
+Optimizing threshold for Multilateration...
+  Total transmissions: 12500, spoofed: 4500
+  AUC: 0.8301
+  Best threshold: 114.3571
+  At threshold: TPR=0.7312, FPR=0.0791
 
-Best path_loss_exp: 2.0
-Best AUC: 0.8301
-
-=== Evaluation on Training Set ===
 === Evaluation on Test Set ===
 Evaluating Multilateration with threshold=114.3571...
   DetectionMetrics(AUC=0.8872, TPR=0.7312, FPR=0.0791)
@@ -216,9 +214,9 @@ mlat         test     0.8872   0.7312   0.0791    66.010s
 
 ## Optimization Strategy
 
-1. **Training phase**: Find optimal detection threshold (and path loss exponent for MLAT)
+1. **Training phase**: Find optimal detection thresholds for KF and MLAT
    - Line search for thresholds (maximize Youden's J = TPR - FPR)
-   - Line search for MLAT path loss exponent [1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0]
+   - Both KF and MLAT use fixed 2.4 GHz free space path loss model (no parameter tuning)
 
-2. **Evaluation phase**: Evaluate on both training and test sets with optimized parameters
-   - Results include both `train_evaluation` and `test_evaluation` in output JSON
+2. **Evaluation phase**: Evaluate on test set with optimized thresholds
+   - Results saved to `unified_results.json`

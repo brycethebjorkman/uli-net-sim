@@ -78,7 +78,6 @@ def evaluate_on_test_transmissions(
     mlp_predictions_path: Path | None,
     kf_threshold: float,
     mlat_threshold: float,
-    mlat_ple: float,
     output_dir: Path | None = None,
     test_limit: int | None = None,
 ):
@@ -124,7 +123,7 @@ def evaluate_on_test_transmissions(
         print("\nSkipping MLP evaluation (no predictions file provided)")
 
     # Initialize MLAT detector
-    mlat_detector = MultilatDetector(path_loss_exp=mlat_ple)
+    mlat_detector = MultilatDetector()
 
     # Collect scores for each method separately (different granularities)
     all_kf_scores = []
@@ -323,13 +322,12 @@ def evaluate_on_test_transmissions(
 def train_thresholds(
     train_dir: Path,
     train_limit: int | None = None,
-) -> tuple[float, float, float]:
+) -> tuple[float, float]:
     """
     Train optimal thresholds for KF and MLAT on training data.
-    Also finds best path loss exponent for MLAT.
 
     Returns:
-        Tuple of (kf_threshold, mlat_threshold, mlat_ple)
+        Tuple of (kf_threshold, mlat_threshold)
     """
     print("=" * 70)
     print("TRAINING PHASE")
@@ -344,28 +342,13 @@ def train_thresholds(
     kf_opt = optimize_threshold(kf_detector, train_scenarios, verbose=True, federate_only=True)
     kf_threshold = kf_opt.best_threshold
 
-    # Line search for MLAT path loss exponent
-    print("\nLine search for MLAT path loss exponent...")
-    path_loss_values = [1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0]
+    # Train MLAT threshold (using fixed 2.4 GHz FSPL model)
+    print("\nOptimizing MLAT threshold (federate-only, per-transmission)...")
+    mlat_detector = MultilatDetector()
+    mlat_opt = optimize_threshold(mlat_detector, train_scenarios, verbose=True, federate_only=True)
+    mlat_threshold = mlat_opt.best_threshold
 
-    best_auc = -1
-    best_ple = 2.0
-    best_mlat_threshold = 100.0
-
-    for ple in path_loss_values:
-        mlat_detector = MultilatDetector(path_loss_exp=ple)
-        opt = optimize_threshold(mlat_detector, train_scenarios, verbose=False, federate_only=True)
-        print(f"  path_loss_exp={ple:.1f}: AUC={opt.best_auc:.4f}")
-
-        if opt.best_auc > best_auc:
-            best_auc = opt.best_auc
-            best_ple = ple
-            best_mlat_threshold = opt.best_threshold
-
-    print(f"\nBest path_loss_exp: {best_ple}")
-    print(f"Best MLAT threshold: {best_mlat_threshold:.4f}")
-
-    return kf_threshold, best_mlat_threshold, best_ple
+    return kf_threshold, mlat_threshold
 
 
 def main():
@@ -386,8 +369,6 @@ def main():
                        help="KF detection threshold (for --test-only)")
     parser.add_argument("--mlat-threshold", type=float, default=114.3571,
                        help="MLAT detection threshold (for --test-only)")
-    parser.add_argument("--mlat-ple", type=float, default=1.6,
-                       help="MLAT path loss exponent (for --test-only)")
     parser.add_argument("--train-limit", type=int,
                        help="Limit training scenarios (for testing)")
     parser.add_argument("--test-limit", type=int,
@@ -398,12 +379,11 @@ def main():
     if args.test_only:
         kf_threshold = args.kf_threshold
         mlat_threshold = args.mlat_threshold
-        mlat_ple = args.mlat_ple
-        print(f"Using provided thresholds: KF={kf_threshold}, MLAT={mlat_threshold}, PLE={mlat_ple}")
+        print(f"Using provided thresholds: KF={kf_threshold}, MLAT={mlat_threshold}")
     else:
         if args.train_dir is None:
             parser.error("--train-dir is required unless --test-only is specified")
-        kf_threshold, mlat_threshold, mlat_ple = train_thresholds(
+        kf_threshold, mlat_threshold = train_thresholds(
             args.train_dir,
             train_limit=args.train_limit
         )
@@ -413,7 +393,6 @@ def main():
         mlp_predictions_path=args.mlp_predictions,
         kf_threshold=kf_threshold,
         mlat_threshold=mlat_threshold,
-        mlat_ple=mlat_ple,
         output_dir=args.output,
         test_limit=args.test_limit,
     )

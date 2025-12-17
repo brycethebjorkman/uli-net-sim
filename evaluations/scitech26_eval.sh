@@ -7,8 +7,9 @@
 #
 # Threshold Optimization (performed on 300 training scenarios due to memory constraints):
 #   - KF threshold: 0.6126 (optimized via Youden's J on 300 scenarios, ~8M events)
-#   - MLAT PLE: 1.8 (best from line search: 1.6→0.8087, 1.8→0.8094, 2.0→0.8085)
 #   - MLAT threshold: 114.3571 (position error threshold)
+# Both detectors use the same 2.4 GHz free space path loss model:
+#   RSSI = P_tx - 20*log10(d) - 40.04
 #
 # Usage:
 #   cd /usr/uli-net-sim/uav_rid
@@ -33,9 +34,10 @@ MLP_PREDICTIONS="$PROJECT_DIR/datasets/mlp_test_predictions.csv"
 OUTPUT_DIR="$SCRIPT_DIR/results"
 
 # Pre-optimized thresholds (from training on 300 scenarios)
+# Both KF and MLAT use the same 2.4 GHz free space path loss model:
+#   RSSI = P_tx - 20*log10(d) - 40.04
 KF_THRESHOLD=0.6126
 MLAT_THRESHOLD=114.3571
-MLAT_PLE=1.8
 
 # Validate inputs
 echo "============================================================"
@@ -50,7 +52,6 @@ echo ""
 echo "Pre-optimized thresholds:"
 echo "  KF threshold:     $KF_THRESHOLD"
 echo "  MLAT threshold:   $MLAT_THRESHOLD"
-echo "  MLAT PLE:         $MLAT_PLE"
 echo ""
 
 if [ ! -d "$TEST_DIR" ]; then
@@ -80,7 +81,6 @@ python -u -m evaluations.unified_eval \
     --test-only \
     --kf-threshold "$KF_THRESHOLD" \
     --mlat-threshold "$MLAT_THRESHOLD" \
-    --mlat-ple "$MLAT_PLE" \
     -o "$OUTPUT_DIR"
 
 echo ""

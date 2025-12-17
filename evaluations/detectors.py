@@ -144,6 +144,11 @@ class PositionErrorKF:
         return nis, self.x, innovation
 
 
+# Free space path loss constant for 2.4 GHz (matches KalmanFilterDetectMgmt.cc)
+# Derived from: 32.44 + 20*log10(2400 MHz) - 60 = 40.04
+FSPL_CONSTANT_DB = 40.04
+
+
 @dataclass
 class MultilatDetector(Detector):
     """
@@ -154,8 +159,8 @@ class MultilatDetector(Detector):
     federates, jointly estimates position AND TX power via nonlinear least squares,
     and tracks the position error with a Kalman Filter. Returns filtered error as score.
 
-    The key insight is that we solve for (x, y, z, P_tx) simultaneously using the
-    path loss model: RSSI_i = P_tx - 10*n*log10(|pos - receiver_i|)
+    Uses the same 2.4 GHz free space path loss model as the KF detector:
+        RSSI = P_tx - 20*log10(d) - 40.04
 
     This avoids assuming the claimed position is correct when estimating TX power.
 
@@ -166,16 +171,11 @@ class MultilatDetector(Detector):
         4. Return filtered error as detection score (large error = likely spoofing)
 
     Parameters:
-        path_loss_exp: Path loss exponent n in the model P = P_tx / d^n.
-                       In free space n=2 (inverse square law). Called "exponent"
-                       because power falls as d^(-n); appears as multiplier in
-                       log domain: RSSI = P_tx - 10*n*log10(d).
         min_federates: Minimum federates needed for multilateration (default 4)
         kf_process_noise: KF process noise for error tracking
         kf_measurement_noise: KF measurement noise (based on typical error variance)
     """
 
-    path_loss_exp: float = 2.0
     min_federates: int = 4
     kf_process_noise: float = 100.0  # Error can change moderately between measurements
     kf_measurement_noise: float = 250000.0  # ~500m std dev for position error
@@ -187,7 +187,6 @@ class MultilatDetector(Detector):
     @property
     def params(self) -> dict[str, Any]:
         return {
-            "path_loss_exp": self.path_loss_exp,
             "min_federates": self.min_federates,
             "kf_process_noise": self.kf_process_noise,
             "kf_measurement_noise": self.kf_measurement_noise,
@@ -275,8 +274,10 @@ class MultilatDetector(Detector):
         """
         Jointly estimate transmitter position and TX power using nonlinear least squares.
 
-        Solves for (x, y, z, P_tx) that minimizes the sum of squared residuals:
-            r_i = RSSI_i - (P_tx - 10*n*log10(|pos - receiver_i|))
+        Uses the 2.4 GHz free space path loss model (matching KF detector):
+            RSSI = P_tx - 20*log10(d) - 40.04
+
+        Solves for (x, y, z, P_tx) that minimizes the sum of squared residuals.
 
         Args:
             receivers: (N, 3) array of receiver positions
@@ -290,8 +291,6 @@ class MultilatDetector(Detector):
         if n < 4:  # Need at least 4 measurements for 4 unknowns
             return None, None
 
-        n_ple = 10 * self.path_loss_exp
-
         def residuals(params):
             """Compute residuals for least squares optimization."""
             pos = params[:3]
@@ -301,8 +300,8 @@ class MultilatDetector(Detector):
             distances = np.linalg.norm(receivers - pos, axis=1)
             distances = np.maximum(distances, 0.1)  # Avoid log(0)
 
-            # Expected RSSI at each receiver
-            expected_rssi = tx_power - n_ple * np.log10(distances)
+            # Expected RSSI using 2.4 GHz FSPL model: RSSI = P_tx - 20*log10(d) - 40.04
+            expected_rssi = tx_power - 20.0 * np.log10(distances) - FSPL_CONSTANT_DB
 
             # Residuals
             return rssi_values - expected_rssi
@@ -310,7 +309,8 @@ class MultilatDetector(Detector):
         # Initial guess: claimed position + median TX power estimate
         distances_init = np.linalg.norm(receivers - initial_pos, axis=1)
         distances_init = np.maximum(distances_init, 0.1)
-        tx_power_init = np.median(rssi_values + n_ple * np.log10(distances_init))
+        # P_tx = RSSI + 20*log10(d) + 40.04
+        tx_power_init = np.median(rssi_values + 20.0 * np.log10(distances_init) + FSPL_CONSTANT_DB)
 
         x0 = np.concatenate([initial_pos, [tx_power_init]])
 

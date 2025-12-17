@@ -1,12 +1,12 @@
 # Spoofing Detection Evaluation Framework
 
-This package evaluates three spoofing detection methods on transmission-level classification:
+This package evaluates three spoofing detection methods, each at its natural granularity:
 
-1. **Kalman Filter (KF)** - Uses pre-computed KF NIS (Normalized Innovation Squared) from simulation. High NIS indicates RSSI inconsistent with claimed position.
+1. **Kalman Filter (KF)** - Per-RX-event detection using pre-computed KF NIS (Normalized Innovation Squared) from simulation. Each federate receiver independently detects anomalies. High NIS indicates RSSI inconsistent with claimed position.
 
-2. **RSSI Multilateration (MLAT)** - Jointly estimates transmitter position and TX power from RSSI measurements at multiple federate receivers, compares to claimed position. Large discrepancy indicates spoofing.
+2. **RSSI Multilateration (MLAT)** - Per-transmission detection that jointly estimates transmitter position and TX power from RSSI measurements at multiple federate receivers, compares to claimed position. Large discrepancy indicates spoofing.
 
-3. **Multilayer Perceptron (MLP)** - Supervised learning on timeseries features extracted from RX events.
+3. **Multilayer Perceptron (MLP)** - Per-transmission detection using supervised learning on timeseries features extracted from RX events.
 
 ## Reproducing Paper Results
 
@@ -56,11 +56,18 @@ python -m evaluations.run all datasets/scitech26/train datasets/scitech26/test -
 
 ## Task
 
-**Binary classification of RX events**: Given an RX event (a receiver getting a Remote ID beacon), classify it as `spoofed` or `benign`.
+**Binary spoofing detection** at method-appropriate granularity:
+
+| Method | Granularity | Description |
+|--------|-------------|-------------|
+| **KF** | Per-RX-event | Each federate receiver's reception is an independent detection trial |
+| **MLAT** | Per-transmission | Requires 4 federate receivers to triangulate; one decision per TX |
+| **MLP** | Per-transmission | Trained on transmission-level features |
 
 - **Ground truth**: `is_spoofed` column in CSV (1 if the transmitter is a spoofer)
 - **Detection score**: Higher = more likely spoofed
 - **Threshold**: Score >= threshold → predict spoofed
+- **Federates**: First 4 benign hosts by ID are designated as federate receivers
 
 ## Dataset Structure
 
@@ -96,6 +103,11 @@ Uses `kf_nis` column from CSV (pre-computed in simulation). No parameters to tun
 
 The KF estimates TX power from RSSI given claimed distance. When a spoofer claims a false position, the RSSI doesn't match the claimed distance, causing high innovation (NIS).
 
+**Evaluation approach:**
+- Uses only federate receivers (first 4 benign hosts)
+- Each federate's RX event is an independent detection trial (no aggregation)
+- Training and testing use the same per-RX-event granularity for consistent threshold selection
+
 ### MultilatDetector
 
 Uses fixed federate receivers (first 4 benign hosts) to jointly estimate transmitter position and TX power via nonlinear least squares.
@@ -120,12 +132,14 @@ Uses fixed federate receivers (first 4 benign hosts) to jointly estimate transmi
 
 | File | Purpose |
 |------|---------|
+| `unified_eval.py` | Main evaluation comparing KF, MLAT, MLP on test data |
 | `data.py` | Load CSVs, extract RX events with ground truth |
 | `metrics.py` | Compute AUC, TPR, FPR, time-to-detection |
 | `detectors.py` | Detector interface + KF/MLAT implementations |
-| `optimize.py` | Threshold line search, parameter grid search |
-| `evaluate.py` | Run train→test evaluation pipeline |
-| `run.py` | CLI entry point |
+| `optimize.py` | Threshold line search, parameter grid search (supports `federate_only` mode) |
+| `evaluate.py` | Run train→test evaluation pipeline (legacy) |
+| `run.py` | CLI entry point (legacy) |
+| `scitech26_eval.sh` | Reproduce SciTech26 paper results |
 | `notebooks/` | Jupyter notebooks explaining each detector |
 
 ## Notebooks

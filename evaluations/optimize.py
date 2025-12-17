@@ -62,6 +62,7 @@ def collect_scores_and_labels(
     detector: Detector,
     scenarios: Iterator[ScenarioData] | list[ScenarioData],
     verbose: bool = False,
+    federate_only: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Collect detection scores and ground truth labels from scenarios.
@@ -70,6 +71,7 @@ def collect_scores_and_labels(
         detector: Detector to evaluate
         scenarios: Iterator or list of ScenarioData
         verbose: Print progress
+        federate_only: If True, only include RX events from federate receivers
 
     Returns:
         Tuple of (times, labels, scores) arrays concatenated across scenarios
@@ -83,8 +85,20 @@ def collect_scores_and_labels(
             print(f"  Processed {i} scenarios...")
 
         scores = detector.score(scenario)
-        all_times.append(scenario.time)
-        all_labels.append(scenario.is_spoofed)
+
+        if federate_only:
+            # Filter to federate receivers only
+            federate_ids = set(scenario.federate_host_ids)
+            mask = np.array([hid in federate_ids for hid in scenario.host_id])
+            scores = scores[mask]
+            times = scenario.time[mask]
+            labels = scenario.is_spoofed[mask]
+        else:
+            times = scenario.time
+            labels = scenario.is_spoofed
+
+        all_times.append(times)
+        all_labels.append(labels)
         all_scores.append(scores)
 
     return (
@@ -98,6 +112,7 @@ def optimize_threshold(
     detector: Detector,
     scenarios: Iterator[ScenarioData] | list[ScenarioData],
     verbose: bool = False,
+    federate_only: bool = False,
 ) -> OptimizationResult:
     """
     Find optimal detection threshold using AUC on training data.
@@ -106,6 +121,7 @@ def optimize_threshold(
         detector: Detector to optimize
         scenarios: Training scenarios
         verbose: Print progress
+        federate_only: If True, only use RX events from federate receivers
 
     Returns:
         OptimizationResult with best threshold and ROC curve
@@ -113,7 +129,7 @@ def optimize_threshold(
     if verbose:
         print(f"Optimizing threshold for {detector.name}...")
 
-    times, labels, scores = collect_scores_and_labels(detector, scenarios, verbose)
+    times, labels, scores = collect_scores_and_labels(detector, scenarios, verbose, federate_only)
 
     if verbose:
         print(f"  Total events: {len(labels)}, spoofed: {np.sum(labels)}")
@@ -208,6 +224,7 @@ def line_search_threshold(
     target_fpr: float | None = None,
     target_tpr: float | None = None,
     verbose: bool = False,
+    federate_only: bool = False,
 ) -> tuple[float, float, float]:
     """
     Find threshold for a specific operating point.
@@ -218,11 +235,12 @@ def line_search_threshold(
         target_fpr: Target false positive rate (find threshold <= this FPR)
         target_tpr: Target true positive rate (find threshold >= this TPR)
         verbose: Print progress
+        federate_only: If True, only use RX events from federate receivers
 
     Returns:
         Tuple of (threshold, actual_tpr, actual_fpr)
     """
-    result = optimize_threshold(detector, scenarios, verbose=verbose)
+    result = optimize_threshold(detector, scenarios, verbose=verbose, federate_only=federate_only)
 
     if target_fpr is not None:
         threshold = result.find_threshold_for_fpr(target_fpr)
@@ -232,7 +250,7 @@ def line_search_threshold(
         threshold = result.best_threshold
 
     # Get actual rates at this threshold
-    times, labels, scores = collect_scores_and_labels(detector, scenarios)
+    times, labels, scores = collect_scores_and_labels(detector, scenarios, federate_only=federate_only)
     _, _, _, _, tpr, fpr = compute_confusion_at_threshold(labels, scores, threshold)
 
     return threshold, tpr, fpr

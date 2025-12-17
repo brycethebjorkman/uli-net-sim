@@ -40,53 +40,42 @@ from .metrics import compute_roc_auc
 from .optimize import optimize_threshold
 
 
-def aggregate_kf_scores_per_transmission(
+def collect_kf_scores_per_rx_event(
     scenario: ScenarioData,
     federate_ids: set[int],
-) -> dict[tuple[int, int], tuple[float, bool]]:
+) -> tuple[list[float], list[bool]]:
     """
-    Aggregate KF scores at the transmission level using only federate receivers.
+    Collect KF scores at the per-RX-event level using only federate receivers.
 
-    For each transmission (serial_number, rid_timestamp), take the max KF NIS
-    across federate receivers. This matches how a ground station would aggregate
-    alerts from multiple receivers.
+    Each federate's reception is treated as an independent detection trial.
+    No aggregation across receivers.
 
     Args:
         scenario: ScenarioData with RX events
         federate_ids: Set of host IDs designated as federates
 
     Returns:
-        Dict mapping (serial_number, rid_timestamp) -> (max_nis, is_spoofed)
+        Tuple of (scores, labels) lists for all federate RX events with valid KF NIS
     """
-    transmission_scores: dict[tuple[int, int], list[float]] = defaultdict(list)
-    transmission_labels: dict[tuple[int, int], bool] = {}
+    scores = []
+    labels = []
 
     for i in range(scenario.n_events):
         # Only use federate receivers
         if scenario.host_id[i] not in federate_ids:
             continue
 
-        sn = scenario.serial_number[i]
-        rid_ts = scenario.rid_timestamp[i]
-        key = (sn, rid_ts)
-
         nis = scenario.kf_nis[i]
         if not np.isnan(nis):
-            transmission_scores[key].append(nis)
-        transmission_labels[key] = scenario.is_spoofed[i]
+            scores.append(nis)
+            labels.append(scenario.is_spoofed[i])
 
-    # Aggregate: use max NIS per transmission
-    result = {}
-    for key, scores in transmission_scores.items():
-        if scores:
-            result[key] = (max(scores), transmission_labels[key])
-
-    return result
+    return scores, labels
 
 
 def evaluate_on_test_transmissions(
     test_dir: Path,
-    mlp_predictions_path: Path,
+    mlp_predictions_path: Path | None,
     kf_threshold: float,
     mlat_threshold: float,
     mlat_ple: float,
@@ -94,54 +83,56 @@ def evaluate_on_test_transmissions(
     test_limit: int | None = None,
 ):
     """
-    Evaluate all three methods on the same set of test transmissions.
+    Evaluate all three methods on test data.
 
-    Only evaluates on transmissions that:
-    1. Have MLP predictions
-    2. Have scores from all 4 federates (for MLAT)
-    3. Have KF scores from at least one federate
+    Each method is evaluated on its natural granularity:
+    - KF: Per-RX-event from federate receivers (each federate is independent trial)
+    - MLAT: Per-transmission (requires 4 federates)
+    - MLP: Per-transmission (as trained)
     """
     print("=" * 70)
-    print("UNIFIED EVALUATION - Comparing KF, MLAT, MLP")
+    if mlp_predictions_path:
+        print("UNIFIED EVALUATION - Comparing KF, MLAT, MLP")
+    else:
+        print("UNIFIED EVALUATION - Comparing KF, MLAT (MLP skipped)")
     print("=" * 70)
 
-    # Load MLP predictions
-    print(f"\nLoading MLP predictions from {mlp_predictions_path}...")
-    mlp_df = pd.read_csv(mlp_predictions_path)
-
-    # Fix filename paths: ./datasets/test/X.csv -> just the filename
-    mlp_df['csv_name'] = mlp_df['filename'].apply(lambda x: Path(x).name)
-
-    # Group MLP predictions by (csv_name, serial_number, rid_timestamp)
+    # Load MLP predictions (if provided)
     mlp_predictions = {}
-    for _, row in mlp_df.iterrows():
-        key = (row['csv_name'], row['serial_number'], row['rid_timestamp'])
-        mlp_predictions[key] = {
-            'y_pred': row['y_pred'],
-            'y_proba': row['y_proba'],
-            'is_spoofed': row['is_spoofed'],
-        }
-    print(f"  Loaded {len(mlp_predictions)} MLP transmission predictions")
+    test_csv_names = None  # None means no filtering by MLP coverage
+    if mlp_predictions_path:
+        print(f"\nLoading MLP predictions from {mlp_predictions_path}...")
+        mlp_df = pd.read_csv(mlp_predictions_path)
 
-    # Get list of test CSV files that have MLP predictions
-    test_csv_names = set(mlp_df['csv_name'].unique())
-    print(f"  MLP covers {len(test_csv_names)} test scenarios")
+        # Fix filename paths: ./datasets/test/X.csv -> just the filename
+        mlp_df['csv_name'] = mlp_df['filename'].apply(lambda x: Path(x).name)
 
-    # Initialize detectors
-    kf_detector = KalmanFilterDetector()
+        # Group MLP predictions by (csv_name, serial_number, rid_timestamp)
+        for _, row in mlp_df.iterrows():
+            key = (row['csv_name'], row['serial_number'], row['rid_timestamp'])
+            mlp_predictions[key] = {
+                'y_pred': row['y_pred'],
+                'y_proba': row['y_proba'],
+                'is_spoofed': row['is_spoofed'],
+            }
+        print(f"  Loaded {len(mlp_predictions)} MLP transmission predictions")
+
+        # Get list of test CSV files that have MLP predictions
+        test_csv_names = set(mlp_df['csv_name'].unique())
+        print(f"  MLP covers {len(test_csv_names)} test scenarios")
+    else:
+        print("\nSkipping MLP evaluation (no predictions file provided)")
+
+    # Initialize MLAT detector
     mlat_detector = MultilatDetector(path_loss_exp=mlat_ple)
 
-    # Collect predictions for all methods
+    # Collect scores for each method separately (different granularities)
     all_kf_scores = []
     all_kf_labels = []
     all_mlat_scores = []
     all_mlat_labels = []
     all_mlp_scores = []
     all_mlp_labels = []
-
-    # Common transmissions (have scores from all three methods)
-    common_scores = {'kf': [], 'mlat': [], 'mlp': []}
-    common_labels = []
 
     print(f"\nProcessing test scenarios from {test_dir}...")
 
@@ -153,20 +144,22 @@ def evaluate_on_test_transmissions(
     for csv_path in csv_files:
         csv_name = csv_path.name
 
-        # Skip if no MLP predictions for this scenario
-        if csv_name not in test_csv_names:
+        # Skip if no MLP predictions for this scenario (only when MLP is enabled)
+        if test_csv_names is not None and csv_name not in test_csv_names:
             continue
 
         scenario = load_scenario(csv_path)
         federate_ids = set(scenario.federate_host_ids)
 
-        # Get KF scores per transmission (federate-only)
-        kf_transmission_scores = aggregate_kf_scores_per_transmission(scenario, federate_ids)
+        # KF: Collect per-RX-event scores from federates (no aggregation)
+        kf_scores, kf_labels = collect_kf_scores_per_rx_event(scenario, federate_ids)
+        all_kf_scores.extend(kf_scores)
+        all_kf_labels.extend(kf_labels)
 
-        # Get MLAT scores
+        # MLAT: Collect per-transmission scores
         mlat_scores_array = mlat_detector.score(scenario)
 
-        # Group MLAT scores by transmission
+        # Group MLAT scores by transmission (take first occurrence)
         mlat_transmission_scores = {}
         for i in range(scenario.n_events):
             if mlat_scores_array[i] > 0:  # MLAT only produces non-zero for 4+ federates
@@ -174,66 +167,59 @@ def evaluate_on_test_transmissions(
                 if key not in mlat_transmission_scores:
                     mlat_transmission_scores[key] = (mlat_scores_array[i], scenario.is_spoofed[i])
 
-        # Match with MLP predictions
         for (sn, rid_ts), (mlat_score, label) in mlat_transmission_scores.items():
-            mlp_key = (csv_name, sn, rid_ts)
-
-            if mlp_key not in mlp_predictions:
-                continue
-
-            kf_key = (sn, rid_ts)
-            if kf_key not in kf_transmission_scores:
-                continue
-
-            kf_score, _ = kf_transmission_scores[kf_key]
-            mlp_data = mlp_predictions[mlp_key]
-
-            # All methods have scores for this transmission
-            all_kf_scores.append(kf_score)
-            all_kf_labels.append(label)
             all_mlat_scores.append(mlat_score)
             all_mlat_labels.append(label)
-            all_mlp_scores.append(mlp_data['y_proba'])
-            all_mlp_labels.append(mlp_data['is_spoofed'])
 
-            # Common set
-            common_scores['kf'].append(kf_score)
-            common_scores['mlat'].append(mlat_score)
-            common_scores['mlp'].append(mlp_data['y_proba'])
-            common_labels.append(label)
+        # MLP: Collect per-transmission scores for this scenario (if MLP enabled)
+        if mlp_predictions:
+            scenario_mlp_keys = [(csv, sn, ts) for (csv, sn, ts) in mlp_predictions.keys() if csv == csv_name]
+            for key in scenario_mlp_keys:
+                mlp_data = mlp_predictions[key]
+                all_mlp_scores.append(mlp_data['y_proba'])
+                all_mlp_labels.append(mlp_data['is_spoofed'])
 
         n_processed += 1
         if n_processed % 100 == 0:
             print(f"  Processed {n_processed} scenarios...")
 
     print(f"\n  Total scenarios processed: {n_processed}")
-    print(f"  Common transmissions (all 3 methods): {len(common_labels)}")
 
     # Convert to numpy
-    common_labels = np.array(common_labels)
-    for k in common_scores:
-        common_scores[k] = np.array(common_scores[k])
+    all_kf_scores = np.array(all_kf_scores)
+    all_kf_labels = np.array(all_kf_labels)
+    all_mlat_scores = np.array(all_mlat_scores)
+    all_mlat_labels = np.array(all_mlat_labels)
+    all_mlp_scores = np.array(all_mlp_scores)
+    all_mlp_labels = np.array(all_mlp_labels)
 
-    print(f"  Spoofed: {common_labels.sum()}, Benign: {(~common_labels).sum()}")
+    print(f"\n  KF: {len(all_kf_labels)} RX events ({all_kf_labels.sum()} spoofed)")
+    print(f"  MLAT: {len(all_mlat_labels)} transmissions ({all_mlat_labels.sum()} spoofed)")
+    if mlp_predictions:
+        print(f"  MLP: {len(all_mlp_labels)} transmissions ({all_mlp_labels.sum()} spoofed)")
 
-    # Compute metrics on common set
+    # Compute metrics for each method on its own data
     print("\n" + "=" * 70)
-    print("RESULTS ON COMMON TRANSMISSIONS")
+    print("RESULTS (each method evaluated on its natural granularity)")
     print("=" * 70)
 
     results = {}
 
-    for name, scores, threshold in [
-        ('KF', common_scores['kf'], kf_threshold),
-        ('MLAT', common_scores['mlat'], mlat_threshold),
-        ('MLP', common_scores['mlp'], 0.5),
-    ]:
-        auc, fpr_arr, tpr_arr, thresholds = compute_roc_auc(common_labels, scores)
+    # Build list of methods to evaluate (MLP only if predictions provided)
+    methods_to_eval = [
+        ('KF', all_kf_scores, all_kf_labels, kf_threshold),
+        ('MLAT', all_mlat_scores, all_mlat_labels, mlat_threshold),
+    ]
+    if mlp_predictions:
+        methods_to_eval.append(('MLP', all_mlp_scores, all_mlp_labels, 0.5))
+
+    for name, scores, labels, threshold in methods_to_eval:
+        auc, fpr_arr, tpr_arr, thresholds = compute_roc_auc(labels, scores)
         predictions = scores >= threshold
-        tp = ((predictions == 1) & (common_labels == 1)).sum()
-        tn = ((predictions == 0) & (common_labels == 0)).sum()
-        fp = ((predictions == 1) & (common_labels == 0)).sum()
-        fn = ((predictions == 0) & (common_labels == 1)).sum()
+        tp = ((predictions == 1) & (labels == 1)).sum()
+        tn = ((predictions == 0) & (labels == 0)).sum()
+        fp = ((predictions == 1) & (labels == 0)).sum()
+        fn = ((predictions == 0) & (labels == 1)).sum()
 
         tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
         fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
@@ -247,6 +233,9 @@ def evaluate_on_test_transmissions(
             'tn': int(tn),
             'fp': int(fp),
             'fn': int(fn),
+            'n_total': int(len(labels)),
+            'n_spoofed': int(labels.sum()),
+            'n_benign': int((~labels).sum()),
             'fpr_curve': fpr_arr.tolist(),
             'tpr_curve': tpr_arr.tolist(),
         }
@@ -260,11 +249,11 @@ def evaluate_on_test_transmissions(
     print("\n" + "=" * 70)
     print("COMPARISON TABLE")
     print("=" * 70)
-    print(f"{'Method':<10} {'AUC':>8} {'TPR':>8} {'FPR':>8} {'Threshold':>12}")
-    print("-" * 50)
-    for name in ['kf', 'mlat', 'mlp']:
+    print(f"{'Method':<10} {'AUC':>8} {'TPR':>8} {'FPR':>8} {'Threshold':>12} {'N_events':>10}")
+    print("-" * 60)
+    for name in results.keys():
         r = results[name]
-        print(f"{name.upper():<10} {r['auc']:>8.4f} {r['tpr']:>8.4f} {r['fpr']:>8.4f} {r['threshold']:>12.4f}")
+        print(f"{name.upper():<10} {r['auc']:>8.4f} {r['tpr']:>8.4f} {r['fpr']:>8.4f} {r['threshold']:>12.4f} {r['n_total']:>10}")
 
     # Generate ROC curve figure
     if output_dir:
@@ -277,9 +266,6 @@ def evaluate_on_test_transmissions(
             # Remove curve data for JSON (too large)
             results_json = {k: {kk: vv for kk, vv in v.items() if not kk.endswith('_curve')}
                           for k, v in results.items()}
-            results_json['n_transmissions'] = len(common_labels)
-            results_json['n_spoofed'] = int(common_labels.sum())
-            results_json['n_benign'] = int((~common_labels).sum())
             json.dump(results_json, f, indent=2)
         print(f"\nResults saved to {results_path}")
 
@@ -287,14 +273,14 @@ def evaluate_on_test_transmissions(
         fig, ax = plt.subplots(figsize=(8, 6))
 
         colors = {'kf': 'blue', 'mlat': 'green', 'mlp': 'red'}
-        labels = {'kf': 'Kalman Filter', 'mlat': 'Multilateration', 'mlp': 'MLP'}
+        labels_map = {'kf': 'Kalman Filter', 'mlat': 'Multilateration', 'mlp': 'MLP'}
 
-        for name in ['kf', 'mlat', 'mlp']:
+        for name in results.keys():
             fpr = results[name]['fpr_curve']
             tpr = results[name]['tpr_curve']
             auc = results[name]['auc']
             ax.plot(fpr, tpr, color=colors[name], linewidth=2,
-                   label=f'{labels[name]} (AUC={auc:.3f})')
+                   label=f'{labels_map[name]} (AUC={auc:.3f})')
 
         ax.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Random')
         ax.set_xlabel('False Positive Rate', fontsize=12)
@@ -312,12 +298,12 @@ def evaluate_on_test_transmissions(
 
         # Also save as PNG for quick viewing
         fig, ax = plt.subplots(figsize=(8, 6))
-        for name in ['kf', 'mlat', 'mlp']:
+        for name in results.keys():
             fpr = results[name]['fpr_curve']
             tpr = results[name]['tpr_curve']
             auc = results[name]['auc']
             ax.plot(fpr, tpr, color=colors[name], linewidth=2,
-                   label=f'{labels[name]} (AUC={auc:.3f})')
+                   label=f'{labels_map[name]} (AUC={auc:.3f})')
         ax.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Random')
         ax.set_xlabel('False Positive Rate', fontsize=12)
         ax.set_ylabel('True Positive Rate', fontsize=12)
@@ -352,10 +338,10 @@ def train_thresholds(
     train_scenarios = load_dataset(train_dir, limit=train_limit)
     print(f"Loaded {len(train_scenarios)} training scenarios")
 
-    # Train KF threshold
-    print("\nOptimizing KF threshold...")
+    # Train KF threshold (using only federate receivers, per-RX-event)
+    print("\nOptimizing KF threshold (federate-only, per-RX-event)...")
     kf_detector = KalmanFilterDetector()
-    kf_opt = optimize_threshold(kf_detector, train_scenarios, verbose=True)
+    kf_opt = optimize_threshold(kf_detector, train_scenarios, verbose=True, federate_only=True)
     kf_threshold = kf_opt.best_threshold
 
     # Line search for MLAT path loss exponent
@@ -368,7 +354,7 @@ def train_thresholds(
 
     for ple in path_loss_values:
         mlat_detector = MultilatDetector(path_loss_exp=ple)
-        opt = optimize_threshold(mlat_detector, train_scenarios, verbose=False)
+        opt = optimize_threshold(mlat_detector, train_scenarios, verbose=False, federate_only=True)
         print(f"  path_loss_exp={ple:.1f}: AUC={opt.best_auc:.4f}")
 
         if opt.best_auc > best_auc:
@@ -390,8 +376,8 @@ def main():
                        help="Test data directory")
     parser.add_argument("--train-dir", type=Path,
                        help="Training data directory (required unless --test-only)")
-    parser.add_argument("--mlp-predictions", type=Path, required=True,
-                       help="MLP predictions CSV file")
+    parser.add_argument("--mlp-predictions", type=Path,
+                       help="MLP predictions CSV file (optional, skip MLP if not provided)")
     parser.add_argument("-o", "--output", type=Path,
                        help="Output directory for results and figures")
     parser.add_argument("--test-only", action="store_true",

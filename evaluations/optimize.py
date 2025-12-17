@@ -9,12 +9,12 @@ Uses training set to find optimal parameters, then evaluates on test set.
 """
 
 from dataclasses import dataclass
-from typing import Callable, Iterator
+from typing import Iterator
 import numpy as np
 
-from .data import ScenarioData, iter_dataset
+from .data import ScenarioData
 from .detectors import Detector
-from .metrics import compute_roc_auc, compute_confusion_at_threshold
+from .metrics import compute_roc_auc
 
 
 @dataclass
@@ -160,97 +160,3 @@ def optimize_threshold(
     )
 
 
-def grid_search(
-    detector_factory: Callable[..., Detector],
-    param_grid: dict[str, list],
-    scenarios: list[ScenarioData],
-    verbose: bool = False,
-) -> tuple[OptimizationResult, dict]:
-    """
-    Grid search over detector parameters to maximize AUC.
-
-    Args:
-        detector_factory: Callable that creates Detector given **params
-        param_grid: Dict mapping param names to lists of values to try
-        scenarios: Training scenarios (list, will be iterated multiple times)
-        verbose: Print progress
-
-    Returns:
-        Tuple of (best OptimizationResult, best params dict)
-    """
-    import itertools
-
-    param_names = list(param_grid.keys())
-    param_values = list(param_grid.values())
-
-    best_result = None
-    best_params = None
-    best_auc = -1.0
-
-    total_combos = 1
-    for v in param_values:
-        total_combos *= len(v)
-
-    if verbose:
-        print(f"Grid search over {total_combos} parameter combinations...")
-
-    for i, combo in enumerate(itertools.product(*param_values)):
-        params = dict(zip(param_names, combo))
-        detector = detector_factory(**params)
-
-        if verbose:
-            print(f"  [{i+1}/{total_combos}] {params}")
-
-        result = optimize_threshold(detector, scenarios, verbose=False)
-
-        if result.best_auc > best_auc:
-            best_auc = result.best_auc
-            best_result = result
-            best_params = params
-
-            if verbose:
-                print(f"    New best AUC: {best_auc:.4f}")
-
-    if verbose:
-        print(f"Best params: {best_params}")
-        print(f"Best AUC: {best_auc:.4f}")
-
-    return best_result, best_params
-
-
-def line_search_threshold(
-    detector: Detector,
-    scenarios: list[ScenarioData],
-    target_fpr: float | None = None,
-    target_tpr: float | None = None,
-    verbose: bool = False,
-    federate_only: bool = False,
-) -> tuple[float, float, float]:
-    """
-    Find threshold for a specific operating point.
-
-    Args:
-        detector: Detector to use
-        scenarios: Training scenarios
-        target_fpr: Target false positive rate (find threshold <= this FPR)
-        target_tpr: Target true positive rate (find threshold >= this TPR)
-        verbose: Print progress
-        federate_only: If True, only use RX events from federate receivers
-
-    Returns:
-        Tuple of (threshold, actual_tpr, actual_fpr)
-    """
-    result = optimize_threshold(detector, scenarios, verbose=verbose, federate_only=federate_only)
-
-    if target_fpr is not None:
-        threshold = result.find_threshold_for_fpr(target_fpr)
-    elif target_tpr is not None:
-        threshold = result.find_threshold_for_tpr(target_tpr)
-    else:
-        threshold = result.best_threshold
-
-    # Get actual rates at this threshold
-    times, labels, scores = collect_scores_and_labels(detector, scenarios, federate_only=federate_only)
-    _, _, _, _, tpr, fpr = compute_confusion_at_threshold(labels, scores, threshold)
-
-    return threshold, tpr, fpr

@@ -54,11 +54,6 @@ python -m evaluations.unified_eval \
     -o evaluations/results/
 ```
 
-For individual detector evaluation (legacy):
-```bash
-python -m evaluations.run all datasets/scitech26/train datasets/scitech26/test -o evaluations/results/
-```
-
 ## Task
 
 **Binary spoofing detection** at method-appropriate granularity:
@@ -139,9 +134,7 @@ Uses fixed federate receivers (first 4 benign hosts) to jointly estimate transmi
 | `data.py` | Load CSVs, extract RX events with ground truth |
 | `metrics.py` | Compute AUC, TPR, FPR, time-to-detection |
 | `detectors.py` | Detector interface + KF/MLAT implementations |
-| `optimize.py` | Threshold line search, parameter grid search (supports `federate_only` mode) |
-| `evaluate.py` | Run train→test evaluation pipeline (legacy) |
-| `run.py` | CLI entry point (legacy) |
+| `optimize.py` | Threshold optimization (maximize Youden's J) |
 | `scitech26_eval.sh` | Reproduce SciTech26 paper results |
 | `notebooks/` | Jupyter notebooks explaining each detector |
 

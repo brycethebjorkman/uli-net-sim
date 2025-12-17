@@ -146,26 +146,3 @@ def iter_dataset(
         yield load_scenario(csv_path)
 
 
-def aggregate_events(scenarios: list[ScenarioData]) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
-    """
-    Aggregate RX events from multiple scenarios for batch evaluation.
-
-    Args:
-        scenarios: List of ScenarioData objects
-
-    Returns:
-        Tuple of (times, is_spoofed, rssi, scenario_indices)
-        where scenario_indices maps event index to scenario
-    """
-    times = np.concatenate([s.time for s in scenarios])
-    is_spoofed = np.concatenate([s.is_spoofed for s in scenarios])
-    rssi = np.concatenate([s.rssi for s in scenarios])
-
-    # Track which scenario each event belongs to
-    scenario_indices = {}
-    offset = 0
-    for i, s in enumerate(scenarios):
-        scenario_indices[i] = (offset, offset + s.n_events)
-        offset += s.n_events
-
-    return times, is_spoofed, rssi, scenario_indices

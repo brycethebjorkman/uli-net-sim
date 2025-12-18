@@ -2,13 +2,10 @@
 #
 # Reproducible evaluation for the SciTech26 paper
 #
-# This script runs test-only evaluation on the scitech26-1920-scenarios dataset
-# using pre-optimized thresholds, producing the results and figures for the paper.
+# This script runs the full train+test pipeline on the scitech26-1920-scenarios
+# dataset, optimizing thresholds on training data and evaluating on test data.
 #
-# Threshold Optimization (performed on 300 training scenarios due to memory constraints):
-#   - KF threshold: 0.6126 (optimized via Youden's J on 300 scenarios, ~8M events)
-#   - MLAT threshold: 114.3571 (position error threshold)
-# Both detectors use the same 2.4 GHz free space path loss model:
+# Both KF and MLAT use the same 2.4 GHz free space path loss model:
 #   RSSI = P_tx - 20*log10(d) - 40.04
 #
 # Usage:
@@ -29,58 +26,61 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Dataset paths
 DATASET_DIR="$PROJECT_DIR/datasets/scitech26-1920-scenarios"
+TRAIN_DIR="$DATASET_DIR/train"
 TEST_DIR="$DATASET_DIR/test"
 MLP_PREDICTIONS="$PROJECT_DIR/datasets/mlp_test_predictions.csv"
 OUTPUT_DIR="$SCRIPT_DIR/results"
 
-# Pre-optimized thresholds (from training on 300 scenarios)
-# Both KF and MLAT use the same 2.4 GHz free space path loss model:
-#   RSSI = P_tx - 20*log10(d) - 40.04
-KF_THRESHOLD=0.6126
-MLAT_THRESHOLD=114.3571
-
 # Validate inputs
 echo "============================================================"
-echo "SciTech26 Paper Evaluation - Reproducible Results"
+echo "SciTech26 Paper Evaluation - Full Train+Test Pipeline"
 echo "============================================================"
 echo ""
 echo "Configuration:"
+echo "  Train dir:        $TRAIN_DIR"
 echo "  Test dir:         $TEST_DIR"
 echo "  MLP predictions:  $MLP_PREDICTIONS"
 echo "  Output dir:       $OUTPUT_DIR"
 echo ""
-echo "Pre-optimized thresholds:"
-echo "  KF threshold:     $KF_THRESHOLD"
-echo "  MLAT threshold:   $MLAT_THRESHOLD"
-echo ""
+
+if [ ! -d "$TRAIN_DIR" ]; then
+    echo "ERROR: Train directory not found: $TRAIN_DIR"
+    exit 1
+fi
 
 if [ ! -d "$TEST_DIR" ]; then
     echo "ERROR: Test directory not found: $TEST_DIR"
     exit 1
 fi
 
-if [ ! -f "$MLP_PREDICTIONS" ]; then
-    echo "ERROR: MLP predictions file not found: $MLP_PREDICTIONS"
-    exit 1
+# Check for MLP predictions (optional)
+MLP_ARG=""
+if [ -f "$MLP_PREDICTIONS" ]; then
+    MLP_ARG="--mlp-predictions $MLP_PREDICTIONS"
+    echo "MLP predictions found - will include MLP in evaluation"
+else
+    echo "MLP predictions not found - evaluating KF and MLAT only"
 fi
+echo ""
 
 # Count scenarios
+N_TRAIN=$(ls -1 "$TRAIN_DIR"/*.csv 2>/dev/null | wc -l)
 N_TEST=$(ls -1 "$TEST_DIR"/*.csv 2>/dev/null | wc -l)
 echo "Dataset:"
+echo "  Train scenarios:    $N_TRAIN"
 echo "  Test scenarios:     $N_TEST"
 echo ""
 
-# Run test-only evaluation with pre-optimized thresholds
-echo "Starting test-only evaluation..."
+# Run full train+test evaluation
+echo "Starting train+test evaluation..."
+echo "(This may take several minutes for large datasets)"
 echo ""
 
 cd "$PROJECT_DIR"
 python -u -m evaluations.unified_eval \
+    --train-dir "$TRAIN_DIR" \
     --test-dir "$TEST_DIR" \
-    --mlp-predictions "$MLP_PREDICTIONS" \
-    --test-only \
-    --kf-threshold "$KF_THRESHOLD" \
-    --mlat-threshold "$MLAT_THRESHOLD" \
+    $MLP_ARG \
     -o "$OUTPUT_DIR"
 
 echo ""

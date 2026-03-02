@@ -119,6 +119,8 @@ host_count=$#
 tx_n=""
 rx_count=0
 tmp_dir=$(mktemp -d)
+# Clean up temp directory on exit
+trap 'rm -rf "$tmp_dir" results.csv 2>/dev/null' EXIT
 vec_out="$tmp_dir/rid-one-off.vec"
 run_args+=" --result-dir=$tmp_dir"
 run_args+=" --output-vector-file=$vec_out"

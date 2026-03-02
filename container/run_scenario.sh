@@ -101,4 +101,10 @@ for CONFIG_NAME in "${CONFIGS_TO_RUN[@]}"; do
     fi
 done
 
+# Clean up intermediate artifacts (VEC, SCA files) to save disk space
+if [ -d "$RESULTS_DIR" ]; then
+    rm -rf "$RESULTS_DIR"
+    echo "  [$SCENARIO_NAME] Cleaned up intermediate results"
+fi
+
 echo "  [$SCENARIO_NAME] Complete"

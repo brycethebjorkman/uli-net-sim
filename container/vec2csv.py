@@ -9,9 +9,10 @@ Kalman Filter outputs.
 
 import argparse
 import csv
+import os
 import subprocess
-import tempfile
 import sys
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -151,14 +152,14 @@ def generate_events(host_vectors: Dict[int, Dict[str, VectorData]]) -> List[Even
                     host_id=host_id,
                     serial_number=host_id,  # Assume serial_number = host_id for TX
                     rid_timestamp=rid_ts,
-                    # Actual transmitter position/velocity
-                    pos_x=vectors['Transmission X Coordinate'].get_value_at_index(i),
-                    pos_y=vectors['Transmission Y Coordinate'].get_value_at_index(i),
-                    pos_z=vectors['Transmission Z Coordinate'].get_value_at_index(i),
-                    speed_vertical=vectors.get('Transmission Vertical Speed', VectorData([], [])).get_value_at_index(i),
-                    speed_horizontal=vectors.get('Transmission Horizontal Speed', VectorData([], [])).get_value_at_index(i),
-                    heading=vectors.get('Transmission Heading', VectorData([], [])).get_value_at_index(i),
-                    # Remote ID message fields (same as actual for TX event)
+                    # Actual transmitter position/velocity (use "My" vectors)
+                    pos_x=vectors.get('Transmission My X Coordinate', VectorData([], [])).get_value_at_index(i),
+                    pos_y=vectors.get('Transmission My Y Coordinate', VectorData([], [])).get_value_at_index(i),
+                    pos_z=vectors.get('Transmission My Z Coordinate', VectorData([], [])).get_value_at_index(i),
+                    speed_vertical=vectors.get('Transmission My Vertical Speed', VectorData([], [])).get_value_at_index(i),
+                    speed_horizontal=vectors.get('Transmission My Horizontal Speed', VectorData([], [])).get_value_at_index(i),
+                    heading=vectors.get('Transmission My Heading', VectorData([], [])).get_value_at_index(i),
+                    # Remote ID message fields (claimed position/velocity from RID message)
                     rid_pos_x=vectors['Transmission X Coordinate'].get_value_at_index(i),
                     rid_pos_y=vectors['Transmission Y Coordinate'].get_value_at_index(i),
                     rid_pos_z=vectors['Transmission Z Coordinate'].get_value_at_index(i),
@@ -284,16 +285,21 @@ def main():
     print(f"Exporting vectors from {args.vec_file}...", file=sys.stderr)
     tmp_csv = export_vectors_to_csv(args.vec_file)
 
-    print(f"Parsing vectors...", file=sys.stderr)
-    host_vectors = parse_csv_vectors(tmp_csv)
+    try:
+        print(f"Parsing vectors...", file=sys.stderr)
+        host_vectors = parse_csv_vectors(tmp_csv)
 
-    print(f"Generating events...", file=sys.stderr)
-    events = generate_events(host_vectors)
+        print(f"Generating events...", file=sys.stderr)
+        events = generate_events(host_vectors)
 
-    print(f"Writing {len(events)} events to {args.output}...", file=sys.stderr)
-    write_csv(events, args.output)
+        print(f"Writing {len(events)} events to {args.output}...", file=sys.stderr)
+        write_csv(events, args.output)
 
-    print(f"Done!", file=sys.stderr)
+        print(f"Done!", file=sys.stderr)
+    finally:
+        # Clean up temp file created by export_vectors_to_csv
+        if os.path.exists(tmp_csv):
+            os.remove(tmp_csv)
 
 
 if __name__ == '__main__':

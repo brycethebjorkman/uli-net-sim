@@ -29,6 +29,9 @@ class ScenarioData:
     # Receiver position (actual)
     rx_pos: np.ndarray  # Shape (N, 3) - receiver x, y, z
 
+    # Transmitter position (actual) - joined from TX events
+    tx_pos: np.ndarray  # Shape (N, 3) - transmitter actual x, y, z
+
     # Claimed position from RID message
     rid_pos: np.ndarray  # Shape (N, 3) - claimed x, y, z
 
@@ -63,7 +66,7 @@ def load_scenario(csv_path: Path | str, num_federates: int = 4) -> ScenarioData:
         num_federates: Number of benign hosts to designate as federates (default 4)
 
     Returns:
-        ScenarioData with RX events only
+        ScenarioData with RX events only, including transmitter actual positions
     """
     csv_path = Path(csv_path)
     df = pd.read_csv(csv_path)
@@ -73,24 +76,47 @@ def load_scenario(csv_path: Path | str, num_federates: int = 4) -> ScenarioData:
     benign_hosts = df[df["host_type"] == "benign"]["host_id"].unique()
     federate_host_ids = np.sort(benign_hosts)[:num_federates]
 
+    # Extract TX events to get transmitter actual positions
+    # TX events have pos_x/y/z as the transmitter's actual position
+    tx_df = df[df["event_type"] == "TX"][
+        ["serial_number", "rid_timestamp", "pos_x", "pos_y", "pos_z"]
+    ].copy()
+    tx_df = tx_df.rename(columns={
+        "pos_x": "tx_pos_x",
+        "pos_y": "tx_pos_y",
+        "pos_z": "tx_pos_z",
+    })
+    # Ensure rid_timestamp is int for proper join
+    tx_df["rid_timestamp"] = tx_df["rid_timestamp"].astype(int)
+
     # Filter to RX events only
-    df = df[df["event_type"] == "RX"].copy()
+    rx_df = df[df["event_type"] == "RX"].copy()
+    rx_df["rid_timestamp"] = rx_df["rid_timestamp"].astype(int)
+
+    # Join RX events with TX events to get transmitter actual position
+    # Each RX event is matched to its corresponding TX by (serial_number, rid_timestamp)
+    rx_df = rx_df.merge(
+        tx_df,
+        on=["serial_number", "rid_timestamp"],
+        how="left"
+    )
 
     # Extract scenario ID from filename
     scenario_id = csv_path.stem
 
     return ScenarioData(
         scenario_id=scenario_id,
-        time=df["time"].values,
-        host_id=df["host_id"].values,
-        host_type=df["host_type"].values,
-        serial_number=df["serial_number"].values,
-        rid_timestamp=df["rid_timestamp"].values.astype(int),
-        is_spoofed=df["is_spoofed"].values.astype(bool),
-        rx_pos=df[["pos_x", "pos_y", "pos_z"]].values,
-        rid_pos=df[["rid_pos_x", "rid_pos_y", "rid_pos_z"]].values,
-        rssi=df["rssi"].values,
-        kf_nis=df["kf_nis"].values if "kf_nis" in df.columns else np.full(len(df), np.nan),
+        time=rx_df["time"].values,
+        host_id=rx_df["host_id"].values,
+        host_type=rx_df["host_type"].values,
+        serial_number=rx_df["serial_number"].values,
+        rid_timestamp=rx_df["rid_timestamp"].values,
+        is_spoofed=rx_df["is_spoofed"].values.astype(bool),
+        rx_pos=rx_df[["pos_x", "pos_y", "pos_z"]].values,
+        tx_pos=rx_df[["tx_pos_x", "tx_pos_y", "tx_pos_z"]].values,
+        rid_pos=rx_df[["rid_pos_x", "rid_pos_y", "rid_pos_z"]].values,
+        rssi=rx_df["rssi"].values,
+        kf_nis=rx_df["kf_nis"].values if "kf_nis" in rx_df.columns else np.full(len(rx_df), np.nan),
         federate_host_ids=federate_host_ids,
     )
 

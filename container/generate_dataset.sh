@@ -219,8 +219,16 @@ EOF
             CSV_FILE="${OUTPUT_DIR}/${SCENARIO_NAME}.csv"
             python3 "$VEC2CSV" "$VEC_FILE" -o "$CSV_FILE"
             echo "Created: $CSV_FILE"
+
+            # Clean up intermediate artifacts to save disk space
+            rm -f "$VEC_FILE"
+            rm -f "${RW_SIM_DIR}/results/${SCENARIO_NAME}-#0.sca"
+            rm -f "$WAYPOINTS_XML"
+            echo "Cleaned up intermediate files"
         else
             echo "Warning: Vector file not found: $VEC_FILE"
+            # Still clean up waypoints XML even if simulation failed
+            rm -f "$WAYPOINTS_XML"
         fi
 
         echo ""

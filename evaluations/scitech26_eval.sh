@@ -14,9 +14,12 @@
 #   ./evaluations/scitech26_eval.sh
 #
 # Output:
-#   evaluations/results/unified_results.json - Numeric results
-#   evaluations/results/roc_curves.pdf       - ROC curve figure for paper
-#   evaluations/results/roc_curves.png       - ROC curve figure (preview)
+#   evaluations/results/thresholds.json        - Trained thresholds
+#   evaluations/results/kf_scores.csv          - Per-RX-event KF scores
+#   evaluations/results/mlat_scores.csv        - Per-transmission MLAT scores
+#   evaluations/results/unified_results.json   - Numeric results
+#   evaluations/results/roc_curves.pdf         - ROC curve figure for paper
+#   evaluations/results/roc_curves.png         - ROC curve figure (preview)
 #
 
 set -e
@@ -71,15 +74,24 @@ echo "  Train scenarios:    $N_TRAIN"
 echo "  Test scenarios:     $N_TEST"
 echo ""
 
-# Run full train+test evaluation
-echo "Starting train+test evaluation..."
+# Stage 1: Score test set (trains thresholds on training data, runs detectors)
+echo "Stage 1: Scoring test set..."
 echo "(This may take several minutes for large datasets)"
 echo ""
 
 cd "$PROJECT_DIR"
-python -u -m evaluations.unified_eval \
+python -u -m evaluations.unified_eval score \
     --train-dir "$TRAIN_DIR" \
     --test-dir "$TEST_DIR" \
+    -o "$OUTPUT_DIR"
+
+# Stage 2: Analyze scores (ROC curves, confusion matrices, plots)
+echo ""
+echo "Stage 2: Analyzing scores..."
+echo ""
+
+python -u -m evaluations.unified_eval analyze \
+    --scores-dir "$OUTPUT_DIR" \
     $MLP_ARG \
     -o "$OUTPUT_DIR"
 
@@ -89,6 +101,9 @@ echo "Evaluation complete!"
 echo "============================================================"
 echo ""
 echo "Results saved to:"
+echo "  $OUTPUT_DIR/thresholds.json"
+echo "  $OUTPUT_DIR/kf_scores.csv"
+echo "  $OUTPUT_DIR/mlat_scores.csv"
 echo "  $OUTPUT_DIR/unified_results.json"
 echo "  $OUTPUT_DIR/roc_curves.pdf"
 echo "  $OUTPUT_DIR/roc_curves.png"

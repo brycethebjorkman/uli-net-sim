@@ -9,11 +9,12 @@ Uses training set to find optimal parameters, then evaluates on test set.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterator
 import numpy as np
 
-from .data import ScenarioData
-from .detectors import Detector
+from .data import ScenarioData, load_dataset
+from .detectors import Detector, KalmanFilterDetector, MultilatDetector
 from .metrics import compute_roc_auc
 
 
@@ -158,5 +159,37 @@ def optimize_threshold(
         tpr_curve=tpr,
         thresholds=thresholds,
     )
+
+
+def train_thresholds(
+    train_dir: Path,
+    train_limit: int | None = None,
+) -> tuple[float, float]:
+    """
+    Train optimal thresholds for KF and MLAT on training data.
+
+    Returns:
+        Tuple of (kf_threshold, mlat_threshold)
+    """
+    print("=" * 70)
+    print("TRAINING PHASE")
+    print("=" * 70)
+
+    train_scenarios = load_dataset(train_dir, limit=train_limit)
+    print(f"Loaded {len(train_scenarios)} training scenarios")
+
+    # Train KF threshold (using only federate receivers, per-RX-event)
+    print("\nOptimizing KF threshold (federate-only, per-RX-event)...")
+    kf_detector = KalmanFilterDetector()
+    kf_opt = optimize_threshold(kf_detector, train_scenarios, verbose=True, federate_only=True)
+    kf_threshold = kf_opt.best_threshold
+
+    # Train MLAT threshold (using fixed 2.4 GHz FSPL model)
+    print("\nOptimizing MLAT threshold (federate-only, per-transmission)...")
+    mlat_detector = MultilatDetector()
+    mlat_opt = optimize_threshold(mlat_detector, train_scenarios, verbose=True, federate_only=True)
+    mlat_threshold = mlat_opt.best_threshold
+
+    return kf_threshold, mlat_threshold
 
 

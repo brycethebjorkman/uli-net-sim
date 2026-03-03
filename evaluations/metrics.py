@@ -212,3 +212,34 @@ def compute_metrics(
         false_positives=fp,
         false_negatives=fn,
     )
+
+
+def compute_distance_stats(distances: np.ndarray) -> dict:
+    """Compute summary statistics for a distance distribution."""
+    # Filter out NaN values (from failed TX/RX joins)
+    distances = distances[~np.isnan(distances)]
+    if len(distances) == 0:
+        return {
+            'count': 0,
+            'mean': None,
+            'std': None,
+            'min': None,
+            'max': None,
+            'median': None,
+            'p25': None,
+            'p75': None,
+            'p90': None,
+            'p95': None,
+        }
+    return {
+        'count': int(len(distances)),
+        'mean': float(np.mean(distances)),
+        'std': float(np.std(distances)),
+        'min': float(np.min(distances)),
+        'max': float(np.max(distances)),
+        'median': float(np.median(distances)),
+        'p25': float(np.percentile(distances, 25)),
+        'p75': float(np.percentile(distances, 75)),
+        'p90': float(np.percentile(distances, 90)),
+        'p95': float(np.percentile(distances, 95)),
+    }

@@ -7,12 +7,16 @@ Higher scores indicate higher likelihood of spoofing.
 Detectors:
 1. KalmanFilterDetector - Uses KF NIS (Normalized Innovation Squared) from single receiver
 2. MultilatDetector - Uses RSSI multilateration from multiple receivers
+3. MLPDetector - MLP trained on per-transmission RSSI + receiver-to-claimed-TX features
 """
 
+import pickle
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 import numpy as np
+import pandas as pd
 from scipy.optimize import least_squares
 
 from .data import ScenarioData
@@ -338,3 +342,312 @@ class MultilatDetector(Detector):
 
         except Exception:
             return None, None
+
+
+def _make_mlp(input_dim: int, hidden_dims: list[int]):
+    """
+    Build an MLP nn.Module with architecture matching the original SciTech26 paper.
+    """
+    import torch.nn as nn
+
+    layers = []
+    prev = input_dim
+    for h in hidden_dims:
+        layers.extend([nn.Linear(prev, h), nn.ReLU()])
+        prev = h
+    layers.append(nn.Linear(prev, 1))
+    seq = nn.Sequential(*layers)
+
+    class _MLP(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.net = seq
+
+        def forward(self, x):
+            return self.net(x)
+
+    return _MLP()
+
+
+class MLPDetector:
+    """
+    MLP-based spoofing detector.
+
+    Trains a multilayer perceptron on per-transmission features derived from up to 4
+    benign receivers: the receiver-to-claimed-TX position vectors (x, y, z per axis)
+    and RSSI for each receiver.  The MLP learns to detect when RSSI values are
+    inconsistent with the claimed transmitter position.
+
+    Output granularity: one score per transmission (same as MultilatDetector).
+
+    Requires PyTorch and scikit-learn.
+    """
+
+    # Feature columns in the wide per-transmission DataFrame
+    FEATURE_COLS = [
+        'rx_to_claimed_x_0', 'rx_to_claimed_y_0', 'rx_to_claimed_z_0',
+        'rx_to_claimed_x_1', 'rx_to_claimed_y_1', 'rx_to_claimed_z_1',
+        'rx_to_claimed_x_2', 'rx_to_claimed_y_2', 'rx_to_claimed_z_2',
+        'rx_to_claimed_x_3', 'rx_to_claimed_y_3', 'rx_to_claimed_z_3',
+        'rssi_0', 'rssi_1', 'rssi_2', 'rssi_3',
+    ]
+    HIDDEN_DIMS = [128, 64]
+    LR = 1e-3
+    BATCH_SIZE = 32
+    EPOCHS = 10
+
+    def __init__(self):
+        self.model = None
+        self.scaler = None
+        self._feature_means: pd.Series | None = None  # For NaN-filling test data
+
+    # ------------------------------------------------------------------
+    # Preprocessing
+    # ------------------------------------------------------------------
+
+    def _preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Preprocess a raw scenario DataFrame into per-transmission wide format.
+
+        Keeps only RX events from benign receivers, computes per-axis
+        receiver-to-claimed-TX position vectors, takes first 4 benign receivers
+        per (serial_number, rid_timestamp), then pivots to wide format.
+
+        Returns DataFrame with FEATURE_COLS + serial_number + rid_timestamp +
+        is_spoofed.  Transmissions with no benign receivers are dropped.
+        """
+        rx = df[(df['event_type'] == 'RX') & (df['host_type'] == 'benign')].copy()
+        rx['rid_timestamp'] = rx['rid_timestamp'].astype(int)
+
+        if len(rx) == 0:
+            return pd.DataFrame()
+
+        # Per-axis vectors from receiver position to claimed TX position
+        rx['rx_to_claimed_x'] = rx['pos_x'] - rx['rid_pos_x']
+        rx['rx_to_claimed_y'] = rx['pos_y'] - rx['rid_pos_y']
+        rx['rx_to_claimed_z'] = rx['pos_z'] - rx['rid_pos_z']
+
+        # Select first 4 benign receivers per transmission (deterministic by host_id)
+        rx = rx.sort_values(['serial_number', 'rid_timestamp', 'host_id'])
+        rx['host_rank'] = rx.groupby(['serial_number', 'rid_timestamp']).cumcount()
+        rx = rx[rx['host_rank'] < 4].copy()
+
+        value_cols = ['rx_to_claimed_x', 'rx_to_claimed_y', 'rx_to_claimed_z', 'rssi', 'is_spoofed']
+        wide = rx.pivot_table(
+            index=['serial_number', 'rid_timestamp'],
+            columns='host_rank',
+            values=value_cols,
+            aggfunc='first',
+        )
+        wide.columns = [f"{col}_{rank}" for col, rank in wide.columns]
+        wide = wide.reset_index()
+
+        # Collapse per-receiver is_spoofed flags into a single column
+        spoof_cols = [f'is_spoofed_{i}' for i in range(4) if f'is_spoofed_{i}' in wide.columns]
+        if spoof_cols:
+            wide['is_spoofed'] = wide[spoof_cols].any(axis=1).astype(int)
+            wide.drop(columns=spoof_cols, inplace=True)
+
+        return wide
+
+    def _compute_transmission_distances(
+        self, df: pd.DataFrame, wide: pd.DataFrame
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Compute per-transmission spoofing_dist and distance_discrepancy.
+
+        spoofing_dist       = ||tx_actual - rid_claimed||
+        distance_discrepancy = ||tx_actual - rx|| - ||rid_claimed - rx||  (first benign RX)
+        """
+        tx_df = df[df['event_type'] == 'TX'][[
+            'serial_number', 'rid_timestamp',
+            'pos_x', 'pos_y', 'pos_z',
+            'rid_pos_x', 'rid_pos_y', 'rid_pos_z',
+        ]].copy()
+        tx_df['rid_timestamp'] = tx_df['rid_timestamp'].astype(int)
+
+        tx_actual = tx_df[['pos_x', 'pos_y', 'pos_z']].values
+        rid_claimed = tx_df[['rid_pos_x', 'rid_pos_y', 'rid_pos_z']].values
+        tx_df['spoofing_dist'] = np.linalg.norm(tx_actual - rid_claimed, axis=1)
+
+        # First benign RX per transmission for distance_discrepancy
+        rx_df = df[(df['event_type'] == 'RX') & (df['host_type'] == 'benign')].copy()
+        rx_df['rid_timestamp'] = rx_df['rid_timestamp'].astype(int)
+        rx_first = rx_df.drop_duplicates(subset=['serial_number', 'rid_timestamp']).copy()
+
+        rx_first = rx_first.merge(
+            tx_df[['serial_number', 'rid_timestamp', 'pos_x', 'pos_y', 'pos_z']].rename(
+                columns={'pos_x': 'tx_x', 'pos_y': 'tx_y', 'pos_z': 'tx_z'}
+            ),
+            on=['serial_number', 'rid_timestamp'],
+            how='left',
+        )
+        actual_dist = np.linalg.norm(
+            rx_first[['tx_x', 'tx_y', 'tx_z']].values
+            - rx_first[['pos_x', 'pos_y', 'pos_z']].values,
+            axis=1,
+        )
+        claimed_dist = np.linalg.norm(
+            rx_first[['rid_pos_x', 'rid_pos_y', 'rid_pos_z']].values
+            - rx_first[['pos_x', 'pos_y', 'pos_z']].values,
+            axis=1,
+        )
+        rx_first['distance_discrepancy'] = actual_dist - claimed_dist
+
+        merged = wide[['serial_number', 'rid_timestamp']].merge(
+            tx_df[['serial_number', 'rid_timestamp', 'spoofing_dist']],
+            on=['serial_number', 'rid_timestamp'],
+            how='left',
+        ).merge(
+            rx_first[['serial_number', 'rid_timestamp', 'distance_discrepancy']],
+            on=['serial_number', 'rid_timestamp'],
+            how='left',
+        )
+        return merged['spoofing_dist'].values, merged['distance_discrepancy'].values
+
+    # ------------------------------------------------------------------
+    # Training
+    # ------------------------------------------------------------------
+
+    def train(self, train_csv_paths: list) -> None:
+        """
+        Train MLP on all training CSV files.
+
+        Args:
+            train_csv_paths: Iterable of Path/str objects pointing to training CSVs.
+        """
+        import torch
+        import torch.nn as nn
+        import torch.optim as optim
+        from torch.utils.data import DataLoader, TensorDataset
+        from sklearn.preprocessing import StandardScaler
+
+        train_csv_paths = list(train_csv_paths)
+        print(f"Preprocessing {len(train_csv_paths)} training scenarios for MLP...")
+
+        dfs = []
+        for i, csv_path in enumerate(sorted(train_csv_paths)):
+            wide = self._preprocess(pd.read_csv(csv_path))
+            if len(wide) > 0:
+                dfs.append(wide)
+            if (i + 1) % 100 == 0:
+                print(f"  Preprocessed {i + 1}/{len(train_csv_paths)} scenarios...")
+
+        if not dfs:
+            raise ValueError("No training data found after preprocessing")
+
+        train_df = pd.concat(dfs, ignore_index=True)
+
+        X = train_df[self.FEATURE_COLS].copy()
+        self._feature_means = X.mean()
+        X = X.fillna(self._feature_means)
+        y = train_df['is_spoofed'].values.astype(float)
+
+        n_pos = int(y.sum())
+        n_neg = int(len(y) - n_pos)
+        print(f"  Training on {len(train_df)} transmissions "
+              f"({n_pos} spoofed, {n_neg} benign)")
+
+        self.scaler = StandardScaler()
+        X_np = self.scaler.fit_transform(X.values)
+
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.model = _make_mlp(len(self.FEATURE_COLS), self.HIDDEN_DIMS).to(device)
+
+        pos_weight = torch.tensor(n_neg / n_pos, dtype=torch.float32).to(device)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        optimizer = optim.Adam(self.model.parameters(), lr=self.LR)
+
+        X_tensor = torch.FloatTensor(X_np).to(device)
+        y_tensor = torch.FloatTensor(y).unsqueeze(1).to(device)
+        loader = DataLoader(
+            TensorDataset(X_tensor, y_tensor),
+            batch_size=self.BATCH_SIZE,
+            shuffle=True,
+        )
+
+        print(f"  Training MLP ({device})...")
+        for epoch in range(self.EPOCHS):
+            self.model.train()
+            total_loss = 0.0
+            for xb, yb in loader:
+                optimizer.zero_grad()
+                loss = criterion(self.model(xb), yb)
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+            print(f"  Epoch {epoch + 1}/{self.EPOCHS} - Loss: {total_loss / len(loader):.4f}")
+
+    # ------------------------------------------------------------------
+    # Inference
+    # ------------------------------------------------------------------
+
+    def score_file(self, csv_path, scenario_id: str) -> pd.DataFrame:
+        """
+        Score all transmissions in a scenario CSV file.
+
+        Args:
+            csv_path: Path to scenario CSV file (or pre-loaded DataFrame).
+            scenario_id: Scenario identifier (typically the CSV stem).
+
+        Returns:
+            DataFrame with columns:
+                scenario_id, serial_number, rid_timestamp,
+                mlp_score, is_spoofed, spoofing_dist, distance_discrepancy
+        """
+        import torch
+
+        empty = pd.DataFrame(columns=[
+            'scenario_id', 'serial_number', 'rid_timestamp',
+            'mlp_score', 'is_spoofed', 'spoofing_dist', 'distance_discrepancy',
+        ])
+
+        df = pd.read_csv(csv_path) if not isinstance(csv_path, pd.DataFrame) else csv_path
+        wide = self._preprocess(df)
+
+        if len(wide) == 0:
+            return empty
+
+        X = wide[self.FEATURE_COLS].copy().fillna(self._feature_means)
+        X_np = self.scaler.transform(X.values)
+
+        device = next(self.model.parameters()).device
+        self.model.eval()
+        with torch.no_grad():
+            proba = torch.sigmoid(
+                self.model(torch.FloatTensor(X_np).to(device))
+            ).cpu().numpy().flatten()
+
+        spoofing_dists, dist_discrepancies = self._compute_transmission_distances(df, wide)
+
+        return pd.DataFrame({
+            'scenario_id': scenario_id,
+            'serial_number': wide['serial_number'].astype(int).values,
+            'rid_timestamp': wide['rid_timestamp'].astype(int).values,
+            'mlp_score': proba,
+            'is_spoofed': wide['is_spoofed'].values,
+            'spoofing_dist': spoofing_dists,
+            'distance_discrepancy': dist_discrepancies,
+        })
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def save(self, weights_path, scaler_path) -> None:
+        """Save model weights (.pth) and scaler + feature means (.pkl)."""
+        import torch
+        torch.save(self.model.state_dict(), weights_path)
+        with open(scaler_path, 'wb') as f:
+            pickle.dump({'scaler': self.scaler, 'feature_means': self._feature_means}, f)
+
+    def load(self, weights_path, scaler_path) -> None:
+        """Load model weights and scaler from disk."""
+        import torch
+        with open(scaler_path, 'rb') as f:
+            data = pickle.load(f)
+        self.scaler = data['scaler']
+        self._feature_means = data['feature_means']
+        self.model = _make_mlp(len(self.FEATURE_COLS), self.HIDDEN_DIMS)
+        self.model.load_state_dict(torch.load(weights_path, map_location='cpu'))
+        self.model.eval()

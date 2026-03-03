@@ -31,7 +31,6 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DATASET_DIR="$PROJECT_DIR/datasets/scitech26-1920-scenarios"
 TRAIN_DIR="$DATASET_DIR/train"
 TEST_DIR="$DATASET_DIR/test"
-MLP_PREDICTIONS="$PROJECT_DIR/datasets/mlp_test_predictions.csv"
 OUTPUT_DIR="$SCRIPT_DIR/results"
 
 # Validate inputs
@@ -42,7 +41,6 @@ echo ""
 echo "Configuration:"
 echo "  Train dir:        $TRAIN_DIR"
 echo "  Test dir:         $TEST_DIR"
-echo "  MLP predictions:  $MLP_PREDICTIONS"
 echo "  Output dir:       $OUTPUT_DIR"
 echo ""
 
@@ -54,15 +52,6 @@ fi
 if [ ! -d "$TEST_DIR" ]; then
     echo "ERROR: Test directory not found: $TEST_DIR"
     exit 1
-fi
-
-# Check for MLP predictions (optional)
-MLP_ARG=""
-if [ -f "$MLP_PREDICTIONS" ]; then
-    MLP_ARG="--mlp-predictions $MLP_PREDICTIONS"
-    echo "MLP predictions found - will include MLP in evaluation"
-else
-    echo "MLP predictions not found - evaluating KF and MLAT only"
 fi
 echo ""
 
@@ -92,7 +81,6 @@ echo ""
 
 python -u -m evaluations.unified_eval analyze \
     --scores-dir "$OUTPUT_DIR" \
-    $MLP_ARG \
     -o "$OUTPUT_DIR"
 
 echo ""
@@ -104,6 +92,9 @@ echo "Results saved to:"
 echo "  $OUTPUT_DIR/thresholds.json"
 echo "  $OUTPUT_DIR/kf_scores.csv"
 echo "  $OUTPUT_DIR/mlat_scores.csv"
+echo "  $OUTPUT_DIR/mlp_scores.csv"
+echo "  $OUTPUT_DIR/mlp_weights.pth"
+echo "  $OUTPUT_DIR/mlp_scaler.pkl"
 echo "  $OUTPUT_DIR/unified_results.json"
 echo "  $OUTPUT_DIR/roc_curves.pdf"
 echo "  $OUTPUT_DIR/roc_curves.png"

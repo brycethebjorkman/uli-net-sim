@@ -20,19 +20,18 @@ def analyze_scores(
     output_dir: Path | None = None,
     kf_threshold: float | None = None,
     mlat_threshold: float | None = None,
-    mlp_predictions_path: Path | None = None,
 ) -> dict:
     """
     Analyze pre-computed score CSVs: compute ROC/AUC, confusion matrix, distance stats, plots.
 
-    Reads kf_scores.csv, mlat_scores.csv, and optionally thresholds.json from scores_dir.
+    Reads kf_scores.csv, mlat_scores.csv, and optionally mlp_scores.csv from scores_dir.
 
     Args:
-        scores_dir: Directory containing kf_scores.csv, mlat_scores.csv, thresholds.json
+        scores_dir: Directory containing kf_scores.csv, mlat_scores.csv,
+                    mlp_scores.csv (optional), thresholds.json
         output_dir: Where to write results (defaults to scores_dir)
         kf_threshold: Override KF threshold (otherwise read from thresholds.json)
         mlat_threshold: Override MLAT threshold (otherwise read from thresholds.json)
-        mlp_predictions_path: Optional MLP predictions CSV
 
     Returns:
         Results dict (same structure as evaluate_on_test_transmissions)
@@ -58,11 +57,15 @@ def analyze_scores(
         if mlat_threshold is None:
             mlat_threshold = thresholds_data['mlat_threshold']
 
+    # Load MLP scores if available (produced by score stage)
+    mlp_path = scores_dir / "mlp_scores.csv"
+    mlp_available = mlp_path.exists()
+
     print("=" * 70)
-    if mlp_predictions_path:
+    if mlp_available:
         print("ANALYSIS - Comparing KF, MLAT, MLP")
     else:
-        print("ANALYSIS - Comparing KF, MLAT (MLP skipped)")
+        print("ANALYSIS - Comparing KF, MLAT (no mlp_scores.csv found)")
     print("=" * 70)
     print(f"\n  KF threshold:   {kf_threshold}")
     print(f"  MLAT threshold: {mlat_threshold}")
@@ -88,13 +91,12 @@ def analyze_scores(
     all_mlat_spoofing_dists = mlat_df['spoofing_dist'].values
     all_mlat_dist_discrepancies = mlat_df['distance_discrepancy'].values
 
-    # Load MLP predictions if provided
+    # Load MLP scores if present
     all_mlp_scores = np.array([])
     all_mlp_labels = np.array([])
-    if mlp_predictions_path:
-        print(f"\n  Loading MLP predictions from {mlp_predictions_path}...")
-        mlp_df = pd.read_csv(mlp_predictions_path)
-        all_mlp_scores = mlp_df['y_proba'].values
+    if mlp_available:
+        mlp_df = pd.read_csv(mlp_path)
+        all_mlp_scores = mlp_df['mlp_score'].values
         all_mlp_labels = mlp_df['is_spoofed'].values.astype(bool)
         print(f"  MLP: {len(all_mlp_labels)} transmissions ({all_mlp_labels.sum()} spoofed)")
 
@@ -109,7 +111,7 @@ def analyze_scores(
         ('KF', all_kf_scores, all_kf_labels, kf_threshold),
         ('MLAT', all_mlat_scores, all_mlat_labels, mlat_threshold),
     ]
-    if mlp_predictions_path:
+    if mlp_available:
         methods_to_eval.append(('MLP', all_mlp_scores, all_mlp_labels, 0.5))
 
     for name, scores, labels, threshold in methods_to_eval:

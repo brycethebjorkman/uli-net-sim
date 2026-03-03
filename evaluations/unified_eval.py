@@ -2,25 +2,38 @@
 """
 Unified evaluation CLI for comparing KF, MLAT, and MLP detectors.
 
-Two-stage workflow:
+Three subcommands:
 
-Stage 1 - Score (expensive, runs detectors on test set):
+Train (saves thresholds and MLP weights, no test scoring):
+    python -m evaluations.unified_eval train \
+        --train-dir datasets/scitech26/train \
+        -o evaluations/results/
+
+    Writes thresholds.json, mlp_weights.pth, mlp_scaler.pkl.
+    Use --detectors to train only a subset (kf, mlat, mlp).
+
+Score (expensive, runs detectors on test set):
     python -m evaluations.unified_eval score \
         --test-dir datasets/scitech26/test \
         --train-dir datasets/scitech26/train \
         -o evaluations/results/
 
-Stage 2 - Analyze (cheap, iterate freely on thresholds/plots):
+    Writes kf_scores.csv, mlat_scores.csv, mlp_scores.csv, thresholds.json,
+    mlp_weights.pth, and mlp_scaler.pkl to the output directory.
+    Loads existing mlp_weights.pth + mlp_scaler.pkl if present (skip MLP retraining).
+
+Analyze (cheap, iterate freely on thresholds/plots):
     python -m evaluations.unified_eval analyze \
         --scores-dir evaluations/results/ \
-        --mlp-predictions datasets/mlp_test_predictions.csv \
         -o evaluations/results/
+
+    Reads mlp_scores.csv automatically if present in scores-dir.
 """
 
 import argparse
 from pathlib import Path
 
-from .scoring import score_test_set
+from .scoring import score_test_set, train_detectors
 from .analysis import analyze_scores
 
 
@@ -29,6 +42,23 @@ def main():
         description="Unified evaluation comparing KF, MLAT, and MLP detectors"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # --- train subcommand ---
+    train_parser = subparsers.add_parser(
+        "train",
+        help="Train detectors on training data, write thresholds/weights (no test scoring)",
+    )
+    train_parser.add_argument("--train-dir", type=Path, required=True,
+                              help="Training data directory")
+    train_parser.add_argument("-o", "--output", type=Path, required=True,
+                              help="Output directory for thresholds.json and MLP weights")
+    train_parser.add_argument("--detectors", nargs="+",
+                              choices=["kf", "mlat", "mlp"],
+                              default=["kf", "mlat", "mlp"],
+                              metavar="DETECTOR",
+                              help="Detectors to train: kf, mlat, mlp (default: all)")
+    train_parser.add_argument("--train-limit", type=int,
+                              help="Limit training scenarios (for testing)")
 
     # --- score subcommand ---
     score_parser = subparsers.add_parser(
@@ -49,6 +79,11 @@ def main():
                               help="Limit training scenarios (for testing)")
     score_parser.add_argument("--test-limit", type=int,
                               help="Limit test scenarios (for testing)")
+    score_parser.add_argument("--detectors", nargs="+",
+                              choices=["kf", "mlat", "mlp"],
+                              default=["kf", "mlat", "mlp"],
+                              metavar="DETECTOR",
+                              help="Detectors to score: kf, mlat, mlp (default: all)")
 
     # --- analyze subcommand ---
     analyze_parser = subparsers.add_parser(
@@ -56,9 +91,8 @@ def main():
         help="Analyze pre-computed scores: ROC, confusion matrix, plots (cheap)",
     )
     analyze_parser.add_argument("--scores-dir", type=Path, required=True,
-                                help="Directory containing kf_scores.csv, mlat_scores.csv, thresholds.json")
-    analyze_parser.add_argument("--mlp-predictions", type=Path,
-                                help="MLP predictions CSV file (optional)")
+                                help="Directory containing kf_scores.csv, mlat_scores.csv, "
+                                     "mlp_scores.csv (optional), thresholds.json")
     analyze_parser.add_argument("-o", "--output", type=Path,
                                 help="Output directory (defaults to scores-dir)")
     analyze_parser.add_argument("--kf-threshold", type=float,
@@ -68,25 +102,33 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "score":
-        if args.kf_threshold is not None and args.mlat_threshold is not None:
-            kf_thresh = args.kf_threshold
-            mlat_thresh = args.mlat_threshold
-        elif args.train_dir is not None:
-            kf_thresh = args.kf_threshold
-            mlat_thresh = args.mlat_threshold
-        else:
-            parser.error("score requires --train-dir or both --kf-threshold and --mlat-threshold")
-            return  # unreachable, for type checker
+    if args.command == "train":
+        train_detectors(
+            train_dir=args.train_dir,
+            output_dir=args.output,
+            detectors=set(args.detectors),
+            train_limit=args.train_limit,
+        )
+
+    elif args.command == "score":
+        detectors = set(args.detectors)
+        if 'kf' in detectors or 'mlat' in detectors:
+            if (args.kf_threshold is None or args.mlat_threshold is None) and args.train_dir is None:
+                parser.error(
+                    "score requires --train-dir (or --kf-threshold + --mlat-threshold) "
+                    "when scoring kf or mlat"
+                )
+                return  # unreachable, for type checker
 
         score_test_set(
             test_dir=args.test_dir,
             output_dir=args.output,
             train_dir=args.train_dir,
+            detectors=detectors,
             test_limit=args.test_limit,
             train_limit=args.train_limit,
-            kf_threshold=kf_thresh,
-            mlat_threshold=mlat_thresh,
+            kf_threshold=args.kf_threshold,
+            mlat_threshold=args.mlat_threshold,
         )
 
     elif args.command == "analyze":
@@ -95,7 +137,6 @@ def main():
             output_dir=args.output,
             kf_threshold=args.kf_threshold,
             mlat_threshold=args.mlat_threshold,
-            mlp_predictions_path=args.mlp_predictions,
         )
 
 

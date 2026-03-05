@@ -96,6 +96,7 @@ def train_detectors(
     output_dir: Path,
     detectors: set[str] | None = None,
     train_limit: int | None = None,
+    seed: int = 42,
 ) -> None:
     """
     Train detectors on training data and save artifacts to output_dir.
@@ -109,6 +110,7 @@ def train_detectors(
         detectors: Detector names to train: any subset of {'kf', 'mlat', 'mlp'}.
                    Defaults to all three.
         train_limit: Limit number of training scenarios
+        seed: Random seed for MLP training (default 42)
     """
     if detectors is None:
         detectors = {'kf', 'mlat', 'mlp'}
@@ -147,7 +149,7 @@ def train_detectors(
         mlp_detector = MLPDetector()
         mlp_weights_path = output_dir / "mlp_weights.pth"
         mlp_scaler_path = output_dir / "mlp_scaler.pkl"
-        mlp_detector.train(train_csvs)
+        mlp_detector.train(train_csvs, seed=seed)
         mlp_detector.save(mlp_weights_path, mlp_scaler_path)
         print(f"\nMLP model saved to {mlp_weights_path}")
 
@@ -161,6 +163,7 @@ def score_test_set(
     kf_threshold: float | None = None,
     mlat_threshold: float | None = None,
     detectors: set[str] | None = None,
+    seed: int = 42,
 ) -> tuple[float | None, float | None]:
     """
     Run detectors on test set, write per-sample score CSVs.
@@ -181,6 +184,7 @@ def score_test_set(
         mlat_threshold: Pre-computed MLAT threshold (skips training for MLAT)
         detectors: Detectors to run: any subset of {'kf', 'mlat', 'mlp'}.
                    Defaults to all three.
+        seed: Random seed for MLP training (default 42)
 
     Returns:
         Tuple of (kf_threshold, mlat_threshold); values are None when the
@@ -239,7 +243,7 @@ def score_test_set(
             train_csvs = sorted(Path(train_dir).glob("*.csv"))
             if train_limit:
                 train_csvs = train_csvs[:train_limit]
-            mlp_detector.train(train_csvs)
+            mlp_detector.train(train_csvs, seed=seed)
             mlp_detector.save(mlp_weights_path, mlp_scaler_path)
             print(f"\n  MLP model saved to {mlp_weights_path}")
         else:

@@ -509,18 +509,22 @@ class MLPDetector:
     # Training
     # ------------------------------------------------------------------
 
-    def train(self, train_csv_paths: list) -> None:
+    def train(self, train_csv_paths: list, seed: int = 42) -> None:
         """
         Train MLP on all training CSV files.
 
         Args:
             train_csv_paths: Iterable of Path/str objects pointing to training CSVs.
+            seed: Random seed for reproducibility (default 42).
         """
         import torch
         import torch.nn as nn
         import torch.optim as optim
         from torch.utils.data import DataLoader, TensorDataset
         from sklearn.preprocessing import StandardScaler
+
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
         train_csv_paths = list(train_csv_paths)
         print(f"Preprocessing {len(train_csv_paths)} training scenarios for MLP...")

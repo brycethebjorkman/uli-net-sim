@@ -59,6 +59,8 @@ def main():
                               help="Detectors to train: kf, mlat, mlp (default: all)")
     train_parser.add_argument("--train-limit", type=int,
                               help="Limit training scenarios (for testing)")
+    train_parser.add_argument("--seed", type=int, default=42,
+                              help="Random seed for MLP training (default: 42)")
 
     # --- score subcommand ---
     score_parser = subparsers.add_parser(
@@ -84,6 +86,8 @@ def main():
                               default=["kf", "mlat", "mlp"],
                               metavar="DETECTOR",
                               help="Detectors to score: kf, mlat, mlp (default: all)")
+    score_parser.add_argument("--seed", type=int, default=42,
+                              help="Random seed for MLP training (default: 42)")
 
     # --- analyze subcommand ---
     analyze_parser = subparsers.add_parser(
@@ -108,6 +112,7 @@ def main():
             output_dir=args.output,
             detectors=set(args.detectors),
             train_limit=args.train_limit,
+            seed=args.seed,
         )
 
     elif args.command == "score":
@@ -129,6 +134,7 @@ def main():
             train_limit=args.train_limit,
             kf_threshold=args.kf_threshold,
             mlat_threshold=args.mlat_threshold,
+            seed=args.seed,
         )
 
     elif args.command == "analyze":

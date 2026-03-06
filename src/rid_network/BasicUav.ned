@@ -10,14 +10,23 @@ import inet.physicallayer.wireless.ieee80211.packetlevel.Ieee80211DimensionalRad
 import inet.visualizer.common.IntegratedVisualizer;
 
 import uav_rid.rid_host.DroneHost;
+import uav_rid.pybridge.PyBridge;
+import uav_rid.gcs.GcsModule;
 
 network BasicUav
 {
     parameters:
         int numHosts;
+        int numGcs = default(0);
         @display("bgb=1000,1000");
         bool hasVisualizer = default(true);
     submodules:
+        pyBridge: PyBridge {
+            @display("p=850,50");
+        }
+        gcs[numGcs]: GcsModule {
+            @display("p=850,150");
+        }
         host[numHosts]: <default("DroneHost")> like INetworkNode {
             @display("i=misc/node_vs;p=217,472");
         }

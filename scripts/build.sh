@@ -10,7 +10,7 @@
 # Binary:  /usr/uli-net-sim/container-build/out/clang-release/uav_rid
 #
 # Usage:
-#   cd /usr/uli-net-sim/uav_rid && . container/setenv && ./container/build.sh
+#   cd /usr/uli-net-sim/uav_rid && ./scripts/build.sh
 #
 
 set -e
@@ -26,11 +26,9 @@ BUILD_DIR="$BASE_DIR/container-build"
 INET_DIR="$BASE_DIR/inet4.5"
 EIGEN_DIR="$BASE_DIR/eigen-5.0.0"
 
-# Check environment
+# Source environment if not already set
 if [ -z "$INET_ROOT" ]; then
-    echo "Error: INET_ROOT not set. Please source setenv first."
-    echo "Usage: cd $PROJ_DIR && . container/setenv && ./container/build.sh"
-    exit 1
+    . "$PROJ_DIR/scripts/omnetpp-env.sh"
 fi
 
 echo "=========================================="

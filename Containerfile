@@ -83,6 +83,9 @@ RUN wget https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.tar
 RUN tar xf eigen-5.0.0.tar \
     && rm eigen-5.0.0.tar
 
+# Make OMNeT++/INET env available globally in every login shell
+COPY scripts/omnetpp-env.sh /etc/profile.d/omnetpp-env.sh
+
 # build uli-net-sim
 WORKDIR /usr/uli-net-sim/uav_rid
 COPY . .

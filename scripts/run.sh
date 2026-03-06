@@ -3,7 +3,7 @@
 # run.sh - Run a basic simulation
 #
 # Usage:
-#   cd /usr/uli-net-sim/uav_rid && . container/setenv && ./container/run.sh
+#   cd /usr/uli-net-sim/uav_rid && ./scripts/run.sh
 #
 
 # Determine script location and project root
@@ -13,14 +13,14 @@ BASE_DIR="$(cd "$PROJ_DIR/.." && pwd)"
 
 # Source environment if not already sourced
 if [ -z "$INET_ROOT" ]; then
-    . "$SCRIPT_DIR/setenv"
+    . "$PROJ_DIR/scripts/omnetpp-env.sh"
 fi
 
 # Use container binary
 UAV_RID_BIN="$BASE_DIR/container-build/out/clang-release/uav_rid"
 if [ ! -f "$UAV_RID_BIN" ]; then
     echo "Error: Container binary not found at $UAV_RID_BIN"
-    echo "To build: cd $PROJ_DIR && . container/setenv && ./container/build.sh"
+    echo "To build: cd $PROJ_DIR && ./scripts/build.sh"
     exit 1
 fi
 

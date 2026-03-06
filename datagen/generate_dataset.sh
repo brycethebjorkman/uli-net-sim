@@ -6,9 +6,8 @@
 # Generates corridor-constrained urban environments with buildings.
 #
 # USAGE:
-#   This script must be run from the uav_rid directory with setenv sourced:
-#     cd /usr/uli-net-sim/uav_rid && . container/setenv
-#     ./container/generate_dataset.sh [options]
+#     cd /usr/uli-net-sim/uav_rid
+#     ./datagen/generate_dataset.sh [options]
 #
 #   Output goes to datasets/ by default (visible on host).
 #
@@ -597,16 +596,14 @@ EOF
 # MAIN
 # ============================================================================
 
-# Check for required environment variables
+# Source environment if not already set
 if [ -z "$INET_ROOT" ]; then
-    echo "Error: INET_ROOT not set. Please source setenv first."
-    echo "  cd $PROJ_DIR && . container/setenv"
-    exit 1
+    . "$PROJ_DIR/scripts/omnetpp-env.sh"
 fi
 
 # Check for required tools
 if ! command -v opp_scavetool &> /dev/null; then
-    echo "Error: opp_scavetool not found. Please source setenv first."
+    echo "Error: opp_scavetool not found. Source scripts/omnetpp-env.sh or check OMNeT++ installation."
     exit 1
 fi
 
@@ -615,7 +612,7 @@ UAV_RID_BIN="$BASE_DIR/container-build/out/clang-release/uav_rid"
 if [ ! -f "$UAV_RID_BIN" ]; then
     echo "Error: Container binary not found at $UAV_RID_BIN"
     echo ""
-    echo "To build: cd $PROJ_DIR && . container/setenv && ./container/build.sh"
+    echo "To build: cd $PROJ_DIR && ./scripts/build.sh"
     exit 1
 fi
 

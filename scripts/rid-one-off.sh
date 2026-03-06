@@ -3,7 +3,7 @@
 # rid-one-off.sh - Run a one-off Remote ID simulation
 #
 # Usage:
-#   cd /usr/uli-net-sim/uav_rid && . container/setenv && ./container/rid-one-off.sh [options]
+#   cd /usr/uli-net-sim/uav_rid && ./scripts/rid-one-off.sh [options]
 #
 
 set -e
@@ -179,14 +179,14 @@ fi
 
 # Source environment if not already sourced
 if [ -z "$INET_ROOT" ]; then
-    . "$SCRIPT_DIR/setenv"
+    . "$PROJ_DIR/scripts/omnetpp-env.sh"
 fi
 
 # Use container binary
 UAV_RID_BIN="$BASE_DIR/container-build/out/clang-release/uav_rid"
 if [ ! -f "$UAV_RID_BIN" ]; then
     echo "Error: Container binary not found at $UAV_RID_BIN" >&2
-    echo "To build: cd $PROJ_DIR && . container/setenv && ./container/build.sh" >&2
+    echo "To build: cd $PROJ_DIR && ./scripts/build.sh" >&2
     exit 1
 fi
 

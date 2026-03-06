@@ -111,7 +111,7 @@ def compute_roc_auc(y_true: np.ndarray, scores: np.ndarray) -> tuple[float, np.n
     thresholds = np.concatenate([[scores_sorted[0] + 1], scores_sorted])
 
     # Compute AUC using trapezoidal rule
-    auc = float(np.trapz(tpr, fpr))
+    auc = float(np.trapezoid(tpr, fpr))
 
     return auc, fpr, tpr, thresholds
 

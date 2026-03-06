@@ -16,6 +16,25 @@ from .detectors import MultilatDetector, MLPDetector
 from .optimize import train_thresholds
 
 
+def _write_thresholds(output_dir: Path, kf_threshold: float, mlat_threshold: float,
+                      train_dir: Path | None = None, n_train: int | None = None) -> None:
+    """Write thresholds.json to output_dir."""
+    data = {
+        'kf_threshold': float(kf_threshold),
+        'mlat_threshold': float(mlat_threshold),
+    }
+    if train_dir is not None:
+        data['train_dir'] = str(train_dir)
+    if n_train is not None:
+        data['n_train_scenarios'] = n_train
+    path = output_dir / "thresholds.json"
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+    print(f"\nThresholds saved to {path}")
+    print(f"  KF threshold:   {kf_threshold}")
+    print(f"  MLAT threshold: {mlat_threshold}")
+
+
 def compute_sample_distances(scenario: ScenarioData) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute distance metrics for each RX event in a scenario.
@@ -131,18 +150,8 @@ def train_detectors(
         kf_threshold, mlat_threshold = train_thresholds(
             train_dir, train_limit=train_limit
         )
-        thresholds_data = {
-            'kf_threshold': float(kf_threshold),
-            'mlat_threshold': float(mlat_threshold),
-            'train_dir': str(train_dir),
-            'n_train_scenarios': n_train,
-        }
-        thresholds_path = output_dir / "thresholds.json"
-        with open(thresholds_path, 'w') as f:
-            json.dump(thresholds_data, f, indent=2)
-        print(f"\nThresholds saved to {thresholds_path}")
-        print(f"  KF threshold:   {kf_threshold}")
-        print(f"  MLAT threshold: {mlat_threshold}")
+        _write_thresholds(output_dir, kf_threshold, mlat_threshold,
+                          train_dir=train_dir, n_train=n_train)
 
     # MLP
     if 'mlp' in detectors:
@@ -214,18 +223,8 @@ def score_test_set(
                 "required when scoring kf or mlat"
             )
 
-        # Write thresholds to JSON
-        thresholds_data = {
-            'kf_threshold': float(kf_threshold),
-            'mlat_threshold': float(mlat_threshold),
-        }
-        if train_dir is not None:
-            thresholds_data['train_dir'] = str(train_dir)
-            thresholds_data['n_train_scenarios'] = n_train_scenarios
-        thresholds_path = output_dir / "thresholds.json"
-        with open(thresholds_path, 'w') as f:
-            json.dump(thresholds_data, f, indent=2)
-        print(f"\nThresholds saved to {thresholds_path}")
+        _write_thresholds(output_dir, kf_threshold, mlat_threshold,
+                          train_dir=train_dir, n_train=n_train_scenarios if train_dir else None)
 
     # Initialize MLAT detector
     mlat_detector = MultilatDetector() if 'mlat' in detectors else None

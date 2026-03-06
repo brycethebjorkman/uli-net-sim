@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from .metrics import compute_roc_auc, compute_distance_stats
+from .metrics import compute_roc_auc, compute_confusion_at_threshold, compute_distance_stats
 
 
 def analyze_scores(
@@ -116,14 +116,7 @@ def analyze_scores(
 
     for name, scores, labels, threshold in methods_to_eval:
         auc, fpr_arr, tpr_arr, thresholds = compute_roc_auc(labels, scores)
-        predictions = scores >= threshold
-        tp = ((predictions == 1) & (labels == 1)).sum()
-        tn = ((predictions == 0) & (labels == 0)).sum()
-        fp = ((predictions == 1) & (labels == 0)).sum()
-        fn = ((predictions == 0) & (labels == 1)).sum()
-
-        tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
-        fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+        tp, tn, fp, fn, tpr, fpr = compute_confusion_at_threshold(labels, scores, threshold)
 
         results[name.lower()] = {
             'auc': float(auc),
@@ -151,69 +144,48 @@ def analyze_scores(
     print("DISTANCE ANALYSIS (spoofed samples only)")
     print("=" * 70)
 
-    # KF distance analysis
-    kf_predictions = all_kf_scores >= kf_threshold
-    kf_spoofed_mask = all_kf_labels
-    kf_tp_mask = kf_spoofed_mask & kf_predictions
-    kf_fn_mask = kf_spoofed_mask & ~kf_predictions
+    def _compute_detector_distances(scores, labels, threshold, spoofing_dists, dist_discrepancies, name):
+        """Compute distance stats for TP/FN breakdown of a single detector."""
+        predictions = scores >= threshold
+        spoofed_mask = labels
+        tp_mask = spoofed_mask & predictions
+        fn_mask = spoofed_mask & ~predictions
 
-    kf_distance_stats = {
-        'all_spoofed': {
-            'spoofing_dist': compute_distance_stats(all_kf_spoofing_dists[kf_spoofed_mask]),
-            'distance_discrepancy': compute_distance_stats(all_kf_dist_discrepancies[kf_spoofed_mask]),
-        },
-        'true_positives': {
-            'spoofing_dist': compute_distance_stats(all_kf_spoofing_dists[kf_tp_mask]),
-            'distance_discrepancy': compute_distance_stats(all_kf_dist_discrepancies[kf_tp_mask]),
-        },
-        'false_negatives': {
-            'spoofing_dist': compute_distance_stats(all_kf_spoofing_dists[kf_fn_mask]),
-            'distance_discrepancy': compute_distance_stats(all_kf_dist_discrepancies[kf_fn_mask]),
-        },
-    }
+        distance_stats = {
+            'all_spoofed': {
+                'spoofing_dist': compute_distance_stats(spoofing_dists[spoofed_mask]),
+                'distance_discrepancy': compute_distance_stats(dist_discrepancies[spoofed_mask]),
+            },
+            'true_positives': {
+                'spoofing_dist': compute_distance_stats(spoofing_dists[tp_mask]),
+                'distance_discrepancy': compute_distance_stats(dist_discrepancies[tp_mask]),
+            },
+            'false_negatives': {
+                'spoofing_dist': compute_distance_stats(spoofing_dists[fn_mask]),
+                'distance_discrepancy': compute_distance_stats(dist_discrepancies[fn_mask]),
+            },
+        }
+
+        def fmt_stat(stats, key):
+            val = stats.get(key)
+            return f"{val:>8.2f}" if val is not None else "     N/A"
+
+        print(f"\n{name} Distance Stats (spoofing_dist = ||tx_actual - rid_claimed||):")
+        for label, key in [("All spoofed", "all_spoofed"), ("True Positives", "true_positives"), ("False Negatives", "false_negatives")]:
+            s = distance_stats[key]['spoofing_dist']
+            print(f"  {label:<17}n={s['count']:>6}, mean={fmt_stat(s, 'mean')}m, median={fmt_stat(s, 'median')}m")
+
+        return distance_stats, spoofed_mask, tp_mask, fn_mask
+
+    kf_distance_stats, kf_spoofed_mask, kf_tp_mask, kf_fn_mask = _compute_detector_distances(
+        all_kf_scores, all_kf_labels, kf_threshold, all_kf_spoofing_dists, all_kf_dist_discrepancies, "KF"
+    )
     results['kf']['distance_stats'] = kf_distance_stats
 
-    def fmt_stat(stats, key):
-        val = stats.get(key)
-        return f"{val:>8.2f}" if val is not None else "     N/A"
-
-    print("\nKF Distance Stats (spoofing_dist = ||tx_actual - rid_claimed||):")
-    s = kf_distance_stats['all_spoofed']['spoofing_dist']
-    print(f"  All spoofed:     n={s['count']:>6}, mean={fmt_stat(s, 'mean')}m, median={fmt_stat(s, 'median')}m")
-    s = kf_distance_stats['true_positives']['spoofing_dist']
-    print(f"  True Positives:  n={s['count']:>6}, mean={fmt_stat(s, 'mean')}m, median={fmt_stat(s, 'median')}m")
-    s = kf_distance_stats['false_negatives']['spoofing_dist']
-    print(f"  False Negatives: n={s['count']:>6}, mean={fmt_stat(s, 'mean')}m, median={fmt_stat(s, 'median')}m")
-
-    # MLAT distance analysis
-    mlat_predictions = all_mlat_scores >= mlat_threshold
-    mlat_spoofed_mask = all_mlat_labels
-    mlat_tp_mask = mlat_spoofed_mask & mlat_predictions
-    mlat_fn_mask = mlat_spoofed_mask & ~mlat_predictions
-
-    mlat_distance_stats = {
-        'all_spoofed': {
-            'spoofing_dist': compute_distance_stats(all_mlat_spoofing_dists[mlat_spoofed_mask]),
-            'distance_discrepancy': compute_distance_stats(all_mlat_dist_discrepancies[mlat_spoofed_mask]),
-        },
-        'true_positives': {
-            'spoofing_dist': compute_distance_stats(all_mlat_spoofing_dists[mlat_tp_mask]),
-            'distance_discrepancy': compute_distance_stats(all_mlat_dist_discrepancies[mlat_tp_mask]),
-        },
-        'false_negatives': {
-            'spoofing_dist': compute_distance_stats(all_mlat_spoofing_dists[mlat_fn_mask]),
-            'distance_discrepancy': compute_distance_stats(all_mlat_dist_discrepancies[mlat_fn_mask]),
-        },
-    }
+    mlat_distance_stats, mlat_spoofed_mask, mlat_tp_mask, mlat_fn_mask = _compute_detector_distances(
+        all_mlat_scores, all_mlat_labels, mlat_threshold, all_mlat_spoofing_dists, all_mlat_dist_discrepancies, "MLAT"
+    )
     results['mlat']['distance_stats'] = mlat_distance_stats
-
-    print("\nMLAT Distance Stats (spoofing_dist = ||tx_actual - rid_claimed||):")
-    s = mlat_distance_stats['all_spoofed']['spoofing_dist']
-    print(f"  All spoofed:     n={s['count']:>6}, mean={fmt_stat(s, 'mean')}m, median={fmt_stat(s, 'median')}m")
-    s = mlat_distance_stats['true_positives']['spoofing_dist']
-    print(f"  True Positives:  n={s['count']:>6}, mean={fmt_stat(s, 'mean')}m, median={fmt_stat(s, 'median')}m")
-    s = mlat_distance_stats['false_negatives']['spoofing_dist']
-    print(f"  False Negatives: n={s['count']:>6}, mean={fmt_stat(s, 'mean')}m, median={fmt_stat(s, 'median')}m")
 
     # Comparison table
     print("\n" + "=" * 70)
@@ -264,61 +236,31 @@ def analyze_scores(
         def _dropnan(arr):
             return arr[~np.isnan(arr)]
 
-        # KF: Spoofing distance distribution
-        ax = axes[0, 0]
-        kf_spoof_valid = _dropnan(all_kf_spoofing_dists[kf_spoofed_mask])
-        bins = np.linspace(0, max(np.nanmax(kf_spoof_valid), 1), 50) if len(kf_spoof_valid) else 50
-        ax.hist(_dropnan(all_kf_spoofing_dists[kf_tp_mask]), bins=bins, alpha=0.7,
-                label=f'True Positives (n={kf_tp_mask.sum()})', color='green')
-        ax.hist(_dropnan(all_kf_spoofing_dists[kf_fn_mask]), bins=bins, alpha=0.7,
-                label=f'False Negatives (n={kf_fn_mask.sum()})', color='red')
-        ax.set_xlabel('Spoofing Distance (m)', fontsize=11)
-        ax.set_ylabel('Count', fontsize=11)
-        ax.set_title('KF: Spoofing Distance Distribution', fontsize=12)
-        ax.legend(fontsize=9)
-        ax.grid(True, alpha=0.3)
+        def _plot_histogram(ax, data, tp_mask, fn_mask, spoofed_mask, xlabel, title, zero_based=True):
+            valid = _dropnan(data[spoofed_mask])
+            if len(valid):
+                lo = 0 if zero_based else valid.min()
+                bins = np.linspace(lo, max(valid.max(), 1) if zero_based else valid.max(), 50)
+            else:
+                bins = 50
+            ax.hist(_dropnan(data[tp_mask]), bins=bins, alpha=0.7,
+                    label=f'True Positives (n={tp_mask.sum()})', color='green')
+            ax.hist(_dropnan(data[fn_mask]), bins=bins, alpha=0.7,
+                    label=f'False Negatives (n={fn_mask.sum()})', color='red')
+            ax.set_xlabel(xlabel, fontsize=11)
+            ax.set_ylabel('Count', fontsize=11)
+            ax.set_title(title, fontsize=12)
+            ax.legend(fontsize=9)
+            ax.grid(True, alpha=0.3)
 
-        # KF: Distance discrepancy distribution
-        ax = axes[0, 1]
-        kf_disc_valid = _dropnan(all_kf_dist_discrepancies[kf_spoofed_mask])
-        bins = np.linspace(kf_disc_valid.min(), kf_disc_valid.max(), 50) if len(kf_disc_valid) else 50
-        ax.hist(_dropnan(all_kf_dist_discrepancies[kf_tp_mask]), bins=bins, alpha=0.7,
-                label=f'True Positives (n={kf_tp_mask.sum()})', color='green')
-        ax.hist(_dropnan(all_kf_dist_discrepancies[kf_fn_mask]), bins=bins, alpha=0.7,
-                label=f'False Negatives (n={kf_fn_mask.sum()})', color='red')
-        ax.set_xlabel('Distance Discrepancy (m)', fontsize=11)
-        ax.set_ylabel('Count', fontsize=11)
-        ax.set_title('KF: Distance Discrepancy (actual - claimed)', fontsize=12)
-        ax.legend(fontsize=9)
-        ax.grid(True, alpha=0.3)
-
-        # MLAT: Spoofing distance distribution
-        ax = axes[1, 0]
-        mlat_spoof_valid = _dropnan(all_mlat_spoofing_dists[mlat_spoofed_mask])
-        bins = np.linspace(0, max(np.nanmax(mlat_spoof_valid), 1), 50) if len(mlat_spoof_valid) else 50
-        ax.hist(_dropnan(all_mlat_spoofing_dists[mlat_tp_mask]), bins=bins, alpha=0.7,
-                label=f'True Positives (n={mlat_tp_mask.sum()})', color='green')
-        ax.hist(_dropnan(all_mlat_spoofing_dists[mlat_fn_mask]), bins=bins, alpha=0.7,
-                label=f'False Negatives (n={mlat_fn_mask.sum()})', color='red')
-        ax.set_xlabel('Spoofing Distance (m)', fontsize=11)
-        ax.set_ylabel('Count', fontsize=11)
-        ax.set_title('MLAT: Spoofing Distance Distribution', fontsize=12)
-        ax.legend(fontsize=9)
-        ax.grid(True, alpha=0.3)
-
-        # MLAT: Distance discrepancy distribution
-        ax = axes[1, 1]
-        mlat_disc_valid = _dropnan(all_mlat_dist_discrepancies[mlat_spoofed_mask])
-        bins = np.linspace(mlat_disc_valid.min(), mlat_disc_valid.max(), 50) if len(mlat_disc_valid) else 50
-        ax.hist(_dropnan(all_mlat_dist_discrepancies[mlat_tp_mask]), bins=bins, alpha=0.7,
-                label=f'True Positives (n={mlat_tp_mask.sum()})', color='green')
-        ax.hist(_dropnan(all_mlat_dist_discrepancies[mlat_fn_mask]), bins=bins, alpha=0.7,
-                label=f'False Negatives (n={mlat_fn_mask.sum()})', color='red')
-        ax.set_xlabel('Distance Discrepancy (m)', fontsize=11)
-        ax.set_ylabel('Count', fontsize=11)
-        ax.set_title('MLAT: Distance Discrepancy (actual - claimed)', fontsize=12)
-        ax.legend(fontsize=9)
-        ax.grid(True, alpha=0.3)
+        _plot_histogram(axes[0, 0], all_kf_spoofing_dists, kf_tp_mask, kf_fn_mask, kf_spoofed_mask,
+                        'Spoofing Distance (m)', 'KF: Spoofing Distance Distribution')
+        _plot_histogram(axes[0, 1], all_kf_dist_discrepancies, kf_tp_mask, kf_fn_mask, kf_spoofed_mask,
+                        'Distance Discrepancy (m)', 'KF: Distance Discrepancy (actual - claimed)', zero_based=False)
+        _plot_histogram(axes[1, 0], all_mlat_spoofing_dists, mlat_tp_mask, mlat_fn_mask, mlat_spoofed_mask,
+                        'Spoofing Distance (m)', 'MLAT: Spoofing Distance Distribution')
+        _plot_histogram(axes[1, 1], all_mlat_dist_discrepancies, mlat_tp_mask, mlat_fn_mask, mlat_spoofed_mask,
+                        'Distance Discrepancy (m)', 'MLAT: Distance Discrepancy (actual - claimed)', zero_based=False)
 
     for fmt, dpi in [('pdf', 300), ('png', 150)]:
         fig, axes = plt.subplots(2, 2, figsize=(14, 10))

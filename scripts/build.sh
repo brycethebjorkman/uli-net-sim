@@ -25,6 +25,9 @@ SRC_DIR="$PROJ_DIR"
 BUILD_DIR="$BASE_DIR/container-build"
 INET_DIR="$BASE_DIR/inet4.5"
 EIGEN_DIR="$BASE_DIR/eigen-5.0.0"
+PYBIND11_DIR="$($PROJ_DIR/.venv/bin/python3 -c 'import pybind11; print(pybind11.get_include())')"
+PYTHON_INCLUDE="$(python3 -c 'import sysconfig; print(sysconfig.get_path("include"))')"
+PYTHON_LIBDIR="$(python3-config --configdir)"
 
 # Source environment if not already set
 if [ -z "$INET_ROOT" ]; then
@@ -57,11 +60,16 @@ opp_makemake -f --deep \
     -O out \
     -KINET4_5_PROJ="$INET_DIR" \
     -DINET_IMPORT \
+    -DPROJ_DIR="$PROJ_DIR" \
     -Isrc \
     -I'$(INET4_5_PROJ)/src' \
     -I"$EIGEN_DIR" \
+    -I"$PYBIND11_DIR" \
+    -I"$PYTHON_INCLUDE" \
     -L'$(INET4_5_PROJ)/out/clang-release/src' \
-    -lINET
+    -L"$PYTHON_LIBDIR" \
+    -lINET \
+    -lpython3.10
 
 # Build
 echo "Building..."

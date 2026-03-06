@@ -1,0 +1,6 @@
+# Additional flags for pybind11 / embedded Python
+PYTHON_CFLAGS := $(shell python3 -c "import sysconfig; print('-I' + sysconfig.get_path('include'))")
+PYTHON_LDFLAGS := $(shell python3-config --ldflags --embed 2>/dev/null || python3-config --ldflags)
+
+COPTS += $(PYTHON_CFLAGS)
+LIBS += $(PYTHON_LDFLAGS)

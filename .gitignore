@@ -20,3 +20,6 @@ src/**/*_m.h
 **/cache/
 **/results/
 __pycache__
+.pytest_cache/
+tests/__pycache__/
+tests/out/

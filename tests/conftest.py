@@ -24,9 +24,9 @@ TEST_OUT = Path(__file__).parent / "out"
 
 UAV_RID_BIN = BASE_DIR / "container-build" / "out" / "clang-release" / "uav_rid"
 INET_ROOT = BASE_DIR / "inet4.5"
-URBANENV = REPO_ROOT / "container" / "urbanenv"
-VEC2CSV = REPO_ROOT / "container" / "vec2csv.py"
-ADD_HOST_TYPE = REPO_ROOT / "container" / "add_host_type.py"
+URBANENV = REPO_ROOT / "datagen" / "urbanenv"
+VEC2CSV = REPO_ROOT / "datagen" / "vec2csv.py"
+ADD_HOST_TYPE = REPO_ROOT / "datagen" / "add_host_type.py"
 PYTHON = sys.executable
 
 # Standard OMNeT++ flags

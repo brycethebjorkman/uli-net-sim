@@ -27,6 +27,16 @@ simple RidBeaconMgmt like IIeee80211Mgmt
         // if true this instance terminates simulation after one transmission
         bool oneOff = default(false);
 
+        // Python TX hook class (empty = no hook). Called after fillRidMsg()
+        // to optionally modify beacon fields (e.g. Python-based spoofing).
+        string pyTxClass = default("");
+
+        // Path to PyBridge module (used by pyTxClass)
+        string pyBridgePath = default("^.^.^.pyBridge");
+
+        // Path to GCS module for RX report forwarding (empty = no forwarding)
+        string gcsModulePath = default("");
+
 		// like Ieee80211MgmtAp for Ieee80211Interface compatibility
         string mibModule;
         string interfaceTableModule;

@@ -3,8 +3,14 @@
 //
 // Based on inet/linklayer/ieee80211/mgmt/Ieee80211MgmtAp.cc
 //
+// IMPORTANT: PyBridgePy.h must come BEFORE omnetpp.h to avoid macro conflicts.
+//
 
+#include "pybridge/PyBridgePy.h"
 #include "RidBeaconMgmt.h"
+#include "pybridge/PyBridge.h"
+
+#include "gcs/GcsReport_m.h"
 
 #include "inet/linklayer/common/MacAddressTag_m.h"
 #include "inet/linklayer/ieee80211/mac/Ieee80211SubtypeTag_m.h"
@@ -84,6 +90,25 @@ void RidBeaconMgmt::initialize(int stage)
         // initialize timed messages but do not start them
         beaconTimer = new cMessage("beaconTimer");
         terminateMsg = new cMessage("terminateMsg");
+
+        // Resolve GCS module for RX report forwarding
+        std::string gcsPath = par("gcsModulePath").stdstringValue();
+        if (!gcsPath.empty()) {
+            gcsModule = getModuleByPath(gcsPath.c_str());
+            if (!gcsModule) {
+                throw cRuntimeError("GCS module not found at path: %s", gcsPath.c_str());
+            }
+        }
+    }
+    else if (stage == INITSTAGE_SINGLE_MOBILITY) {
+        // Initialize Python TX hook (needs interpreter from PyBridge, which
+        // initializes at INITSTAGE_LOCAL, so we do this in a later stage)
+        std::string pyTxClassName = par("pyTxClass").stdstringValue();
+        if (!pyTxClassName.empty()) {
+            cModule *mod = getModuleByPath(par("pyBridgePath").stdstringValue().c_str());
+            pyBridge = check_and_cast<PyBridge *>(mod);
+            pyTxHandle = pyBridge->instantiateClass(pyTxClassName);
+        }
     }
 }
 
@@ -141,6 +166,11 @@ void RidBeaconMgmt::sendBeacon()
 
     // use specific implementation logic to fill in Remote ID message fields
     fillRidMsg(body);
+
+    // Python TX hook: optionally modify beacon fields (e.g. spoofing)
+    if (pyTxHandle >= 0) {
+        callPyTxHook(body);
+    }
 
     EV << "BODY: " << body << std::endl;
     recvec.txPosX.record(body->getPosX());
@@ -292,6 +322,11 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
 
     hookRidMsg(packet, beaconBody, rssiDbm);
 
+    // Forward report to GCS if configured
+    if (gcsModule) {
+        forwardToGcs(beaconBody, rssiDbm);
+    }
+
     dropManagementFrame(packet);
 }
 
@@ -310,5 +345,69 @@ void RidBeaconMgmt::stop()
     Ieee80211MgmtApBase::stop();
 }
 
+// ── Python TX hook ──────────────────────────────────────────────────────────
 
+void RidBeaconMgmt::callPyTxHook(const inet::Ptr<RidBeaconFrame>& body)
+{
+    PyBridgeImpl *impl = pyBridge->getImpl();
+    py::gil_scoped_acquire gil;
+
+    // Build state dict with current beacon fields
+    py::dict txState;
+    txState["pos"]     = py::make_tuple(body->getPosX(), body->getPosY(), body->getPosZ());
+    txState["vel"]     = py::make_tuple(body->getSpeedVertical(),
+                                        body->getSpeedHorizontal(),
+                                        body->getHeading());
+    txState["serial"]  = body->getSerialNumber();
+    txState["time"]    = simTime().dbl();
+
+    // Call on_tx(state)
+    py::object result = impl->callMethod(pyTxHandle, "on_tx", txState);
+
+    // If result is a dict, overwrite beacon fields
+    if (!result.is_none() && py::isinstance<py::dict>(result)) {
+        py::dict d = result.cast<py::dict>();
+        if (d.contains("pos")) {
+            py::tuple pos = d["pos"].cast<py::tuple>();
+            body->setPosX(pos[0].cast<double>());
+            body->setPosY(pos[1].cast<double>());
+            body->setPosZ(pos[2].cast<double>());
+        }
+        if (d.contains("vel")) {
+            py::tuple vel = d["vel"].cast<py::tuple>();
+            body->setSpeedVertical(vel[0].cast<double>());
+            body->setSpeedHorizontal(vel[1].cast<double>());
+            body->setHeading(vel[2].cast<double>());
+        }
+    }
+}
+
+// ── GCS report forwarding ───────────────────────────────────────────────────
+
+void RidBeaconMgmt::forwardToGcs(const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm)
+{
+    auto host = getContainingNode(this);
+    auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
+    auto rxPos = mobility->getCurrentPosition();
+
+    GcsReport *report = new GcsReport("GcsReport");
+    report->setReceiverHostId(host->getIndex());
+    report->setSenderSerialNumber(beaconBody->getSerialNumber());
+    report->setRidTimestamp(beaconBody->getTimestamp());
+
+    report->setRxPosX(rxPos.getX());
+    report->setRxPosY(rxPos.getY());
+    report->setRxPosZ(rxPos.getZ());
+
+    report->setClaimedPosX(beaconBody->getPosX());
+    report->setClaimedPosY(beaconBody->getPosY());
+    report->setClaimedPosZ(beaconBody->getPosZ());
+    report->setClaimedSpeedVertical(beaconBody->getSpeedVertical());
+    report->setClaimedSpeedHorizontal(beaconBody->getSpeedHorizontal());
+    report->setClaimedHeading(beaconBody->getHeading());
+
+    report->setRssiDbm(rssiDbm);
+
+    sendDirect(report, gcsModule, "directIn");
+}
 

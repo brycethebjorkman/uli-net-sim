@@ -7,7 +7,6 @@ with ground truth labels for detector evaluation.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 import numpy as np
 import pandas as pd
 
@@ -147,28 +146,5 @@ def load_dataset(
 
     return scenarios
 
-
-def iter_dataset(
-    data_dir: Path | str,
-    limit: int | None = None,
-) -> Iterator[ScenarioData]:
-    """
-    Iterate over scenario CSVs from a directory (memory-efficient).
-
-    Args:
-        data_dir: Directory containing CSV files
-        limit: Maximum number of scenarios to yield
-
-    Yields:
-        ScenarioData objects one at a time
-    """
-    data_dir = Path(data_dir)
-    csv_files = sorted(data_dir.glob("*.csv"))
-
-    if limit is not None:
-        csv_files = csv_files[:limit]
-
-    for csv_path in csv_files:
-        yield load_scenario(csv_path)
 
 

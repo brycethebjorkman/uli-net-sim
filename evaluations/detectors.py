@@ -51,19 +51,6 @@ class Detector(ABC):
         """
         pass
 
-    def detect(self, scenario: ScenarioData, threshold: float) -> np.ndarray:
-        """
-        Binary detection using a threshold on scores.
-
-        Args:
-            scenario: ScenarioData with RX events
-            threshold: Detection threshold
-
-        Returns:
-            Boolean array, True where spoofing is detected
-        """
-        return self.score(scenario) >= threshold
-
 
 @dataclass
 class KalmanFilterDetector(Detector):

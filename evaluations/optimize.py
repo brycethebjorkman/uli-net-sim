@@ -10,7 +10,6 @@ Uses training set to find optimal parameters, then evaluates on test set.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 import numpy as np
 
 from .data import ScenarioData, load_dataset
@@ -42,26 +41,11 @@ class OptimizationResult:
             f")"
         )
 
-    def find_threshold_for_fpr(self, target_fpr: float) -> float:
-        """Find threshold that achieves target FPR (or closest below)."""
-        # FPR decreases as threshold increases
-        valid = self.fpr_curve <= target_fpr
-        if not np.any(valid):
-            return self.thresholds[-1]  # Highest threshold
-        return self.thresholds[valid][0]
-
-    def find_threshold_for_tpr(self, target_tpr: float) -> float:
-        """Find threshold that achieves target TPR (or closest above)."""
-        # TPR decreases as threshold increases
-        valid = self.tpr_curve >= target_tpr
-        if not np.any(valid):
-            return self.thresholds[0]  # Lowest threshold
-        return self.thresholds[valid][-1]
 
 
 def collect_scores_and_labels(
     detector: Detector,
-    scenarios: Iterator[ScenarioData] | list[ScenarioData],
+    scenarios: list[ScenarioData],
     verbose: bool = False,
     federate_only: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -111,7 +95,7 @@ def collect_scores_and_labels(
 
 def optimize_threshold(
     detector: Detector,
-    scenarios: Iterator[ScenarioData] | list[ScenarioData],
+    scenarios: list[ScenarioData],
     verbose: bool = False,
     federate_only: bool = False,
 ) -> OptimizationResult:

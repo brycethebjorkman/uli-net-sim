@@ -33,10 +33,45 @@ Next, clone this repository and import the contained project into the OMNeT++ ID
 11. In the OMNeT++ Qtenv window that pops up, select the `RandomMobility` config in the "Set Up Inifile Configuration" dialog and click OK
 12. The visualization panel should show some UAVs and the simulation should be runnable via the toolbar buttons
 
+## Detection Methods
+
+| Method | Granularity | Description |
+|--------|------------|-------------|
+| **Kalman Filter (KF)** | Per-RX-event | RSSI-based Tx power estimation; threshold on NIS |
+| **Multilateration (MLAT)** | Per-transmission | RSSI triangulation from multiple receivers |
+| **MLP** | Per-transmission | Supervised neural network on per-transmission features |
+
+## Quick Start (Container)
+
+```bash
+# Build the simulator
+cd /usr/uli-net-sim/uav_rid
+./scripts/build.sh
+
+# Generate a small dataset
+./datagen/generate_dataset.sh --num-hosts 5 --scenario-variants 10 --enable-spoofer
+
+# Train detectors and score test set
+.venv/bin/python -m evaluations.unified_eval train \
+    --train-dir datasets/my_dataset/train -o evaluations/results/
+
+.venv/bin/python -m evaluations.unified_eval score \
+    --train-dir datasets/my_dataset/train \
+    --test-dir datasets/my_dataset/test -o evaluations/results/
+
+# Analyze results (iterate on thresholds/plots)
+.venv/bin/python -m evaluations.unified_eval analyze \
+    --scores-dir evaluations/results/ -o evaluations/results/
+
+# Run regression tests
+.venv/bin/pytest tests/ -v
+```
+
 ## Project Structure
-Source code for the project is split between:
-- [simulations](./simulations) contains subdirectories defining different simulation scenarios consisting of:
-    - Network Description (`.ned`) files which define the hierarchical structure of a simulation
-    - runtime configuration (`.ini`) files which select the network to run and specify parameters, properties, and scenario variations
-    - analysis configuration (`.anf`) files which define how simulation results are processed and visualized
-- [src](./src) contains Network Description, C++, and Message Description (`.msg`) code defining custom module structures, behaviors, and messages  
+
+- **`src/`** - C++ simulation modules (detectors, spoofers, beacon management)
+- **`simulations/`** - OMNeT++ scenario configurations (.ned, .ini, .anf)
+- **`datagen/`** - Dataset generation pipeline (corridor/building/trajectory generators)
+- **`scripts/`** - Build, environment, and utility scripts
+- **`evaluations/`** - Detection evaluation framework (train/score/analyze CLI)
+- **`tests/`** - Regression tests (pytest, hash-based)

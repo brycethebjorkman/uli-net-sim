@@ -22,6 +22,9 @@ class GcsReport;
 //
 class GcsModule : public cSimpleModule, public cListener
 {
+  public:
+    virtual ~GcsModule();
+
   protected:
     // Federate host indices this GCS manages (empty = all)
     std::set<int> federateSet;
@@ -39,8 +42,8 @@ class GcsModule : public cSimpleModule, public cListener
     int pyHandle = -1;
     bool sendControlCommands = false;
 
-    // Dynamic signal registry: Python "log" keys → OMNeT++ signals
-    std::map<std::string, simsignal_t> logSignals;
+    // Dynamic vector registry: Python "log" keys → cOutVector (always recorded)
+    std::map<std::string, cOutVector*> logVectors;
 
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;

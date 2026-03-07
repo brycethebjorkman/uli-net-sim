@@ -19,6 +19,12 @@ using namespace physicallayer;
 
 Define_Module(GcsModule);
 
+GcsModule::~GcsModule()
+{
+    for (auto& [name, vec] : logVectors)
+        delete vec;
+}
+
 // ── Initialization ──────────────────────────────────────────────────────────
 
 void GcsModule::initialize()
@@ -156,7 +162,7 @@ void GcsModule::callPython(const BeaconKey& key,
 
     py::dict d = result.cast<py::dict>();
 
-    // Log entries: {"name": numeric_value, ...} → emitted as OMNeT++ signals
+    // Log entries: {"name": numeric_value, ...} → recorded as cOutVector
     if (d.contains("log") && !d["log"].is_none()) {
         py::dict logDict = d["log"].cast<py::dict>();
         std::map<std::string, double> entries;
@@ -180,18 +186,17 @@ void GcsModule::callPython(const BeaconKey& key,
     }
 }
 
-// ── Log emission ────────────────────────────────────────────────────────────
+// ── Log recording ───────────────────────────────────────────────────────────
 
 void GcsModule::emitLogEntries(const std::map<std::string, double>& entries)
 {
     for (auto& [name, value] : entries) {
-        // Register signal on first use
-        auto it = logSignals.find(name);
-        if (it == logSignals.end()) {
-            simsignal_t sig = registerSignal(name.c_str());
-            it = logSignals.emplace(name, sig).first;
+        // Create cOutVector on first use (always records to .vec, no NED needed)
+        auto it = logVectors.find(name);
+        if (it == logVectors.end()) {
+            it = logVectors.emplace(name, new cOutVector(name.c_str())).first;
         }
-        emit(it->second, value);
+        it->second->record(value);
     }
 }
 

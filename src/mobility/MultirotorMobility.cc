@@ -7,6 +7,7 @@
 #include "pybridge/PyBridgePy.h"
 #include "MultirotorMobility.h"
 #include "pybridge/PyBridge.h"
+#include "gcs/GcsCommand_m.h"
 
 #include "inet/common/INETMath.h"
 #include "inet/common/geometry/common/Quaternion.h"
@@ -158,9 +159,9 @@ void MultirotorMobility::handleMessage(cMessage *msg)
         handleSelfMessage(msg);
     }
     else if (msg->arrivedOn("commandIn")) {
-        // GCS command — store the command data for the next Python controller call.
-        // For now, store as the message name (a JSON string set by GCS).
-        latestGcsCommand = msg->getName();
+        // GCS command — store the JSON payload for the next Python controller call.
+        GcsCommand *cmd = check_and_cast<GcsCommand *>(msg);
+        latestGcsCommand = cmd->getCommandJson();
         delete msg;
     }
     else {
@@ -186,10 +187,10 @@ void MultirotorMobility::callPythonController()
     stateDict["omega"] = py::make_tuple(state[OMEGA_P], state[OMEGA_Q], state[OMEGA_R]);
     stateDict["time"]  = simTime().dbl();
 
-    // Include GCS command if present
+    // Include GCS command if present, then clear it (one-shot delivery)
     if (!latestGcsCommand.empty()) {
-        // Parse the JSON command string from Python side
         stateDict["gcs_command"] = latestGcsCommand;
+        latestGcsCommand.clear();
     }
     else {
         stateDict["gcs_command"] = py::none();

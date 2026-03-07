@@ -120,6 +120,25 @@ def py_spoofer_outputs():
 
 
 @pytest.fixture(scope="session")
+def py_planner_outputs():
+    """Run PyPlannerTest and export vectors."""
+    out = TEST_OUT / "planner"
+    if out.exists():
+        shutil.rmtree(out)
+    result_dir = out / "results"
+    vec_file = _run_sim("PyPlannerTest", result_dir)
+
+    beacon_csv = _export_vectors(vec_file, "*.host[*].wlan[0].mgmt")
+    gcs_csv = _export_vectors(vec_file, "*.gcs[*]")
+
+    return {
+        "vec_file": vec_file,
+        "beacon": _parse_vectors(beacon_csv),
+        "gcs": _parse_vectors(gcs_csv),
+    }
+
+
+@pytest.fixture(scope="session")
 def py_detector_outputs():
     """Run PyDetectorTest and export vectors."""
     out = TEST_OUT / "detector"
@@ -147,6 +166,7 @@ EXPECTED_HASHES = {
     "py_hover.vec":    "e667d6a5a8b2a943dc2a8dceafdb72b932f0af4f420bf91c5d467aa91ea62024",
     "py_spoofer.vec":  "c46ad62f6b60f93cfda7eb299cf6722c85d470f48a791602e1422ba330c83855",
     "py_detector.vec": "2830fa25fa3049510739ac18603b867f77cc0d113b177f648c160c56a5b298c2",
+    "py_planner.vec":  "2f6d60eb3056face6ca5e27090f6e0bce32222229774e04ec737282ebd0e88ae",
 }
 
 
@@ -160,6 +180,12 @@ def test_py_spoofer_vec_hash(py_spoofer_outputs):
     h = hash_vec_file(py_spoofer_outputs["vec_file"])
     expected = EXPECTED_HASHES["py_spoofer.vec"]
     assert h == expected, f"PySpooferTest .vec hash changed: {h}"
+
+
+def test_py_planner_vec_hash(py_planner_outputs):
+    h = hash_vec_file(py_planner_outputs["vec_file"])
+    expected = EXPECTED_HASHES["py_planner.vec"]
+    assert h == expected, f"PyPlannerTest .vec hash changed: {h}"
 
 
 def test_py_detector_vec_hash(py_detector_outputs):
@@ -276,3 +302,66 @@ def test_py_detector_total_detections(py_detector_outputs):
     assert len(values) > 0, "No total_detections values recorded"
     assert max(values) == 10.0, \
         f"Expected 10 total detections, got max={max(values)}"
+
+
+# ---------------------------------------------------------------------------
+# Planner tests (GCS on_tick + command forwarding)
+# ---------------------------------------------------------------------------
+
+def test_py_planner_tick_count(py_planner_outputs):
+    """GCS should record 10 ticks (20s sim / 2s interval)."""
+    gcs = py_planner_outputs["gcs"]
+    _times, values = _get_vector(gcs, "gcs[0]", "tick_count")
+
+    assert len(values) == 10, f"Expected 10 ticks, got {len(values)}"
+    assert values[-1] == 10.0, f"Last tick_count should be 10, got {values[-1]}"
+
+
+def test_py_planner_altitude_changes(py_planner_outputs):
+    """Each host's altitude should change over time (not constant)."""
+    beacon = py_planner_outputs["beacon"]
+
+    for host_idx in range(4):
+        suffix = f"host[{host_idx}].wlan[0].mgmt"
+        _times, values = _get_vector(beacon, suffix,
+                                     "Transmission My Z Coordinate")
+        z_min = min(values)
+        z_max = max(values)
+        assert z_max - z_min > 5.0, \
+            f"host[{host_idx}] altitude range too small: {z_min:.1f}-{z_max:.1f}"
+
+
+def test_py_planner_xy_stable(py_planner_outputs):
+    """X/Y positions should stay near initial values (only altitude changes)."""
+    beacon = py_planner_outputs["beacon"]
+
+    initials = {0: (100.0, 100.0), 1: (200.0, 100.0),
+                2: (100.0, 200.0), 3: (200.0, 200.0)}
+
+    for host_idx, (init_x, init_y) in initials.items():
+        suffix = f"host[{host_idx}].wlan[0].mgmt"
+        for coord, target in [("Transmission My X Coordinate", init_x),
+                              ("Transmission My Y Coordinate", init_y)]:
+            _times, values = _get_vector(beacon, suffix, coord)
+            for v in values:
+                assert abs(v - target) < 30.0, \
+                    f"host[{host_idx}] {coord}: {v:.1f} too far from {target}"
+
+
+def test_py_planner_varied_dynamics(py_planner_outputs):
+    """Different drone masses should produce different altitude responses."""
+    beacon = py_planner_outputs["beacon"]
+
+    # Collect altitude standard deviations for each host
+    std_devs = []
+    for host_idx in range(4):
+        suffix = f"host[{host_idx}].wlan[0].mgmt"
+        _times, values = _get_vector(beacon, suffix,
+                                     "Transmission My Z Coordinate")
+        mean_z = sum(values) / len(values)
+        std_z = (sum((v - mean_z) ** 2 for v in values) / len(values)) ** 0.5
+        std_devs.append(std_z)
+
+    # Not all std_devs should be identical — different dynamics produce different responses
+    assert max(std_devs) - min(std_devs) > 1.0, \
+        f"All hosts have similar altitude variance: {std_devs}"

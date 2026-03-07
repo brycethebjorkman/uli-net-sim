@@ -15,10 +15,13 @@ package uav_rid.gcs;
 // Processing is triggered by IRadioMedium::signalRemovedSignal, which
 // fires after all receivers have processed a transmission.
 //
-// The Python class's on_reports() method receives aggregated report data
-// and returns a dict with optional keys:
+// The Python class can implement two callbacks:
+//   - on_reports(data): called per transmission with aggregated RX reports
+//   - on_tick(data): called periodically (if tickInterval > 0)
+//
+// Both return a dict with optional keys:
 //   - "commands": {host_id: {...}, ...}  — forwarded to UAV mobility
-//   - "log": {"name": value, ...}        — emitted as named OMNeT++ signals
+//   - "log": {"name": value, ...}        — recorded as cOutVector entries
 //
 // This keeps the GCS general-purpose: the Python class decides what
 // algorithm to run (detection, coordination, mission planning, etc.)
@@ -42,6 +45,9 @@ simple GcsModule
 
         // Whether to forward Python control commands to UAV mobility modules
         bool sendControlCommands = default(false);
+
+        // Periodic tick interval for on_tick() callback (0 = disabled)
+        double tickInterval @unit(s) = default(0s);
 
     gates:
         input directIn @directIn;

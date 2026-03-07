@@ -25,6 +25,12 @@ class GcsModule : public cSimpleModule, public cListener
   public:
     virtual ~GcsModule();
 
+    // Record log entries as cOutVector
+    void emitLogEntries(const std::map<std::string, double>& entries);
+
+    // Forward a control command to a UAV's mobility module
+    void sendCommand(int hostId, const std::string& commandJson);
+
   protected:
     // Federate host indices this GCS manages (empty = all)
     std::set<int> federateSet;
@@ -42,6 +48,11 @@ class GcsModule : public cSimpleModule, public cListener
     int pyHandle = -1;
     bool sendControlCommands = false;
 
+    // Periodic tick timer
+    cMessage *tickTimer = nullptr;
+    double tickInterval = 0;   // 0 = disabled
+    int tickCount = 0;
+
     // Dynamic vector registry: Python "log" keys → cOutVector (always recorded)
     std::map<std::string, cOutVector*> logVectors;
 
@@ -56,15 +67,12 @@ class GcsModule : public cSimpleModule, public cListener
     void processTransmission(const BeaconKey& key,
                              const std::vector<GcsReport*>& reports);
 
-    // Call Python decision algorithm
-    void callPython(const BeaconKey& key,
+    // Call Python on_reports() with transmission data
+    void pyOnReport(const BeaconKey& key,
                     const std::vector<GcsReport*>& reports);
 
-    // Emit log entries returned by Python as OMNeT++ signals
-    void emitLogEntries(const std::map<std::string, double>& entries);
-
-    // Forward a control command to a UAV's mobility module
-    void sendCommand(int hostId, const std::string& commandJson);
+    // Call Python on_tick() periodically
+    void pyOnTick();
 };
 
 #endif

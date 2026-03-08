@@ -80,6 +80,7 @@ class MultirotorMobility : public MovingMobilityBase
     virtual void initialize(int stage) override;
     virtual void handleMessage(cMessage *msg) override;
     virtual void move() override;
+    virtual void orient() override {} // orientation set from dynamics in move()
 
   public:
     MultirotorMobility() {}

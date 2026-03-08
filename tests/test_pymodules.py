@@ -139,6 +139,25 @@ def py_planner_outputs():
 
 
 @pytest.fixture(scope="session")
+def py_planner_perturbed_outputs():
+    """Run PyPlannerPerturbed and export vectors."""
+    out = TEST_OUT / "planner_perturbed"
+    if out.exists():
+        shutil.rmtree(out)
+    result_dir = out / "results"
+    vec_file = _run_sim("PyPlannerPerturbed", result_dir)
+
+    beacon_csv = _export_vectors(vec_file, "*.host[*].wlan[0].mgmt")
+    mobility_csv = _export_vectors(vec_file, "*.host[*].mobility")
+
+    return {
+        "vec_file": vec_file,
+        "beacon": _parse_vectors(beacon_csv),
+        "mobility": _parse_vectors(mobility_csv),
+    }
+
+
+@pytest.fixture(scope="session")
 def py_detector_outputs():
     """Run PyDetectorTest and export vectors."""
     out = TEST_OUT / "detector"
@@ -166,7 +185,8 @@ EXPECTED_HASHES = {
     "py_hover.vec":    "e667d6a5a8b2a943dc2a8dceafdb72b932f0af4f420bf91c5d467aa91ea62024",
     "py_spoofer.vec":  "c46ad62f6b60f93cfda7eb299cf6722c85d470f48a791602e1422ba330c83855",
     "py_detector.vec": "2830fa25fa3049510739ac18603b867f77cc0d113b177f648c160c56a5b298c2",
-    "py_planner.vec":  "2f6d60eb3056face6ca5e27090f6e0bce32222229774e04ec737282ebd0e88ae",
+    "py_planner.vec":  "9fd99d3bbeda1cd59c28cc9f45416eebb6ab307e008e58a20d1388c5a485be9a",
+    "py_planner_perturbed.vec": "c6a1f2df29a0ed4b65998257973862d8cd1c63e6beffed55c32b50d25a848711",
 }
 
 
@@ -365,3 +385,65 @@ def test_py_planner_varied_dynamics(py_planner_outputs):
     # Not all std_devs should be identical — different dynamics produce different responses
     assert max(std_devs) - min(std_devs) > 1.0, \
         f"All hosts have similar altitude variance: {std_devs}"
+
+
+# ---------------------------------------------------------------------------
+# Planner perturbed tests (initial velocity/angle perturbations)
+# ---------------------------------------------------------------------------
+
+def test_py_planner_perturbed_vec_hash(py_planner_perturbed_outputs):
+    h = hash_vec_file(py_planner_perturbed_outputs["vec_file"])
+    expected = EXPECTED_HASHES["py_planner_perturbed.vec"]
+    assert h == expected, f"PyPlannerPerturbed .vec hash changed: {h}"
+
+
+def test_py_planner_perturbed_hosts_drift(py_planner_perturbed_outputs):
+    """All hosts should drift from initial XY due to initial velocities (no drag)."""
+    beacon = py_planner_perturbed_outputs["beacon"]
+
+    initials = {0: (100.0, 100.0), 1: (200.0, 100.0),
+                2: (100.0, 200.0), 3: (200.0, 200.0)}
+
+    for host_idx, (init_x, init_y) in initials.items():
+        suffix = f"host[{host_idx}].wlan[0].mgmt"
+        _t, x_vals = _get_vector(beacon, suffix, "Transmission My X Coordinate")
+        _t, y_vals = _get_vector(beacon, suffix, "Transmission My Y Coordinate")
+
+        # Last position should differ from initial by at least 5m in some axis
+        dx = abs(x_vals[-1] - init_x)
+        dy = abs(y_vals[-1] - init_y)
+        assert dx > 5.0 or dy > 5.0, \
+            f"host[{host_idx}] didn't drift: dx={dx:.1f}, dy={dy:.1f}"
+
+
+def test_py_planner_perturbed_altitude_still_controlled(py_planner_perturbed_outputs):
+    """Despite perturbations, altitude should still change (GCS commands work)."""
+    beacon = py_planner_perturbed_outputs["beacon"]
+
+    for host_idx in range(4):
+        suffix = f"host[{host_idx}].wlan[0].mgmt"
+        _t, z_vals = _get_vector(beacon, suffix, "Transmission My Z Coordinate")
+        z_range = max(z_vals) - min(z_vals)
+        assert z_range > 5.0, \
+            f"host[{host_idx}] altitude range too small: {z_range:.1f}m"
+
+
+def test_py_planner_perturbed_different_trajectories(py_planner_perturbed_outputs):
+    """Each host should follow a distinct trajectory (different initial conditions)."""
+    beacon = py_planner_perturbed_outputs["beacon"]
+
+    final_positions = []
+    for host_idx in range(4):
+        suffix = f"host[{host_idx}].wlan[0].mgmt"
+        _t, x_vals = _get_vector(beacon, suffix, "Transmission My X Coordinate")
+        _t, y_vals = _get_vector(beacon, suffix, "Transmission My Y Coordinate")
+        final_positions.append((x_vals[-1], y_vals[-1]))
+
+    # All final positions should be distinct (pairwise distance > 10m)
+    for i in range(4):
+        for j in range(i + 1, 4):
+            dx = final_positions[i][0] - final_positions[j][0]
+            dy = final_positions[i][1] - final_positions[j][1]
+            dist = (dx**2 + dy**2) ** 0.5
+            assert dist > 10.0, \
+                f"host[{i}] and host[{j}] too close: {dist:.1f}m"

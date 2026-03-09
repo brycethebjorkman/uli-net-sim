@@ -492,7 +492,7 @@ run_urbanenv() {
 
     # Export environment variables for run_scenario.sh
     RUN_SCENARIO="$SCRIPT_DIR/run_scenario.sh"
-    export UAV_RID_BIN INET_ROOT PROJ_DIR VEC2CSV ADD_HOST_TYPE RUN_SCENARIO
+    export PROJ_DIR VEC2CSV ADD_HOST_TYPE RUN_SCENARIO
 
     if [ ! -f "$RUN_SCENARIO" ]; then
         echo "Error: run_scenario.sh not found at $RUN_SCENARIO"
@@ -604,15 +604,6 @@ fi
 # Check for required tools
 if ! command -v opp_scavetool &> /dev/null; then
     echo "Error: opp_scavetool not found. Source scripts/omnetpp-env.sh or check OMNeT++ installation."
-    exit 1
-fi
-
-# Check for container binary (out-of-tree build location)
-UAV_RID_BIN="$BASE_DIR/container-build/out/clang-release/uav_rid"
-if [ ! -f "$UAV_RID_BIN" ]; then
-    echo "Error: Container binary not found at $UAV_RID_BIN"
-    echo ""
-    echo "To build: cd $PROJ_DIR && ./scripts/build.sh"
     exit 1
 fi
 

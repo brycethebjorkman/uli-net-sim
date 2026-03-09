@@ -9,7 +9,7 @@
 #   ./run_scenario.sh <scenario_path> <spoofer_host>
 #
 # Environment variables required (set by parent script):
-#   UAV_RID_BIN, INET_ROOT, PROJ_DIR, VEC2CSV, ADD_HOST_TYPE
+#   PROJ_DIR, VEC2CSV, ADD_HOST_TYPE
 #
 
 set -e
@@ -56,23 +56,7 @@ for CONFIG_NAME in "${CONFIGS_TO_RUN[@]}"; do
 
     # Run from the scenario directory so relative paths in ini work
     pushd "$SCENARIO_PATH" > /dev/null
-    ${UAV_RID_BIN} -m \
-        -u Cmdenv \
-        -c "$CONFIG_NAME" \
-        -l "$INET_ROOT/out/clang-release/src/libINET.so" \
-        -n "$INET_ROOT/src" \
-        -n "$INET_ROOT/src/inet/visualizer/common" \
-        -n "$INET_ROOT/examples" \
-        -n "$INET_ROOT/showcases" \
-        -n "$INET_ROOT/tests/validation" \
-        -n "$INET_ROOT/tests/networks" \
-        -n "$INET_ROOT/tutorials" \
-        -n "$PROJ_DIR/simulations" \
-        -n "$PROJ_DIR/src" \
-        -f "omnetpp.ini" \
-        --cmdenv-express-mode=true \
-        --cmdenv-status-frequency=10s \
-        --result-dir="results" \
+    "$PROJ_DIR/scripts/run.sh" -f "omnetpp.ini" -c "$CONFIG_NAME" -r "results" \
         2>&1 | grep -v "^$" || true
     popd > /dev/null
 

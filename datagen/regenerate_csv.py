@@ -85,19 +85,10 @@ def run_scenario(scenario_path: Path, spoofer_host: int, dry_run: bool = False) 
 
     # Try to set required env vars from known paths
     proj_dir = script_dir.parent
-    base_dir = proj_dir.parent
 
     env.setdefault("PROJ_DIR", str(proj_dir))
-    env.setdefault("UAV_RID_BIN", str(base_dir / "container-build" / "out" / "clang-release" / "uav_rid"))
-    env.setdefault("INET_ROOT", str(base_dir / "inet4.5"))
     env.setdefault("VEC2CSV", str(script_dir / "vec2csv.py"))
     env.setdefault("ADD_HOST_TYPE", str(script_dir / "add_host_type.py"))
-
-    # Validate binary exists
-    if not Path(env["UAV_RID_BIN"]).exists():
-        print(f"Error: UAV_RID_BIN not found at {env['UAV_RID_BIN']}")
-        print("Please run: ./container/build.sh")
-        return False
 
     # Format spoofer_host (use "-" for None)
     spoofer_arg = str(spoofer_host) if spoofer_host is not None else "-"

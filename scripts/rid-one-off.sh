@@ -177,39 +177,11 @@ if [ "$quiet" = false ]; then
     echo "Running simulation with drone $tx_n as transmitter to $rx_count receiver drones and run_args: $run_args"
 fi
 
-# Source environment if not already sourced
-if [ -z "$INET_ROOT" ]; then
-    . "$PROJ_DIR/scripts/omnetpp-env.sh"
-fi
-
-# Use container binary
-UAV_RID_BIN="$BASE_DIR/container-build/out/clang-release/uav_rid"
-if [ ! -f "$UAV_RID_BIN" ]; then
-    echo "Error: Container binary not found at $UAV_RID_BIN" >&2
-    echo "To build: cd $PROJ_DIR && ./scripts/build.sh" >&2
-    exit 1
-fi
-
-$UAV_RID_BIN -m \
+"$PROJ_DIR/scripts/run.sh" \
     -f "$PROJ_DIR/simulations/basic_uav/omnetpp.ini" \
     -c General \
-    -l "$INET_ROOT/out/clang-release/src/libINET.so" \
-    -n "$INET_ROOT/src" \
-    -n "$INET_ROOT/src/inet/visualizer/common" \
-    -n "$INET_ROOT/examples" \
-    -n "$INET_ROOT/showcases" \
-    -n "$INET_ROOT/tests/validation" \
-    -n "$INET_ROOT/tests/networks" \
-    -n "$INET_ROOT/tutorials" \
-    -n "$PROJ_DIR/simulations" \
-    -n "$PROJ_DIR/src" \
-    -u Cmdenv \
-    --cmdenv-express-mode=true \
-    --cmdenv-status-frequency=0s \
-    --cmdenv-performance-display=false \
-    --cmdenv-event-banners=false \
-    --**.cmdenv-log-level=off \
-    $run_args
+    -q \
+    -- $run_args
 
 opp_scavetool export -F CSV-R -x columnNames=true \
     -f 'type=~"vector" and module=~"BasicUav.host[*].wlan[0].mgmt" and (name=~"Serial Number" or name=~"Reception Power" or name=~"Reception Time")' \

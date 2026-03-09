@@ -18,8 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import (OMNETPP_ARGS, UAV_RID_BIN,
-                       extract_our_vectors, diff_vector_hashes)
+from .conftest import (RUN_SH, extract_our_vectors, diff_vector_hashes)
 from datagen.vec2parquet import hash_vector_data
 
 GRAVITY = 9.81
@@ -36,11 +35,8 @@ EXPECTED_DIR = Path(__file__).parent / "expected_hashes"
 def _run_sim(config: str, result_dir: Path):
     """Run one multirotor_test config."""
     result_dir.mkdir(parents=True, exist_ok=True)
-    args = [str(UAV_RID_BIN), "-m", "-u", "Cmdenv", "-c", config,
-            *[str(a) for a in OMNETPP_ARGS],
-            "-f", str(SIM_INI),
-            "--cmdenv-express-mode=true",
-            f"--result-dir={result_dir}"]
+    args = [str(RUN_SH), "-f", str(SIM_INI), "-c", config,
+            "-r", str(result_dir), "-q"]
     r = subprocess.run(args, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"Simulation {config} failed:\n{r.stderr[-2000:]}")

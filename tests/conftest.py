@@ -22,29 +22,13 @@ from datagen.vec2parquet import extract_vectors, hash_vector_data
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).parent.parent
-BASE_DIR = REPO_ROOT.parent  # /usr/uli-net-sim/
 TEST_OUT = Path(__file__).parent / "out"
 
-UAV_RID_BIN = BASE_DIR / "container-build" / "out" / "clang-release" / "uav_rid"
-INET_ROOT = BASE_DIR / "inet4.5"
+RUN_SH = REPO_ROOT / "scripts" / "run.sh"
 URBANENV = REPO_ROOT / "datagen" / "urbanenv"
 VEC2CSV = REPO_ROOT / "datagen" / "vec2csv.py"
 ADD_HOST_TYPE = REPO_ROOT / "datagen" / "add_host_type.py"
 PYTHON = sys.executable
-
-# Standard OMNeT++ flags
-OMNETPP_ARGS = [
-    "-l", str(INET_ROOT / "out" / "clang-release" / "src" / "libINET.so"),
-    "-n", str(INET_ROOT / "src"),
-    "-n", str(INET_ROOT / "src" / "inet" / "visualizer" / "common"),
-    "-n", str(INET_ROOT / "examples"),
-    "-n", str(INET_ROOT / "showcases"),
-    "-n", str(INET_ROOT / "tests" / "validation"),
-    "-n", str(INET_ROOT / "tests" / "networks"),
-    "-n", str(INET_ROOT / "tutorials"),
-    "-n", str(REPO_ROOT / "simulations"),
-    "-n", str(REPO_ROOT / "src"),
-]
 
 # Datagen parameters
 DATAGEN_PARAMS = dict(
@@ -202,10 +186,8 @@ def sim_outputs(datagen_outputs):
             result_dir = out / run_name / "results"
             result_dir.mkdir(parents=True)
 
-            _run_quiet([str(UAV_RID_BIN), "-m", "-u", "Cmdenv", "-c", config,
-                        *OMNETPP_ARGS, "-f", ini_name,
-                        "--cmdenv-express-mode=true",
-                        f"--result-dir={result_dir}"], cwd=datagen_dir)
+            _run_quiet([str(RUN_SH), "-f", ini_name, "-c", config,
+                        "-r", str(result_dir), "-q"], cwd=datagen_dir)
 
             vec_file = result_dir / f"{config}-#0.vec"
             raw_csv = out / run_name / "raw.csv"

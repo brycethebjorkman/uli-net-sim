@@ -14,6 +14,9 @@ from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from datagen.vec2parquet import extract_vectors, hash_vector_data
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -95,16 +98,39 @@ def hash_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def hash_vec_file(path: Path) -> str:
-    """SHA256 of a .vec file with non-deterministic headers stripped."""
-    h = hashlib.sha256()
-    with open(path, "r") as f:
-        for line in f:
-            if line.startswith(("run ", "attr datetime", "attr processid",
-                                "attr inifile", "attr resultdir")):
-                continue
-            h.update(line.encode())
-    return h.hexdigest()
+def extract_our_vectors(vec_path: Path) -> dict:
+    """Extract our module vectors from a .vec file using default specs."""
+    return extract_vectors(vec_path)
+
+
+def diff_vector_hashes(expected: dict, actual: dict) -> str:
+    """Compare per-label hash dicts and return a human-readable diff."""
+    lines = []
+    changed = []
+    added = sorted(set(actual) - set(expected))
+    removed = sorted(set(expected) - set(actual))
+    unchanged = 0
+
+    for label in sorted(set(expected) & set(actual)):
+        if expected[label] != actual[label]:
+            changed.append(label)
+        else:
+            unchanged += 1
+
+    if changed:
+        lines.append(f"  CHANGED ({len(changed)}):")
+        for label in changed:
+            lines.append(f"    {label}: expected {expected[label][:16]}... got {actual[label][:16]}...")
+    if added:
+        lines.append(f"  ADDED ({len(added)}):")
+        for label in added:
+            lines.append(f"    {label}")
+    if removed:
+        lines.append(f"  REMOVED ({len(removed)}):")
+        for label in removed:
+            lines.append(f"    {label}")
+    lines.append(f"  UNCHANGED: {unchanged}")
+    return "\n".join(lines)
 
 
 def _extract_spoofer_host(ini_path: Path) -> str | None:

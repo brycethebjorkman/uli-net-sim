@@ -10,21 +10,23 @@ To update hashes after intentional changes:
     .venv/bin/pytest tests/test_multirotor.py -v
 """
 
-import csv
+import json
 import subprocess
 import shutil
 import tempfile
-from collections import defaultdict
 from pathlib import Path
 
 import pytest
 
-from .conftest import OMNETPP_ARGS, UAV_RID_BIN, hash_vec_file
+from .conftest import (OMNETPP_ARGS, UAV_RID_BIN,
+                       extract_our_vectors, diff_vector_hashes)
+from datagen.vec2parquet import hash_vector_data
 
 GRAVITY = 9.81
 REPO_ROOT = Path(__file__).parent.parent
 TEST_OUT = Path(__file__).parent / "out" / "multirotor"
 SIM_INI = REPO_ROOT / "simulations" / "multirotor_test" / "omnetpp.ini"
+EXPECTED_DIR = Path(__file__).parent / "expected_hashes"
 
 
 # ---------------------------------------------------------------------------
@@ -45,34 +47,6 @@ def _run_sim(config: str, result_dir: Path):
     return result_dir / f"{config}-#0.vec"
 
 
-def _export_vectors(vec_file: Path, module_filter: str) -> str:
-    """Export vectors from .vec file using opp_scavetool, return temp CSV path."""
-    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
-    tmp.close()
-    cmd = ['opp_scavetool', 'export', '-F', 'CSV-R', '-x', 'columnNames=true',
-           '-f', f'type=~"vector" and module=~"{module_filter}"',
-           '-o', tmp.name, str(vec_file)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"opp_scavetool failed: {r.stderr}")
-    return tmp.name
-
-
-def _parse_vectors(csv_path: str) -> dict:
-    """Parse CSV-R format into {(module, name): (times[], values[])}."""
-    vectors = {}
-    with open(csv_path) as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row['type'] != 'vector':
-                continue
-            key = (row['module'], row['name'])
-            times = [float(t) for t in row['vectime'].split()]
-            values = [float(v) for v in row['vecvalue'].split()]
-            vectors[key] = (times, values)
-    return vectors
-
-
 def _get_vector(vectors: dict, module_suffix: str, name: str):
     """Get (times, values) for a vector matching module suffix and name."""
     for (mod, n), (times, vals) in vectors.items():
@@ -89,6 +63,33 @@ def _value_at_time(times, values, target_t, tol=0.01):
     return values[best_idx]
 
 
+def _load_expected(name: str) -> dict:
+    """Load expected hashes from JSON file."""
+    path = EXPECTED_DIR / f"{name}.json"
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def _hash_all_vectors(vectors: dict) -> dict:
+    """Compute per-vector hashes, keyed by 'module||name'."""
+    return {f"{mod}||{name}": hash_vector_data(times, values)
+            for (mod, name), (times, values) in vectors.items()}
+
+
+def _check_hashes(vectors: dict, expected_file: str, label: str):
+    """Compare extracted vectors against expected hashes, fail with diff."""
+    actual = _hash_all_vectors(vectors)
+    expected = _load_expected(expected_file)
+    if not expected:
+        pytest.fail(f"{label} hashes (create {expected_file}.json):\n"
+                    f"{json.dumps(actual, indent=2, sort_keys=True)}")
+    if actual != expected:
+        diff = diff_vector_hashes(expected, actual)
+        pytest.fail(f"{label} vector hashes changed:\n{diff}")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -101,14 +102,11 @@ def hover_outputs():
         shutil.rmtree(out)
     result_dir = out / "results"
     vec_file = _run_sim("HoverTest", result_dir)
-
-    mobility_csv = _export_vectors(vec_file, "*.host[*].mobility")
-    beacon_csv = _export_vectors(vec_file, "*.host[*].wlan[0].mgmt")
+    vectors = extract_our_vectors(vec_file)
 
     return {
         "vec_file": vec_file,
-        "mobility": _parse_vectors(mobility_csv),
-        "beacon": _parse_vectors(beacon_csv),
+        "vectors": vectors,
     }
 
 
@@ -120,14 +118,11 @@ def freefall_outputs():
         shutil.rmtree(out)
     result_dir = out / "results"
     vec_file = _run_sim("FreefallTest", result_dir)
-
-    mobility_csv = _export_vectors(vec_file, "*.host[*].mobility")
-    beacon_csv = _export_vectors(vec_file, "*.host[*].wlan[0].mgmt")
+    vectors = extract_our_vectors(vec_file)
 
     return {
         "vec_file": vec_file,
-        "mobility": _parse_vectors(mobility_csv),
-        "beacon": _parse_vectors(beacon_csv),
+        "vectors": vectors,
     }
 
 
@@ -135,26 +130,12 @@ def freefall_outputs():
 # Hash-based regression (catches any change in dynamics output)
 # ---------------------------------------------------------------------------
 
-EXPECTED_HASHES = {
-    "hover.vec":    "c9b6c2b8ecf7663199c5e60dc30652625522990531dfe78221f03231808d516d",
-    "freefall.vec": "8aff2180e0906f2f456ecb9960153d87657f10d7994cdf34f689a70918a7b2c3",
-}
+def test_hover_vec_hashes(hover_outputs):
+    _check_hashes(hover_outputs["vectors"], "hover", "Hover")
 
 
-def test_hover_vec_hash(hover_outputs):
-    h = hash_vec_file(hover_outputs["vec_file"])
-    expected = EXPECTED_HASHES["hover.vec"]
-    if expected == "PLACEHOLDER":
-        pytest.fail(f"Hover .vec hash (update EXPECTED_HASHES): {h}")
-    assert h == expected, f"Hover .vec hash changed: {h}"
-
-
-def test_freefall_vec_hash(freefall_outputs):
-    h = hash_vec_file(freefall_outputs["vec_file"])
-    expected = EXPECTED_HASHES["freefall.vec"]
-    if expected == "PLACEHOLDER":
-        pytest.fail(f"Freefall .vec hash (update EXPECTED_HASHES): {h}")
-    assert h == expected, f"Freefall .vec hash changed: {h}"
+def test_freefall_vec_hashes(freefall_outputs):
+    _check_hashes(freefall_outputs["vectors"], "freefall", "Freefall")
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +144,7 @@ def test_freefall_vec_hash(freefall_outputs):
 
 def test_hover_thrust_equals_mg(hover_outputs):
     """Thrust should be m*g = 5 * 9.81 = 49.05 N throughout."""
-    times, values = _get_vector(hover_outputs["mobility"],
+    times, values = _get_vector(hover_outputs["vectors"],
                                 "host[0].mobility", "thrust:vector")
     expected_thrust = 5.0 * GRAVITY
     for v in values:
@@ -172,14 +153,14 @@ def test_hover_thrust_equals_mg(hover_outputs):
 
 def test_hover_position_constant(hover_outputs):
     """Host 0 should stay at (100, 100, 50) and host 1 at (200, 200, 80)."""
-    beacon = hover_outputs["beacon"]
+    vectors = hover_outputs["vectors"]
 
     for host_idx, (ex, ey, ez) in [(0, (100, 100, 50)), (1, (200, 200, 80))]:
         suffix = f"host[{host_idx}].wlan[0].mgmt"
         for coord, expected in [("Transmission My X Coordinate", ex),
                                 ("Transmission My Y Coordinate", ey),
                                 ("Transmission My Z Coordinate", ez)]:
-            times, values = _get_vector(beacon, suffix, coord)
+            times, values = _get_vector(vectors, suffix, coord)
             for i, v in enumerate(values):
                 assert abs(v - expected) < 1e-3, \
                     f"host[{host_idx}] {coord} at t={times[i]}: {v} != {expected}"
@@ -187,19 +168,19 @@ def test_hover_position_constant(hover_outputs):
 
 def test_hover_angles_zero(hover_outputs):
     """All Euler angles and angular rates should remain zero."""
-    mobility = hover_outputs["mobility"]
+    vectors = hover_outputs["vectors"]
     for signal in ["phi:vector", "theta:vector", "psi:vector",
                    "omegaP:vector", "omegaQ:vector", "omegaR:vector"]:
-        times, values = _get_vector(mobility, "host[0].mobility", signal)
+        times, values = _get_vector(vectors, "host[0].mobility", signal)
         for v in values:
             assert abs(v) < 1e-10, f"{signal}: got {v}, expected 0"
 
 
 def test_hover_torques_zero(hover_outputs):
     """All torques should be zero during hover."""
-    mobility = hover_outputs["mobility"]
+    vectors = hover_outputs["vectors"]
     for signal in ["tauPhi:vector", "tauTheta:vector", "tauPsi:vector"]:
-        times, values = _get_vector(mobility, "host[0].mobility", signal)
+        times, values = _get_vector(vectors, "host[0].mobility", signal)
         for v in values:
             assert abs(v) < 1e-10, f"{signal}: got {v}, expected 0"
 
@@ -210,7 +191,7 @@ def test_hover_torques_zero(hover_outputs):
 
 def test_freefall_thrust_zero(freefall_outputs):
     """Thrust should be zero throughout freefall."""
-    times, values = _get_vector(freefall_outputs["mobility"],
+    times, values = _get_vector(freefall_outputs["vectors"],
                                 "host[0].mobility", "thrust:vector")
     for v in values:
         assert v == 0.0, f"Thrust {v} != 0"
@@ -218,8 +199,8 @@ def test_freefall_thrust_zero(freefall_outputs):
 
 def test_freefall_z_analytical(freefall_outputs):
     """Z position should follow z(t) = 100 - 0.5 * g * t^2."""
-    beacon = freefall_outputs["beacon"]
-    times, values = _get_vector(beacon, "host[0].wlan[0].mgmt",
+    vectors = freefall_outputs["vectors"]
+    times, values = _get_vector(vectors, "host[0].wlan[0].mgmt",
                                 "Transmission My Z Coordinate")
 
     for t, z_actual in zip(times, values):
@@ -230,28 +211,28 @@ def test_freefall_z_analytical(freefall_outputs):
 
 def test_freefall_xy_constant(freefall_outputs):
     """X and Y should remain at 0 during freefall (no lateral forces)."""
-    beacon = freefall_outputs["beacon"]
+    vectors = freefall_outputs["vectors"]
     for coord in ["Transmission My X Coordinate",
                   "Transmission My Y Coordinate"]:
-        times, values = _get_vector(beacon, "host[0].wlan[0].mgmt", coord)
+        times, values = _get_vector(vectors, "host[0].wlan[0].mgmt", coord)
         for v in values:
             assert abs(v) < 1e-3, f"{coord}: {v} != 0"
 
 
 def test_freefall_angles_zero(freefall_outputs):
     """No rotation should occur during pure freefall."""
-    mobility = freefall_outputs["mobility"]
+    vectors = freefall_outputs["vectors"]
     for signal in ["phi:vector", "theta:vector", "psi:vector",
                    "omegaP:vector", "omegaQ:vector", "omegaR:vector"]:
-        times, values = _get_vector(mobility, "host[0].mobility", signal)
+        times, values = _get_vector(vectors, "host[0].mobility", signal)
         for v in values:
             assert abs(v) < 1e-10, f"{signal}: got {v}, expected 0"
 
 
 def test_freefall_z_checkpoints(freefall_outputs):
     """Verify specific z values at t=1, 2, 3 against analytical solution."""
-    beacon = freefall_outputs["beacon"]
-    times, values = _get_vector(beacon, "host[0].wlan[0].mgmt",
+    vectors = freefall_outputs["vectors"]
+    times, values = _get_vector(vectors, "host[0].wlan[0].mgmt",
                                 "Transmission My Z Coordinate")
 
     checkpoints = {
@@ -276,11 +257,11 @@ def test_hover_all_signals_recorded(hover_outputs):
                         "tauPsi:vector", "phi:vector", "theta:vector",
                         "psi:vector", "omegaP:vector", "omegaQ:vector",
                         "omegaR:vector"}
-    mobility = hover_outputs["mobility"]
+    vectors = hover_outputs["vectors"]
 
     for host_idx in range(2):
         suffix = f"host[{host_idx}].mobility"
-        recorded = {name for (mod, name) in mobility if mod.endswith(suffix)}
+        recorded = {name for (mod, name) in vectors if mod.endswith(suffix)}
         missing = expected_signals - recorded
         assert not missing, f"host[{host_idx}] missing signals: {missing}"
 
@@ -291,9 +272,9 @@ def test_freefall_all_signals_recorded(freefall_outputs):
                         "tauPsi:vector", "phi:vector", "theta:vector",
                         "psi:vector", "omegaP:vector", "omegaQ:vector",
                         "omegaR:vector"}
-    mobility = freefall_outputs["mobility"]
+    vectors = freefall_outputs["vectors"]
 
-    recorded = {name for (mod, name) in mobility
+    recorded = {name for (mod, name) in vectors
                 if mod.endswith("host[0].mobility")}
     missing = expected_signals - recorded
     assert not missing, f"Missing signals: {missing}"

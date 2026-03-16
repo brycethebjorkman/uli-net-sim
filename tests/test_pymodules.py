@@ -1,8 +1,8 @@
 """
 Regression tests for Python demo modules (pymodules/).
 
-Tests the three PyBridge hook points:
-  1. MultirotorMobility Python controller (HoverController)
+Tests the PyBridge hook points:
+  1. MultirotorMobility Python controller (HoverController, CascadedPidController)
   2. GcsModule Python decision algorithm (SerialImpersonationDetector)
   3. RidBeaconMgmt Python TX hook (PositionOffsetSpoofer)
 
@@ -11,6 +11,7 @@ To update hashes after intentional changes:
 """
 
 import json
+import math
 import shutil
 import subprocess
 from pathlib import Path
@@ -363,7 +364,7 @@ def test_py_planner_varied_dynamics(py_planner_outputs):
 # ---------------------------------------------------------------------------
 
 def test_py_planner_perturbed_hosts_drift(py_planner_perturbed_outputs):
-    """All hosts should drift from initial XY due to initial velocities (no drag)."""
+    """All hosts should drift from initial XY due to initial velocity perturbations."""
     vectors = py_planner_perturbed_outputs["vectors"]
 
     initials = {0: (100.0, 100.0), 1: (200.0, 100.0),
@@ -374,11 +375,12 @@ def test_py_planner_perturbed_hosts_drift(py_planner_perturbed_outputs):
         _t, x_vals = _get_vector(vectors, suffix, "Transmission My X Coordinate")
         _t, y_vals = _get_vector(vectors, suffix, "Transmission My Y Coordinate")
 
-        # Last position should differ from initial by at least 5m in some axis
-        dx = abs(x_vals[-1] - init_x)
-        dy = abs(y_vals[-1] - init_y)
-        assert dx > 5.0 or dy > 5.0, \
-            f"host[{host_idx}] didn't drift: dx={dx:.1f}, dy={dy:.1f}"
+        # Max deviation at any point should exceed 1m (drag may damp drift
+        # before end of sim, so check peak deviation rather than final position)
+        max_dx = max(abs(v - init_x) for v in x_vals)
+        max_dy = max(abs(v - init_y) for v in y_vals)
+        assert max_dx > 1.0 or max_dy > 1.0, \
+            f"host[{host_idx}] never drifted: max_dx={max_dx:.1f}, max_dy={max_dy:.1f}"
 
 
 def test_py_planner_perturbed_altitude_still_controlled(py_planner_perturbed_outputs):
@@ -412,3 +414,79 @@ def test_py_planner_perturbed_different_trajectories(py_planner_perturbed_output
             dist = (dx**2 + dy**2) ** 0.5
             assert dist > 10.0, \
                 f"host[{i}] and host[{j}] too close: {dist:.1f}m"
+
+
+# ---------------------------------------------------------------------------
+# Trajectory controller fixture and tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def py_trajectory_outputs():
+    """Run PyTrajectoryTest and export vectors."""
+    out = TEST_OUT / "trajectory"
+    if out.exists():
+        shutil.rmtree(out)
+    result_dir = out / "results"
+    vec_file = _run_sim("PyTrajectoryTest", result_dir)
+    vectors = extract_our_vectors(vec_file)
+
+    return {
+        "vec_file": vec_file,
+        "vectors": vectors,
+    }
+
+
+def test_py_trajectory_vec_hashes(py_trajectory_outputs):
+    _check_hashes(py_trajectory_outputs["vectors"],
+                  "py_trajectory", "PyTrajectoryTest")
+
+
+def test_py_trajectory_reaches_waypoints(py_trajectory_outputs):
+    """Host 0 should pass within 10m of each waypoint (beacon-sampled)."""
+    vectors = py_trajectory_outputs["vectors"]
+
+    waypoints = [(200, 100, 50), (200, 200, 60), (200, 300, 50)]
+
+    xt, xv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My X Coordinate")
+    _t, yv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Y Coordinate")
+    _t, zv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Z Coordinate")
+
+    for wp in waypoints:
+        min_dist = min(
+            math.sqrt((xv[i] - wp[0])**2 + (yv[i] - wp[1])**2 +
+                       (zv[i] - wp[2])**2)
+            for i in range(len(xv))
+        )
+        assert min_dist < 10.0, \
+            f"Host 0 never reached within 10m of {wp} (min_dist={min_dist:.1f}m)"
+
+
+def test_py_trajectory_hover_at_end(py_trajectory_outputs):
+    """Host 1 should hover near final waypoint (150, 150, 40) at sim end."""
+    vectors = py_trajectory_outputs["vectors"]
+
+    for coord, target in [("Transmission My X Coordinate", 150.0),
+                          ("Transmission My Y Coordinate", 150.0),
+                          ("Transmission My Z Coordinate", 40.0)]:
+        _t, values = _get_vector(vectors, "host[1].wlan[0].mgmt", coord)
+        # Check last 5 samples are within 10m of target
+        for v in values[-5:]:
+            assert abs(v - target) < 10.0, \
+                f"Host 1 not hovering near {coord}={target}: {v:.2f}"
+
+
+def test_py_trajectory_altitude_tracking(py_trajectory_outputs):
+    """Host 1 should reach altitude 70m (wp1) then descend to 40m (wp2)."""
+    vectors = py_trajectory_outputs["vectors"]
+
+    _t, zv = _get_vector(vectors, "host[1].wlan[0].mgmt",
+                         "Transmission My Z Coordinate")
+
+    # Should reach near 70m at some point, then settle near 40m
+    assert max(zv) > 65.0, \
+        f"Host 1 never reached altitude 70m (max={max(zv):.1f}m)"
+    assert abs(zv[-1] - 40.0) < 5.0, \
+        f"Host 1 didn't settle near 40m (final={zv[-1]:.1f}m)"

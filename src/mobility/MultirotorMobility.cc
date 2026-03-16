@@ -12,11 +12,25 @@
 #include "inet/common/INETMath.h"
 #include "inet/common/geometry/common/Quaternion.h"
 
+#ifdef WITH_OSG
+#include <osg/Geode>
+#include <osg/Geometry>
+#include <osg/LineWidth>
+#include <osg/Material>
+#include <osg/ShapeDrawable>
+#endif
+
 #include <cmath>
 
 Define_Module(MultirotorMobility);
 
 static constexpr double GRAVITY = 9.81;  // m/s^2
+
+#ifdef WITH_OSG
+static constexpr bool hasOsg = true;
+#else
+static constexpr bool hasOsg = false;
+#endif
 
 // ── Dynamics ────────────────────────────────────────────────────────────────
 // lumped-mass 6-DOF model
@@ -55,10 +69,34 @@ Eigen::Matrix<double, STATE_DIM, 1> MultirotorMobility::dynamics(
     dx[POS_Y] = x[VEL_Y];
     dx[POS_Z] = x[VEL_Z];
 
-    // Velocity derivatives (translational acceleration)
+    // Velocity derivatives (translational acceleration from thrust)
     dx[VEL_X] = (st * cpsi * cp + sp * spsi) * T_over_m;
     dx[VEL_Y] = (st * spsi * cp - sp * cpsi) * T_over_m;
     dx[VEL_Z] = -GRAVITY + cp * ct * T_over_m;
+
+    // Translational drag (quadratic, body-frame)
+    if (dragCoeff > 0) {
+        double vx = x[VEL_X], vy = x[VEL_Y], vz = x[VEL_Z];
+
+        // World-to-body rotation (R^T): columns of R become rows
+        double vb_x =  ct*cpsi*vx          + ct*spsi*vy          - st*vz;
+        double vb_y = (sp*st*cpsi-cp*spsi)*vx + (sp*st*spsi+cp*cpsi)*vy + sp*ct*vz;
+        double vb_z = (cp*st*cpsi+sp*spsi)*vx + (cp*st*spsi-sp*cpsi)*vy + cp*ct*vz;
+
+        // Quadratic drag per axis in body frame: D = dragCoeff * v * |v|
+        double db_x = dragCoeff * vb_x * std::abs(vb_x);
+        double db_y = dragCoeff * vb_y * std::abs(vb_y);
+        double db_z = dragCoeff * vb_z * std::abs(vb_z);
+
+        // Body-to-world rotation (R)
+        double dw_x = ct*cpsi*db_x + (sp*st*cpsi-cp*spsi)*db_y + (cp*st*cpsi+sp*spsi)*db_z;
+        double dw_y = ct*spsi*db_x + (sp*st*spsi+cp*cpsi)*db_y + (cp*st*spsi-sp*cpsi)*db_z;
+        double dw_z =    -st*db_x  +              sp*ct  *db_y +              cp*ct  *db_z;
+
+        dx[VEL_X] -= dw_x / mass;
+        dx[VEL_Y] -= dw_y / mass;
+        dx[VEL_Z] -= dw_z / mass;
+    }
 
     // Euler angle derivatives (kinematic equations)
     dx[PHI]   = p + q * sp * tt + r * cp * tt;
@@ -69,6 +107,11 @@ Eigen::Matrix<double, STATE_DIM, 1> MultirotorMobility::dynamics(
     dx[OMEGA_P] = (Iyy - Izz) / Ixx * q * r + armLength / Ixx * tau_phi;
     dx[OMEGA_Q] = (Izz - Ixx) / Iyy * p * r + armLength / Iyy * tau_theta;
     dx[OMEGA_R] = (Ixx - Iyy) / Izz * p * r + armLength / Izz * tau_psi;
+
+    // Rotational drag (linear damping, ArduPilot-style)
+    dx[OMEGA_P] -= rotationalDrag * p;
+    dx[OMEGA_Q] -= rotationalDrag * q;
+    dx[OMEGA_R] -= rotationalDrag * r;
 
     return dx;
 }
@@ -99,6 +142,17 @@ void MultirotorMobility::initialize(int stage)
         dynamicsDt = par("dynamicsDt").doubleValueInUnit("s");
         controlDt  = par("controlDt").doubleValueInUnit("s");
 
+        // Aerodynamic drag
+        double dragCd  = par("dragCd").doubleValue();
+        double dragArea = par("dragArea").doubleValue();
+        double airDensity = par("airDensity").doubleValue();
+        dragCoeff = 0.5 * airDensity * dragCd * dragArea;
+        rotationalDrag = par("rotationalDrag").doubleValue();
+
+        EV_WARN << "MultirotorMobility: dragCoeff=" << dragCoeff
+                << " (Cd=" << dragCd << " A=" << dragArea << " rho=" << airDensity << ")"
+                << " rotDrag=" << rotationalDrag << endl;
+
         // Initialize state to zero; position will be set in initializePosition()
         state.setZero();
 
@@ -121,6 +175,24 @@ void MultirotorMobility::initialize(int stage)
         control[THRUST] = (defaultThrust < 0) ? mass * GRAVITY : defaultThrust;
 
         nextControlTick = simTime();
+
+        // Parse waypoint script (TurtleMobility-compatible XML)
+        cXMLElement *wpXml = par("waypointScript").xmlValue();
+        double wpSpeed = 10.0;  // default speed
+        for (cXMLElement *child = wpXml->getFirstChild(); child; child = child->getNextSibling()) {
+            const char *tag = child->getTagName();
+            double x = atof(child->getAttribute("x") ? child->getAttribute("x") : "0");
+            double y = atof(child->getAttribute("y") ? child->getAttribute("y") : "0");
+            double z = atof(child->getAttribute("z") ? child->getAttribute("z") : "0");
+            if (strcmp(tag, "set") == 0) {
+                if (child->getAttribute("speed"))
+                    wpSpeed = atof(child->getAttribute("speed"));
+                waypoints.push_back({x, y, z, wpSpeed});
+            }
+            else if (strcmp(tag, "moveto") == 0) {
+                waypoints.push_back({x, y, z, wpSpeed});
+            }
+        }
 
         // Register signals for vector recording
         thrustSignal   = registerSignal("thrust");
@@ -147,6 +219,59 @@ void MultirotorMobility::initialize(int stage)
             cModule *mod = getModuleByPath(par("pyBridgePath").stdstringValue().c_str());
             pyBridge = check_and_cast<PyBridge *>(mod);
             pyHandle = pyBridge->instantiateClass(pyClassName);
+        }
+
+        // Draw waypoint path in the 3D OSG scene (Qtenv only)
+        if constexpr (hasOsg) {
+            if (waypoints.size() >= 2 && getEnvir()->isGUI()) {
+                auto *osgCanvas = getSystemModule()->getOsgCanvas();
+                auto *scene = osgCanvas ? dynamic_cast< ::osg::Group*>(osgCanvas->getScene()) : nullptr;
+                if (scene) {
+                    static const ::osg::Vec4 osgColors[] = {
+                        {66/255.0f, 133/255.0f, 244/255.0f, 1.0f},   // blue
+                        {234/255.0f, 67/255.0f, 53/255.0f, 1.0f},    // red
+                        {52/255.0f, 168/255.0f, 83/255.0f, 1.0f},    // green
+                        {251/255.0f, 188/255.0f, 4/255.0f, 1.0f},    // amber
+                    };
+                    int hostIdx = getParentModule()->getIndex();
+                    auto colorVec = osgColors[hostIdx % 4];
+
+                    // Polyline geometry for the path
+                    auto *geometry = new ::osg::Geometry();
+                    auto *vertices = new ::osg::Vec3Array();
+                    for (const auto& wp : waypoints)
+                        vertices->push_back(::osg::Vec3d(wp.x, wp.y, wp.z));
+                    geometry->setVertexArray(vertices);
+                    geometry->addPrimitiveSet(
+                        new ::osg::DrawArrays(::osg::PrimitiveSet::LINE_STRIP, 0, vertices->size()));
+
+                    auto *geode = new ::osg::Geode();
+                    geode->addDrawable(geometry);
+
+                    auto *stateSet = geode->getOrCreateStateSet();
+                    auto *material = new ::osg::Material();
+                    material->setDiffuse(::osg::Material::FRONT_AND_BACK, colorVec);
+                    material->setAmbient(::osg::Material::FRONT_AND_BACK, colorVec);
+                    material->setEmission(::osg::Material::FRONT_AND_BACK, colorVec);
+                    stateSet->setAttributeAndModes(material, ::osg::StateAttribute::ON);
+                    stateSet->setAttributeAndModes(
+                        new ::osg::LineWidth(3.0f), ::osg::StateAttribute::ON);
+                    stateSet->setMode(GL_LIGHTING, ::osg::StateAttribute::OFF);
+
+                    scene->addChild(geode);
+
+                    // Sphere markers at each waypoint
+                    for (const auto& wp : waypoints) {
+                        auto *sphere = new ::osg::ShapeDrawable(
+                            new ::osg::Sphere(::osg::Vec3d(wp.x, wp.y, wp.z), 2.0));
+                        sphere->setColor(colorVec);
+                        auto *marker = new ::osg::Geode();
+                        marker->addDrawable(sphere);
+                        marker->getOrCreateStateSet()->setMode(GL_LIGHTING, ::osg::StateAttribute::OFF);
+                        scene->addChild(marker);
+                    }
+                }
+            }
         }
     }
 }
@@ -186,6 +311,26 @@ void MultirotorMobility::callPythonController()
     stateDict["euler"] = py::make_tuple(state[PHI], state[THETA], state[PSI]);
     stateDict["omega"] = py::make_tuple(state[OMEGA_P], state[OMEGA_Q], state[OMEGA_R]);
     stateDict["time"]  = simTime().dbl();
+
+    // Include waypoints and mass on first call (one-shot delivery)
+    if (!waypointsSent) {
+        py::list wpList;
+        for (const auto& wp : waypoints) {
+            py::dict wpDict;
+            wpDict["x"] = wp.x;
+            wpDict["y"] = wp.y;
+            wpDict["z"] = wp.z;
+            wpDict["speed"] = wp.speed;
+            wpList.append(wpDict);
+        }
+        stateDict["waypoints"] = wpList;
+        stateDict["mass"] = mass;
+        stateDict["arm_length"] = armLength;
+        stateDict["Ixx"] = Ixx;
+        stateDict["Iyy"] = Iyy;
+        stateDict["Izz"] = Izz;
+        waypointsSent = true;
+    }
 
     // Include GCS command if present, then clear it (one-shot delivery)
     if (!latestGcsCommand.empty()) {
@@ -259,10 +404,13 @@ void MultirotorMobility::move()
     lastVelocity.y = state[VEL_Y];
     lastVelocity.z = state[VEL_Z];
 
-    // Set orientation from Euler angles (INET uses Z-Y'-X" convention)
+    // Set orientation from Euler angles (INET uses Z-Y'-X" convention).
+    // INET's beta = "descending" = positive means nose down / lean forward.
+    // Our dynamics: positive theta = sin(theta)*T/m gives +X accel = lean forward.
+    // Same convention — no sign flip needed.
     lastOrientation = Quaternion(EulerAngles(
         rad(state[PSI]),    // heading (yaw)
-        rad(-state[THETA]), // elevation (negative pitch, per INET convention)
+        rad(state[THETA]),  // elevation (positive = nose down, matches dynamics)
         rad(state[PHI])     // bank (roll)
     ));
 

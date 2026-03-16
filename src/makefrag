@@ -4,3 +4,6 @@ PYTHON_LDFLAGS := $(shell python3-config --ldflags --embed 2>/dev/null || python
 
 COPTS += $(PYTHON_CFLAGS)
 LIBS += $(PYTHON_LDFLAGS)
+
+# OSG libraries for 3D waypoint path visualization
+LIBS += -losg -losgDB -lOpenThreads

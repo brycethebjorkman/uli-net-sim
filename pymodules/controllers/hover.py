@@ -13,6 +13,7 @@ INI usage:
 """
 
 import json
+import math
 
 
 GRAVITY = 9.81
@@ -67,19 +68,23 @@ class HoverController:
         ax_des = self.Kp_xy * (self.target_pos[0] - pos[0]) - self.Kd_xy * vel[0]
         ay_des = self.Kp_xy * (self.target_pos[1] - pos[1]) - self.Kd_xy * vel[1]
 
-        # Convert desired acceleration to desired angles (small-angle approx)
-        # ax = g * theta  → theta_des = ax / g
-        # ay = -g * phi   → phi_des = -ay / g
-        theta_des = ax_des / GRAVITY
-        phi_des = -ay_des / GRAVITY
+        # Convert desired acceleration to desired angles (heading-aware).
+        # Rotate world-frame desired accel into body heading frame so that
+        # pitch/roll produce the correct world-frame force regardless of yaw.
+        phi, theta, psi = euler
+        p, q, r = omega
+
+        cpsi = math.cos(psi)
+        spsi = math.sin(psi)
+        ab_x = ax_des * cpsi + ay_des * spsi
+        ab_y = -ax_des * spsi + ay_des * cpsi
+
+        theta_des = ab_x / GRAVITY
+        phi_des = -ab_y / GRAVITY
 
         # Clamp desired angles
         theta_des = max(-self.max_tilt, min(self.max_tilt, theta_des))
         phi_des = max(-self.max_tilt, min(self.max_tilt, phi_des))
-
-        # --- Inner loop: angle PD → torques ---
-        phi, theta, psi = euler
-        p, q, r = omega
 
         torque_phi = self.Kp_angle * (phi_des - phi) - self.Kd_angle * p
         torque_theta = self.Kp_angle * (theta_des - theta) - self.Kd_angle * q

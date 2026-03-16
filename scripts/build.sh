@@ -69,7 +69,8 @@ opp_makemake -f --deep \
     -L'$(INET4_5_PROJ)/out/clang-release/src' \
     -L"$PYTHON_LIBDIR" \
     -lINET \
-    -lpython3.10
+    -lpython3.10 \
+    -losg -losgDB -lOpenThreads
 
 # Build
 echo "Building..."

@@ -84,8 +84,18 @@ simple MultirotorMobility extends MovingMobilityBase
         // Default thrust (N). Use -1 for hover (mass * g). Set to 0 for freefall.
         double defaultThrust = default(-1);
 
+        // Aerodynamic drag parameters
+        double dragCd = default(1.0);        // Drag coefficient (dimensionless)
+        double dragArea = default(0.2);      // Reference frontal area (m^2)
+        double airDensity = default(1.225);  // Air density (kg/m^3)
+        double rotationalDrag = default(3.0); // Rotational damping coefficient (1/s)
+
         // Python controller class (empty = hover, no Python)
         string pyClass = default("");
+
+        // Waypoint script (TurtleMobility-compatible XML: <set x y z speed/> + <moveto x y z/>)
+        // Use xmldoc("file.xml", "movements/movement[@id='N']") to load from file.
+        xml waypointScript = default(xml("<movement/>"));
 
         // Path to PyBridge module
         string pyBridgePath = default("^.^.pyBridge");

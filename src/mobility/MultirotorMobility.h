@@ -8,6 +8,7 @@
 #include <omnetpp.h>
 #include "inet/mobility/base/MovingMobilityBase.h"
 #include <Eigen/Dense>
+#include <vector>
 
 using namespace omnetpp;
 using namespace inet;
@@ -41,6 +42,10 @@ class MultirotorMobility : public MovingMobilityBase
     double armLength;
     double Ixx, Iyy, Izz;
 
+    // Aerodynamic drag
+    double dragCoeff;      // precomputed: 0.5 * airDensity * dragCd * dragArea
+    double rotationalDrag;
+
     // Integration
     double dynamicsDt;
     double controlDt;
@@ -52,6 +57,11 @@ class MultirotorMobility : public MovingMobilityBase
 
     // Latest GCS command (stored as raw JSON string, passed to Python)
     std::string latestGcsCommand;
+
+    // Waypoints parsed from waypointScript XML
+    struct Waypoint { double x, y, z, speed; };
+    std::vector<Waypoint> waypoints;
+    bool waypointsSent = false;
 
     // Python bridge
     PyBridge *pyBridge = nullptr;

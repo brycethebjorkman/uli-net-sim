@@ -95,6 +95,49 @@ inertia.
 | Roll inertia | `Ixx` | 0.5 | kg m^2 |
 | Pitch inertia | `Iyy` | 0.5 | kg m^2 |
 | Yaw inertia | `Izz` | 0.8 | kg m^2 |
+| Drag coefficient | `dragCd` | 1.0 | — |
+| Drag reference area | `dragArea` | 0.1 | m^2 |
+| Air density | `airDensity` | 1.225 | kg/m^3 |
+| Rotational drag | `rotationalDrag` | 3.0 | 1/s |
+
+## Aerodynamic Drag
+
+### Translational drag
+
+A quadratic drag force is applied in the body frame and rotated to
+the world frame, matching the model used by [NASA ProgPy](https://github.com/nasa/progpy/blob/master/src/progpy/models/aircraft_model/small_rotorcraft.py) for small rotorcraft:
+
+$$
+D_{\text{body},i} = \tfrac{1}{2}\,\rho\,C_d\,A\,v_{\text{body},i}\,|v_{\text{body},i}|
+$$
+
+where $\rho$ is air density, $C_d$ is the drag coefficient, $A$ is
+the reference frontal area, and $v_{\text{body}}$ is velocity in the
+body frame obtained by rotating the world-frame velocity with $R^T$.
+The drag force is rotated back to the world frame and subtracted from
+the translational acceleration:
+
+$$
+\ddot{\mathbf{p}} \mathrel{-}= \frac{R\,\mathbf{D}_{\text{body}}}{m}
+$$
+
+Setting `dragArea = 0` disables translational drag entirely.
+
+### Rotational drag
+
+A linear damping term is subtracted from the angular rate derivatives,
+following the [ArduPilot SITL](https://github.com/ArduPilot/ardupilot/blob/master/libraries/SITL/SIM_Frame.cpp) approach:
+
+$$
+\dot{p} \mathrel{-}= k_{\text{rot}}\,p, \quad
+\dot{q} \mathrel{-}= k_{\text{rot}}\,q, \quad
+\dot{r} \mathrel{-}= k_{\text{rot}}\,r
+$$
+
+where $k_{\text{rot}}$ (`rotationalDrag`, default $3.0 s^{-1}$)
+represents the combined aerodynamic damping on the airframe.
+ArduPilot uses $\approx 3.33 s^{-1}$
+(derived from $400 °/s$ reference at $120 °/s$ terminal rotation rate).
 
 ## Numerical Integration
 
@@ -109,23 +152,6 @@ The equations of motion are integrated using a fourth-order Runge-Kutta
   held constant between controller calls (zero-order hold).
 
 ## Limitations
-
-### No aerodynamic drag
-
-The model does not include translational or rotational drag forces. In
-the real world:
-
-- **Translational drag** (rotor drag + fuselage parasitic drag) produces
-  a decelerating force roughly proportional to velocity, commonly
-  modeled as $\mathbf{F}_{\text{drag}} = -k_d \mathbf{v}$ (linear) or
-  $\mathbf{F}_{\text{drag}} = -k_d |\mathbf{v}| \mathbf{v}$
-  (quadratic). Without this term, a drone given horizontal velocity will
-  maintain that velocity indefinitely unless the controller actively
-  corrects it.
-
-- **Rotational damping** (aerodynamic drag on spinning rotors and frame)
-  dissipates angular momentum. Without it, angular rates persist until
-  countered by control torques.
 
 ### No aerodynamic coupling
 

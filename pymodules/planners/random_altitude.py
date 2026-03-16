@@ -26,7 +26,7 @@ class RandomAltitudePlanner:
         self.alt_max = 120.0
         self.rng = random.Random(42)
 
-    def on_tick(self, data):
+    def on_gcs_tick(self, data):
         host_ids = data['host_ids']
         commands = {}
         for hid in host_ids:

@@ -37,7 +37,7 @@ class HoverController:
         # Max tilt angle (radians) — clamp desired angles for safety
         self.max_tilt = 0.5
 
-    def compute(self, state):
+    def on_ctl_tick(self, state):
         pos = state['pos']
         vel = state['vel']
         euler = state['euler']  # (phi, theta, psi)

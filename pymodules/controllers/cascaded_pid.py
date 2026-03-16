@@ -162,7 +162,7 @@ class CascadedPidController:
 
         return (cx, cy, cz)
 
-    def compute(self, state):
+    def on_ctl_tick(self, state):
         pos = state['pos']
         vel = state['vel']
         euler = state['euler']

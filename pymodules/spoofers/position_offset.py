@@ -15,7 +15,7 @@ class PositionOffsetSpoofer:
     def __init__(self):
         self.offset = (50.0, 50.0, 0.0)  # meters: east, north, up
 
-    def on_tx(self, state):
+    def on_rid_tx(self, state):
         pos = state['pos']
         return {
             'pos': (

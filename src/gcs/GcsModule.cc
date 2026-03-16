@@ -167,7 +167,7 @@ void GcsModule::processTransmission(const BeaconKey& key,
     }
 }
 
-// ── Python on_reports() callback ────────────────────────────────────────────
+// ── Python on_gcs_reports() callback ────────────────────────────────────────
 
 void GcsModule::pyOnReport(const BeaconKey& key,
                            const std::vector<GcsReport*>& reports)
@@ -201,16 +201,16 @@ void GcsModule::pyOnReport(const BeaconKey& key,
     txData["reports"] = reportList;
     txData["time"] = simTime().dbl();
 
-    // Call Python: on_reports(transmission_data) — skip if method not defined
+    // Call Python: on_gcs_reports(transmission_data) — skip if method not defined
     py::object instance = impl->getInstance(pyHandle);
-    if (!py::hasattr(instance, "on_reports"))
+    if (!py::hasattr(instance, "on_gcs_reports"))
         return;
 
-    py::object result = impl->callMethod(pyHandle, "on_reports", txData);
+    py::object result = impl->callMethod(pyHandle, "on_gcs_reports", txData);
     handlePyResult(this, result);
 }
 
-// ── Python on_tick() callback ───────────────────────────────────────────────
+// ── Python on_gcs_tick() callback ───────────────────────────────────────────
 
 void GcsModule::pyOnTick()
 {
@@ -236,10 +236,10 @@ void GcsModule::pyOnTick()
 
     // Skip if method not defined
     py::object instance = impl->getInstance(pyHandle);
-    if (!py::hasattr(instance, "on_tick"))
+    if (!py::hasattr(instance, "on_gcs_tick"))
         return;
 
-    py::object result = impl->callMethod(pyHandle, "on_tick", data);
+    py::object result = impl->callMethod(pyHandle, "on_gcs_tick", data);
     handlePyResult(this, result);
 }
 

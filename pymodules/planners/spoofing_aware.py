@@ -7,7 +7,7 @@ class SpoofingAwarePlanner:
         self._federate_ids = set()
         self.rng = random.Random(42)
 
-    def on_tick(self, data):
+    def on_gcs_tick(self, data):
         host_ids = data['host_ids']
         commands = {}
         for hid in host_ids:
@@ -21,7 +21,7 @@ class SpoofingAwarePlanner:
             },
         }
 
-    def on_reports(self, data):
+    def on_gcs_reports(self, data):
         serial = data['serial_number']
         reports = data['reports']
 

@@ -361,8 +361,8 @@ void RidBeaconMgmt::callPyTxHook(const inet::Ptr<RidBeaconFrame>& body)
     txState["serial"]  = body->getSerialNumber();
     txState["time"]    = simTime().dbl();
 
-    // Call on_tx(state)
-    py::object result = impl->callMethod(pyTxHandle, "on_tx", txState);
+    // Call on_rid_tx(state)
+    py::object result = impl->callMethod(pyTxHandle, "on_rid_tx", txState);
 
     // If result is a dict, overwrite beacon fields
     if (!result.is_none() && py::isinstance<py::dict>(result)) {

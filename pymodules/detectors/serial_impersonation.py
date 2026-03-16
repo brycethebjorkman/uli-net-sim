@@ -31,7 +31,7 @@ class SerialImpersonationDetector:
         self._federate_ids = set()
         self._detections = 0
 
-    def on_reports(self, data):
+    def on_gcs_reports(self, data):
         serial = data['serial_number']
         reports = data['reports']
 

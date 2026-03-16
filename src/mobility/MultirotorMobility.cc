@@ -341,8 +341,8 @@ void MultirotorMobility::callPythonController()
         stateDict["gcs_command"] = py::none();
     }
 
-    // Call controller.compute(state)
-    py::object result = impl->callMethod(pyHandle, "compute", stateDict);
+    // Call controller.on_ctl_tick(state)
+    py::object result = impl->callMethod(pyHandle, "on_ctl_tick", stateDict);
 
     // Parse result dict
     if (!result.is_none() && py::isinstance<py::dict>(result)) {

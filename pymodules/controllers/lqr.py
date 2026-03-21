@@ -16,6 +16,7 @@ INI usage:
     *.host[0].mobility.waypointScript = xmldoc("traj.xml", ...)
 """
 
+import json
 import math
 import numpy as np
 from scipy.linalg import solve_continuous_are
@@ -243,6 +244,41 @@ class LqrController:
             for i in range(6)
         )
 
+    def _handle_gcs_command(self, pos, t, cmd_str):
+        """Parse and execute a GCS command (JSON string from state['gcs_command'])."""
+        if cmd_str is None or not isinstance(cmd_str, str):
+            return
+        try:
+            cmd = json.loads(cmd_str)
+        except (json.JSONDecodeError, TypeError):
+            return
+
+        task = cmd.get('task')
+
+        if task == 'hold':
+            self.target = pos
+            self.ref_trajectory = None
+            self.hovering = True
+
+        elif task == 'goto':
+            target = (cmd['x'], cmd['y'], cmd['z'])
+            self.speed = cmd.get('speed', self.speed)
+            self.waypoints = [pos, target]
+            self.target = target
+            self.ref_trajectory = self._build_reference_trajectory(t)
+            self.hovering = False
+
+        elif task == 'waypoints':
+            wps = cmd['waypoints']
+            self.waypoints = [(w['x'], w['y'], w['z']) for w in wps]
+            self.speed = wps[0].get('speed', self.speed)
+            self.target = self.waypoints[-1]
+            self.ref_trajectory = self._build_reference_trajectory(t)
+            if len(self.waypoints) <= 1:
+                self.hovering = True
+            else:
+                self.hovering = False
+
     def on_ctl_tick(self, state):
         pos = state['pos']
         vel = state['vel']
@@ -278,6 +314,9 @@ class LqrController:
                 self.hovering = True
 
             return {'thrust': self.mass * GRAVITY}
+
+        # --- GCS command handling ---
+        self._handle_gcs_command(pos, t, state['gcs_command'])
 
         # --- Look up reference state ---
         if self.ref_trajectory and not self.hovering:

@@ -270,7 +270,7 @@ class LqrController:
 
         elif task == 'waypoints':
             wps = cmd['waypoints']
-            self.waypoints = [(w['x'], w['y'], w['z']) for w in wps]
+            self.waypoints = [pos] + [(w['x'], w['y'], w['z']) for w in wps]
             self.speed = wps[0].get('speed', self.speed)
             self.target = self.waypoints[-1]
             self.ref_trajectory = self._build_reference_trajectory(t)

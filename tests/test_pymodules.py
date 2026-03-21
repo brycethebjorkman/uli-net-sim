@@ -728,3 +728,106 @@ def test_py_trajectory_altitude_tracking(py_trajectory_outputs):
         f"Host 1 never reached altitude 70m (max={max(zv):.1f}m)"
     assert abs(zv[-1] - 40.0) < 5.0, \
         f"Host 1 didn't settle near 40m (final={zv[-1]:.1f}m)"
+
+
+# ---------------------------------------------------------------------------
+# LQR + GCS commands fixture and tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def py_lqr_gcs_outputs():
+    """Run PyLqrGcsTest and export vectors."""
+    out = TEST_OUT / "lqr_gcs"
+    if out.exists():
+        shutil.rmtree(out)
+    result_dir = out / "results"
+    vec_file = _run_sim("PyLqrGcsTest", result_dir)
+    vectors = extract_our_vectors(vec_file)
+
+    return {
+        "vec_file": vec_file,
+        "vectors": vectors,
+    }
+
+
+def test_py_lqr_gcs_vec_hashes(py_lqr_gcs_outputs):
+    _check_hashes(py_lqr_gcs_outputs["vectors"],
+                  "py_lqr_gcs", "PyLqrGcsTest")
+
+
+def test_py_lqr_gcs_goto_heading(py_lqr_gcs_outputs):
+    """After goto (240, 240, 55) at t=2s, host 0 should move toward target."""
+    vectors = py_lqr_gcs_outputs["vectors"]
+
+    xt, xv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My X Coordinate")
+    _t, yv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Y Coordinate")
+
+    # Distance to target should decrease between t=3s and t=6s
+    target = (240.0, 240.0)
+    dists = {}
+    for i in range(len(xt)):
+        if xt[i] in (3.0, 6.0):
+            dists[xt[i]] = math.sqrt((xv[i] - target[0])**2 + (yv[i] - target[1])**2)
+
+    assert 3.0 in dists and 6.0 in dists, "Missing samples at t=3s or t=6s"
+    assert dists[6.0] < dists[3.0], \
+        f"Host 0 not moving toward goto target: d(t=3)={dists[3.0]:.1f}, d(t=6)={dists[6.0]:.1f}"
+
+
+def test_py_lqr_gcs_hold_stable(py_lqr_gcs_outputs):
+    """After hold at t=6s, host 0 position should stabilize (low velocity).
+
+    LQR is softer than CascadedPID — allow wider tolerance during deceleration.
+    """
+    vectors = py_lqr_gcs_outputs["vectors"]
+
+    xt, xv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My X Coordinate")
+    _t, yv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Y Coordinate")
+
+    # Samples between t=8s and t=10s (2-4s after hold command)
+    positions = [(xv[i], yv[i]) for i in range(len(xt)) if 8.0 <= xt[i] <= 10.0]
+    if len(positions) >= 2:
+        x_vals = [p[0] for p in positions]
+        y_vals = [p[1] for p in positions]
+        x_spread = max(x_vals) - min(x_vals)
+        y_spread = max(y_vals) - min(y_vals)
+        assert x_spread < 60.0 and y_spread < 60.0, \
+            f"Host 0 not holding position: x_spread={x_spread:.1f}, y_spread={y_spread:.1f}"
+
+
+def test_py_lqr_gcs_waypoints_followed(py_lqr_gcs_outputs):
+    """After waypoints command at t=10s, host 0 should resume moving toward (270,270,65)."""
+    vectors = py_lqr_gcs_outputs["vectors"]
+
+    xt, xv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My X Coordinate")
+    _t, yv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Y Coordinate")
+    _t, zv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Z Coordinate")
+
+    # After waypoints command (t=10s), check samples from t=14s onward
+    late_x = [xv[i] for i in range(len(xt)) if xt[i] >= 14.0]
+    late_y = [yv[i] for i in range(len(xt)) if xt[i] >= 14.0]
+    late_z = [zv[i] for i in range(len(xt)) if xt[i] >= 12.0]
+
+    assert late_x, "No samples after t=14s"
+    # X and Y should be moving toward waypoint targets (250→270→290)
+    assert max(late_x) > min(late_x) + 5.0, \
+        f"Host 0 X not progressing after waypoints: range={min(late_x):.1f}-{max(late_x):.1f}"
+    # Altitude should stay reasonable (not crash through ground)
+    assert min(late_z) > 20.0, \
+        f"Host 0 altitude dropped too low after waypoints (min={min(late_z):.1f}m)"
+
+
+def test_py_lqr_gcs_tick_count(py_lqr_gcs_outputs):
+    """GCS should record 15 ticks (30s sim / 2s interval)."""
+    vectors = py_lqr_gcs_outputs["vectors"]
+    _times, values = _get_vector(vectors, "gcs[0]", "tick_count")
+
+    assert len(values) == 15, f"Expected 15 ticks, got {len(values)}"
+    assert values[-1] == 15.0, f"Last tick_count should be 15, got {values[-1]}"

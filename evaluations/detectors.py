@@ -140,6 +140,65 @@ class PositionErrorKF:
 FSPL_CONSTANT_DB = 40.04
 
 
+def multilaterate_with_tx_power(
+    receivers: np.ndarray,
+    rssi_values: np.ndarray,
+    initial_pos: np.ndarray,
+) -> tuple[np.ndarray | None, float | None]:
+    """
+    Jointly estimate transmitter position and TX power using nonlinear least squares.
+
+    Uses the 2.4 GHz free space path loss model:
+        RSSI = P_tx - 20*log10(d) - 40.04
+
+    Solves for (x, y, z, P_tx) that minimizes the sum of squared residuals.
+
+    Args:
+        receivers: (N, 3) array of receiver positions
+        rssi_values: (N,) array of RSSI measurements (dBm)
+        initial_pos: (3,) initial position guess (e.g., claimed position)
+
+    Returns:
+        Tuple of (estimated_pos, estimated_tx_power) or (None, None) if failed.
+        estimated_pos is a (3,) array, estimated_tx_power is a float in dBm.
+    """
+    n = len(rssi_values)
+    if n < 4:  # Need at least 4 measurements for 4 unknowns
+        return None, None
+
+    def residuals(params):
+        pos = params[:3]
+        tx_power = params[3]
+        distances = np.linalg.norm(receivers - pos, axis=1)
+        distances = np.maximum(distances, 0.1)  # Avoid log(0)
+        expected_rssi = tx_power - 20.0 * np.log10(distances) - FSPL_CONSTANT_DB
+        return rssi_values - expected_rssi
+
+    # Initial guess: claimed position + median TX power estimate
+    distances_init = np.linalg.norm(receivers - initial_pos, axis=1)
+    distances_init = np.maximum(distances_init, 0.1)
+    tx_power_init = np.median(rssi_values + 20.0 * np.log10(distances_init) + FSPL_CONSTANT_DB)
+
+    x0 = np.concatenate([initial_pos, [tx_power_init]])
+
+    bounds = (
+        [-np.inf, -np.inf, -np.inf, -50],
+        [np.inf, np.inf, np.inf, 50],
+    )
+
+    try:
+        result = least_squares(
+            residuals, x0, bounds=bounds,
+            method='trf', max_nfev=100,
+        )
+        if result.success or result.cost < 100:
+            return result.x[:3], result.x[3]
+        else:
+            return None, None
+    except Exception:
+        return None, None
+
+
 @dataclass
 class MultilatDetector(Detector):
     """
@@ -230,7 +289,7 @@ class MultilatDetector(Detector):
             claimed_pos = scenario.rid_pos[federate_indices[0]]  # Same for all RX of this TX
 
             # Jointly estimate position and TX power
-            estimated_pos, estimated_tx_power = self._multilaterate_with_tx_power(
+            estimated_pos, estimated_tx_power = multilaterate_with_tx_power(
                 rx_positions, rssi_values, claimed_pos
             )
 
@@ -255,81 +314,6 @@ class MultilatDetector(Detector):
                 scores[i] = filtered_error
 
         return scores
-
-    def _multilaterate_with_tx_power(
-        self,
-        receivers: np.ndarray,
-        rssi_values: np.ndarray,
-        initial_pos: np.ndarray,
-    ) -> tuple[np.ndarray | None, float | None]:
-        """
-        Jointly estimate transmitter position and TX power using nonlinear least squares.
-
-        Uses the 2.4 GHz free space path loss model (matching KF detector):
-            RSSI = P_tx - 20*log10(d) - 40.04
-
-        Solves for (x, y, z, P_tx) that minimizes the sum of squared residuals.
-
-        Args:
-            receivers: (N, 3) array of receiver positions
-            rssi_values: (N,) array of RSSI measurements (dBm)
-            initial_pos: Initial position guess (e.g., claimed position)
-
-        Returns:
-            Tuple of (estimated_pos, estimated_tx_power) or (None, None) if failed
-        """
-        n = len(rssi_values)
-        if n < 4:  # Need at least 4 measurements for 4 unknowns
-            return None, None
-
-        def residuals(params):
-            """Compute residuals for least squares optimization."""
-            pos = params[:3]
-            tx_power = params[3]
-
-            # Distances from estimated position to each receiver
-            distances = np.linalg.norm(receivers - pos, axis=1)
-            distances = np.maximum(distances, 0.1)  # Avoid log(0)
-
-            # Expected RSSI using 2.4 GHz FSPL model: RSSI = P_tx - 20*log10(d) - 40.04
-            expected_rssi = tx_power - 20.0 * np.log10(distances) - FSPL_CONSTANT_DB
-
-            # Residuals
-            return rssi_values - expected_rssi
-
-        # Initial guess: claimed position + median TX power estimate
-        distances_init = np.linalg.norm(receivers - initial_pos, axis=1)
-        distances_init = np.maximum(distances_init, 0.1)
-        # P_tx = RSSI + 20*log10(d) + 40.04
-        tx_power_init = np.median(rssi_values + 20.0 * np.log10(distances_init) + FSPL_CONSTANT_DB)
-
-        x0 = np.concatenate([initial_pos, [tx_power_init]])
-
-        # Bounds: position can be anywhere, TX power -50 to 50 dBm (wide range to handle model mismatch)
-        bounds = (
-            [-np.inf, -np.inf, -np.inf, -50],  # Lower bounds
-            [np.inf, np.inf, np.inf, 50],      # Upper bounds
-        )
-
-        try:
-            result = least_squares(
-                residuals,
-                x0,
-                bounds=bounds,
-                method='trf',  # Trust Region Reflective
-                max_nfev=100,  # Limit iterations for speed
-            )
-
-            if result.success or result.cost < 100:  # Accept if converged or low cost
-                estimated_pos = result.x[:3]
-                estimated_tx_power = result.x[3]
-                return estimated_pos, estimated_tx_power
-            else:
-                return None, None
-
-        except Exception:
-            return None, None
-
 
 def _make_mlp(input_dim: int, hidden_dims: list[int]):
     """

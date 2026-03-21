@@ -24,7 +24,7 @@ GRAVITY = 9.81
 
 
 class LqrController:
-    """LQR controller with hover-point linearization."""
+    """LQR controller with hover-point linearization and trajectory tracking."""
 
     def __init__(self):
         self.mass = 5.0
@@ -39,6 +39,11 @@ class LqrController:
         self.target = None   # current hover/goto target (x, y, z)
         self.K = None         # gain matrix (4x12)
         self.initialized = False
+        self.last_time = None
+
+        # Trajectory tracking state
+        self.ref_trajectory = None  # list of (t, px, py, pz, vx, vy, vz)
+        self.hovering = False
 
     def _compute_gain(self):
         """Compute LQR gain K by linearizing dynamics at hover and solving CARE.
@@ -119,35 +124,136 @@ class LqrController:
         B[11, 3] = L / Izz         # d(r_dot)/d(tau_psi)
 
         # Q matrix: state error penalty
-        # Position: high weight; velocity: medium; angles: medium; rates: low
+        # Position: high weight; velocity: high (to avoid overshoot); angles: medium; rates: medium
         Q = np.diag([
-            20.0, 20.0, 30.0,    # x, y, z position
-            5.0,  5.0,  8.0,     # vx, vy, vz velocity
-            10.0, 10.0, 5.0,     # phi, theta, psi angles
-            1.0,  1.0,  1.0,     # p, q, r angular rates
+            40.0, 40.0, 60.0,    # x, y, z position
+            20.0, 20.0, 30.0,    # vx, vy, vz velocity (high to damp oscillation)
+            15.0, 15.0, 5.0,     # phi, theta, psi angles
+            5.0,  5.0,  3.0,     # p, q, r angular rates
         ])
 
         # R matrix: control effort penalty
         R = np.diag([
-            1.0,   # thrust
-            10.0,  # tau_phi  (penalize torques more to avoid aggressive tilting)
-            10.0,  # tau_theta
-            10.0,  # tau_psi
+            0.5,   # thrust (lower = more responsive altitude)
+            20.0,  # tau_phi  (penalize torques to avoid aggressive tilting)
+            20.0,  # tau_theta
+            20.0,  # tau_psi
         ])
 
         # Solve continuous algebraic Riccati equation: A'P + PA - PBR^{-1}B'P + Q = 0
         P = solve_continuous_are(A, B, Q, R)
         self.K = np.linalg.solve(R, B.T @ P)  # K = R^{-1} B' P
 
+    def _build_reference_trajectory(self, t0):
+        """Pre-compute reference trajectory from waypoints.
+
+        Generates (time, px, py, pz, vx, vy, vz) samples at 0.01s intervals
+        along straight-line segments between waypoints. Uses a trapezoidal
+        speed profile that decelerates before each waypoint to avoid
+        instantaneous velocity discontinuities at corners.
+        """
+        if len(self.waypoints) <= 1:
+            return None
+
+        ref = []
+        t = t0
+        dt_ref = 0.01
+        max_accel = 5.0  # m/s^2 deceleration rate
+
+        for seg_idx in range(1, len(self.waypoints)):
+            wp_prev = self.waypoints[seg_idx - 1]
+            wp_curr = self.waypoints[seg_idx]
+            dx = wp_curr[0] - wp_prev[0]
+            dy = wp_curr[1] - wp_prev[1]
+            dz = wp_curr[2] - wp_prev[2]
+            seg_len = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if seg_len < 1e-6:
+                continue
+
+            ux, uy, uz = dx / seg_len, dy / seg_len, dz / seg_len
+            is_last = (seg_idx == len(self.waypoints) - 1)
+
+            # Walk along segment with trapezoidal speed profile
+            s = 0.0  # distance traveled along segment
+            v = 0.0  # current speed (start from rest on first segment)
+            if ref:
+                # Continue from previous segment's ending speed
+                prev = ref[-1]
+                v = math.sqrt(prev[4]**2 + prev[5]**2 + prev[6]**2)
+
+            while s < seg_len:
+                remaining = seg_len - s
+                # Deceleration speed limit: v_decel = sqrt(2*a*remaining)
+                # Only decelerate toward zero on the last segment
+                if is_last:
+                    v_decel = math.sqrt(2.0 * max_accel * remaining) if remaining > 0 else 0.0
+                else:
+                    # At non-final waypoints, decelerate to a turning speed
+                    turn_speed = self.speed * 0.5
+                    v_decel = max(turn_speed,
+                                  math.sqrt(2.0 * max_accel * remaining) if remaining > 0 else 0.0)
+
+                # Accelerate toward cruise, limited by decel constraint
+                v = min(v + max_accel * dt_ref, self.speed, v_decel)
+                v = max(v, 0.0)
+
+                frac = s / seg_len
+                px = wp_prev[0] + frac * dx
+                py = wp_prev[1] + frac * dy
+                pz = wp_prev[2] + frac * dz
+                ref.append((t, px, py, pz, v * ux, v * uy, v * uz))
+
+                s += v * dt_ref
+                t += dt_ref
+
+        # Final waypoint: hover
+        wp_final = self.waypoints[-1]
+        ref.append((t, wp_final[0], wp_final[1], wp_final[2], 0.0, 0.0, 0.0))
+        return ref
+
+    def _lookup_reference(self, t):
+        """Find reference state at time t via binary search."""
+        ref = self.ref_trajectory
+        if not ref:
+            return self.target + (0.0, 0.0, 0.0)
+
+        # Clamp to trajectory bounds
+        if t <= ref[0][0]:
+            return ref[0][1:]  # (px, py, pz, vx, vy, vz)
+        if t >= ref[-1][0]:
+            self.hovering = True
+            return ref[-1][1:]
+
+        # Binary search
+        lo, hi = 0, len(ref) - 1
+        while lo < hi - 1:
+            mid = (lo + hi) // 2
+            if ref[mid][0] <= t:
+                lo = mid
+            else:
+                hi = mid
+
+        # Linear interpolation between lo and hi
+        t0, t1 = ref[lo][0], ref[hi][0]
+        if t1 - t0 < 1e-9:
+            return ref[lo][1:]
+        alpha = (t - t0) / (t1 - t0)
+        return tuple(
+            ref[lo][i + 1] + alpha * (ref[hi][i + 1] - ref[lo][i + 1])
+            for i in range(6)
+        )
+
     def on_ctl_tick(self, state):
         pos = state['pos']
         vel = state['vel']
         euler = state['euler']
         omega = state['omega']
+        t = state['time']
 
         # --- First call: extract params and compute gain ---
         if not self.initialized:
             self.initialized = True
+            self.last_time = t
             self.mass = state.get('mass', 5.0)
             self.arm_length = state.get('arm_length', 0.5)
             self.Ixx = state.get('Ixx', 0.5)
@@ -158,31 +264,64 @@ class LqrController:
             if wps:
                 self.waypoints = [(w['x'], w['y'], w['z']) for w in wps]
                 self.speed = wps[0].get('speed', 10.0)
-                # Start by hovering at first waypoint
                 self.target = self.waypoints[0]
             else:
                 self.target = pos
 
             self._compute_gain()
+
+            # Build reference trajectory if we have multiple waypoints
+            if len(self.waypoints) > 1:
+                self.ref_trajectory = self._build_reference_trajectory(t)
+                self.hovering = False
+            else:
+                self.hovering = True
+
             return {'thrust': self.mass * GRAVITY}
 
-        # --- Build state error vector ---
-        tx, ty, tz = self.target
+        # --- Look up reference state ---
+        if self.ref_trajectory and not self.hovering:
+            px, py, pz, vx_ref, vy_ref, vz_ref = self._lookup_reference(t)
+        else:
+            px, py, pz = self.target
+            vx_ref, vy_ref, vz_ref = 0.0, 0.0, 0.0
+
+        # --- Build state error vector (tracking error) ---
         x_err = np.array([
-            pos[0] - tx, pos[1] - ty, pos[2] - tz,
-            vel[0], vel[1], vel[2],
+            pos[0] - px, pos[1] - py, pos[2] - pz,
+            vel[0] - vx_ref, vel[1] - vy_ref, vel[2] - vz_ref,
             euler[0], euler[1], euler[2],
             omega[0], omega[1], omega[2],
         ])
 
         # --- LQR control: u = u_hover - K * x_err ---
         u_correction = self.K @ x_err
-        thrust = self.mass * GRAVITY - u_correction[0]
-        thrust = max(0.0, thrust)
+
+        mg = self.mass * GRAVITY
+        thrust = mg - u_correction[0]
+
+        # Tilt compensation: during tilted flight, effective vertical thrust
+        # is T*cos(phi)*cos(theta). Scale up to maintain vertical authority.
+        phi, theta = euler[0], euler[1]
+        cos_tilt = math.cos(phi) * math.cos(theta)
+        if cos_tilt > 0.3:  # don't compensate at extreme tilt (>~73°)
+            thrust /= cos_tilt
+
+        thrust = max(0.0, min(thrust, 4.0 * mg))  # clamp to [0, 4*mg]
+
+        # Clamp torques. Scale limits by inertia/arm so angular acceleration
+        # stays bounded regardless of airframe.
+        L = self.arm_length
+        max_torque_phi = 5.0 * self.Ixx / L if L > 1e-6 else 50.0
+        max_torque_theta = 5.0 * self.Iyy / L if L > 1e-6 else 50.0
+        max_torque_psi = 5.0 * self.Izz / L if L > 1e-6 else 50.0
+        torque_phi = max(-max_torque_phi, min(max_torque_phi, -u_correction[1]))
+        torque_theta = max(-max_torque_theta, min(max_torque_theta, -u_correction[2]))
+        torque_psi = max(-max_torque_psi, min(max_torque_psi, -u_correction[3]))
 
         return {
             'thrust': thrust,
-            'torque_phi': -u_correction[1],
-            'torque_theta': -u_correction[2],
-            'torque_psi': -u_correction[3],
+            'torque_phi': torque_phi,
+            'torque_theta': torque_theta,
+            'torque_psi': torque_psi,
         }

@@ -608,6 +608,72 @@ def test_py_lqr_hover_converges(py_lqr_hover_outputs):
         f"Host 0 not converging: early_max={early:.1f}m, late_max={late:.1f}m"
 
 
+# ---------------------------------------------------------------------------
+# LQR trajectory controller fixture and tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def py_lqr_trajectory_outputs():
+    """Run PyLqrTrajectoryTest and export vectors."""
+    out = TEST_OUT / "lqr_trajectory"
+    if out.exists():
+        shutil.rmtree(out)
+    result_dir = out / "results"
+    vec_file = _run_sim("PyLqrTrajectoryTest", result_dir)
+    vectors = extract_our_vectors(vec_file)
+
+    return {
+        "vec_file": vec_file,
+        "vectors": vectors,
+    }
+
+
+def test_py_lqr_trajectory_vec_hashes(py_lqr_trajectory_outputs):
+    _check_hashes(py_lqr_trajectory_outputs["vectors"],
+                  "py_lqr_trajectory", "PyLqrTrajectoryTest")
+
+
+def test_py_lqr_trajectory_reaches_waypoints(py_lqr_trajectory_outputs):
+    """Host 0 should pass within 15m of each waypoint during trajectory."""
+    vectors = py_lqr_trajectory_outputs["vectors"]
+
+    waypoints = [(200, 100, 50), (200, 200, 60), (200, 300, 50)]
+
+    xt, xv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My X Coordinate")
+    _t, yv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Y Coordinate")
+    _t, zv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Z Coordinate")
+
+    for wp in waypoints:
+        min_dist = min(
+            math.sqrt((xv[i] - wp[0])**2 + (yv[i] - wp[1])**2 +
+                       (zv[i] - wp[2])**2)
+            for i in range(len(xv))
+        )
+        assert min_dist < 15.0, \
+            f"Host 0 never reached within 15m of {wp} (min_dist={min_dist:.1f}m)"
+
+
+def test_py_lqr_trajectory_altitude_tracking(py_lqr_trajectory_outputs):
+    """Host 0 altitude should follow reference during trajectory (t < 35s)."""
+    vectors = py_lqr_trajectory_outputs["vectors"]
+
+    xt, zv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Z Coordinate")
+
+    # During active trajectory (t=5 to t=30), altitude should stay within 15m of 50-60m
+    for i in range(len(xt)):
+        if 5.0 <= xt[i] <= 30.0:
+            assert 30.0 < zv[i] < 80.0, \
+                f"Host 0 altitude out of range at t={xt[i]:.1f}: {zv[i]:.1f}m"
+
+
+# ---------------------------------------------------------------------------
+# CascadedPID trajectory controller fixture and tests
+# ---------------------------------------------------------------------------
+
 def test_py_trajectory_vec_hashes(py_trajectory_outputs):
     _check_hashes(py_trajectory_outputs["vectors"],
                   "py_trajectory", "PyTrajectoryTest")

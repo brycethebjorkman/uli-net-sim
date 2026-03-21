@@ -417,6 +417,110 @@ def test_py_planner_perturbed_different_trajectories(py_planner_perturbed_output
 
 
 # ---------------------------------------------------------------------------
+# CascadedPID GCS command fixture and tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def py_cascaded_gcs_outputs():
+    """Run PyCascadedPidGcsTest and export vectors."""
+    out = TEST_OUT / "cascaded_gcs"
+    if out.exists():
+        shutil.rmtree(out)
+    result_dir = out / "results"
+    vec_file = _run_sim("PyCascadedPidGcsTest", result_dir)
+    vectors = extract_our_vectors(vec_file)
+
+    return {
+        "vec_file": vec_file,
+        "vectors": vectors,
+    }
+
+
+def test_py_cascaded_gcs_vec_hashes(py_cascaded_gcs_outputs):
+    _check_hashes(py_cascaded_gcs_outputs["vectors"],
+                  "py_cascaded_gcs", "PyCascadedPidGcsTest")
+
+
+def test_py_cascaded_gcs_goto_heading(py_cascaded_gcs_outputs):
+    """After goto (250, 250, 60) at t=2s, host 0 should move toward target."""
+    vectors = py_cascaded_gcs_outputs["vectors"]
+
+    xt, xv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My X Coordinate")
+    _t, yv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Y Coordinate")
+
+    # Distance to target should decrease between t=3s and t=6s
+    target = (250.0, 250.0)
+    dists = {}
+    for i in range(len(xt)):
+        if xt[i] in (3.0, 6.0):
+            dists[xt[i]] = math.sqrt((xv[i] - target[0])**2 + (yv[i] - target[1])**2)
+
+    assert 3.0 in dists and 6.0 in dists, "Missing samples at t=3s or t=6s"
+    assert dists[6.0] < dists[3.0], \
+        f"Host 0 not moving toward goto target: d(t=3)={dists[3.0]:.1f}, d(t=6)={dists[6.0]:.1f}"
+
+
+def test_py_cascaded_gcs_hold_stable(py_cascaded_gcs_outputs):
+    """After hold at t=6s, host 0 position should stabilize (low velocity)."""
+    vectors = py_cascaded_gcs_outputs["vectors"]
+
+    xt, xv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My X Coordinate")
+    _t, yv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Y Coordinate")
+
+    # Samples between t=8s and t=10s (2-4s after hold command)
+    positions = [(xv[i], yv[i]) for i in range(len(xt)) if 8.0 <= xt[i] <= 10.0]
+    if len(positions) >= 2:
+        # Position spread should be small (drone is holding)
+        x_vals = [p[0] for p in positions]
+        y_vals = [p[1] for p in positions]
+        x_spread = max(x_vals) - min(x_vals)
+        y_spread = max(y_vals) - min(y_vals)
+        assert x_spread < 30.0 and y_spread < 30.0, \
+            f"Host 0 not holding position: x_spread={x_spread:.1f}, y_spread={y_spread:.1f}"
+
+
+def test_py_cascaded_gcs_waypoints_followed(py_cascaded_gcs_outputs):
+    """After waypoints command at t=10s, host 0 should resume moving and reach ~60m altitude."""
+    vectors = py_cascaded_gcs_outputs["vectors"]
+
+    xt, xv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My X Coordinate")
+    _t, yv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Y Coordinate")
+    _t, zv = _get_vector(vectors, "host[0].wlan[0].mgmt",
+                         "Transmission My Z Coordinate")
+
+    # After waypoints command, drone should move steadily (X/Y increasing toward 300,300)
+    # and altitude should rise toward 60-80m (first wp at z=60, second at z=80)
+    late_x = [xv[i] for i in range(len(xt)) if xt[i] >= 20.0]
+    late_y = [yv[i] for i in range(len(xt)) if xt[i] >= 20.0]
+    late_z = [zv[i] for i in range(len(xt)) if xt[i] >= 14.0]
+
+    assert late_x, "No samples after t=20s"
+    # X and Y should be increasing (heading toward 300, 300)
+    assert late_x[-1] > late_x[0], \
+        f"Host 0 X not increasing after waypoints: {late_x[0]:.1f} -> {late_x[-1]:.1f}"
+    assert late_y[-1] > late_y[0], \
+        f"Host 0 Y not increasing after waypoints: {late_y[0]:.1f} -> {late_y[-1]:.1f}"
+    # Altitude should reach near 60m (first waypoint target)
+    assert max(late_z) > 55.0, \
+        f"Host 0 altitude didn't reach 55m after waypoints (max={max(late_z):.1f}m)"
+
+
+def test_py_cascaded_gcs_tick_count(py_cascaded_gcs_outputs):
+    """GCS should record 15 ticks (30s sim / 2s interval)."""
+    vectors = py_cascaded_gcs_outputs["vectors"]
+    _times, values = _get_vector(vectors, "gcs[0]", "tick_count")
+
+    assert len(values) == 15, f"Expected 15 ticks, got {len(values)}"
+    assert values[-1] == 15.0, f"Last tick_count should be 15, got {values[-1]}"
+
+
+# ---------------------------------------------------------------------------
 # Trajectory controller fixture and tests
 # ---------------------------------------------------------------------------
 

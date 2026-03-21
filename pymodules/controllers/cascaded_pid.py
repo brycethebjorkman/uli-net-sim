@@ -15,6 +15,7 @@ INI usage:
     *.host[0].mobility.waypointScript = xmldoc("traj.xml", "movements/movement[@id='0']")
 """
 
+import json
 import math
 
 
@@ -87,6 +88,57 @@ class CascadedPidController:
         # Precomputed segment geometry
         self._seg_dir = (1.0, 0.0, 0.0)
         self._seg_len = 0.0
+
+    def _handle_gcs_command(self, pos, cmd_str):
+        """Parse and execute a GCS command (JSON string from state['gcs_command'])."""
+        if cmd_str is None or not isinstance(cmd_str, str):
+            return
+        try:
+            cmd = json.loads(cmd_str)
+        except (json.JSONDecodeError, TypeError):
+            return
+
+        task = cmd.get('task')
+
+        if task == 'hold':
+            # Hold at current position
+            self.hovering = True
+            self.waypoints = [pos] if not self.waypoints else self.waypoints
+            self.seg_index = max(self.seg_index, len(self.waypoints) - 1)
+            # Park the carrot at the hold waypoint
+            if self.waypoints:
+                self.waypoints[self.seg_index] = pos
+            self.vel_integral = [0.0, 0.0, 0.0]
+
+        elif task == 'goto':
+            # Fly from current position to target
+            target = (cmd['x'], cmd['y'], cmd['z'])
+            speed = cmd.get('speed', self.speed)
+            self.waypoints = [pos, target]
+            self.speed = speed
+            self.seg_index = 1
+            self.carrot_s = 0.0
+            self.carrot_speed = 0.0
+            self.track_dt_scalar = 1.0
+            self.vel_integral = [0.0, 0.0, 0.0]
+            self.hovering = False
+            self._setup_segment()
+
+        elif task == 'waypoints':
+            # Replace entire waypoint list
+            wps = cmd['waypoints']
+            self.waypoints = [(w['x'], w['y'], w['z']) for w in wps]
+            self.speed = wps[0].get('speed', self.speed)
+            self.seg_index = 1
+            self.carrot_s = 0.0
+            self.carrot_speed = 0.0
+            self.track_dt_scalar = 1.0
+            self.vel_integral = [0.0, 0.0, 0.0]
+            if len(self.waypoints) <= 1:
+                self.hovering = True
+            else:
+                self.hovering = False
+                self._setup_segment()
 
     def _setup_segment(self):
         """Precompute direction and length for the current segment."""
@@ -200,6 +252,9 @@ class CascadedPidController:
                 self._setup_segment()
 
             return {'thrust': self.mass * GRAVITY}
+
+        # --- GCS command handling ---
+        self._handle_gcs_command(pos, state['gcs_command'])
 
         # --- dt ---
         dt = t - self.last_time

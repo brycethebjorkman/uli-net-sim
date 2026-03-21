@@ -521,6 +521,26 @@ def test_py_cascaded_gcs_tick_count(py_cascaded_gcs_outputs):
 
 
 # ---------------------------------------------------------------------------
+# LQR hover controller fixture and tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def py_lqr_hover_outputs():
+    """Run PyLqrHoverTest and export vectors."""
+    out = TEST_OUT / "lqr_hover"
+    if out.exists():
+        shutil.rmtree(out)
+    result_dir = out / "results"
+    vec_file = _run_sim("PyLqrHoverTest", result_dir)
+    vectors = extract_our_vectors(vec_file)
+
+    return {
+        "vec_file": vec_file,
+        "vectors": vectors,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Trajectory controller fixture and tests
 # ---------------------------------------------------------------------------
 
@@ -538,6 +558,54 @@ def py_trajectory_outputs():
         "vec_file": vec_file,
         "vectors": vectors,
     }
+
+
+def test_py_lqr_hover_vec_hashes(py_lqr_hover_outputs):
+    _check_hashes(py_lqr_hover_outputs["vectors"],
+                  "py_lqr_hover", "PyLqrHoverTest")
+
+
+def test_py_lqr_hover_position_bounded(py_lqr_hover_outputs):
+    """Host 0 (perturbed vx=3, vy=-2, vz=1) should stay within 20m of (100,100,50)."""
+    vectors = py_lqr_hover_outputs["vectors"]
+
+    for coord, target in [("Transmission My X Coordinate", 100.0),
+                          ("Transmission My Y Coordinate", 100.0),
+                          ("Transmission My Z Coordinate", 50.0)]:
+        times, values = _get_vector(vectors, "host[0].wlan[0].mgmt", coord)
+        for i, v in enumerate(values):
+            assert abs(v - target) < 20.0, \
+                f"host[0] {coord} at t={times[i]:.1f}: {v:.2f} too far from {target}"
+
+
+def test_py_lqr_hover_host1_stable(py_lqr_hover_outputs):
+    """Host 1 (at rest) should stay very close to (200, 200, 80)."""
+    vectors = py_lqr_hover_outputs["vectors"]
+
+    for coord, target in [("Transmission My X Coordinate", 200.0),
+                          ("Transmission My Y Coordinate", 200.0),
+                          ("Transmission My Z Coordinate", 80.0)]:
+        times, values = _get_vector(vectors, "host[1].wlan[0].mgmt", coord)
+        for i, v in enumerate(values):
+            assert abs(v - target) < 2.0, \
+                f"host[1] {coord} at t={times[i]:.1f}: {v:.2f} too far from {target}"
+
+
+def test_py_lqr_hover_converges(py_lqr_hover_outputs):
+    """Host 0 should converge toward target — last 3 samples closer than first 3."""
+    vectors = py_lqr_hover_outputs["vectors"]
+
+    _t, xv = _get_vector(vectors, "host[0].wlan[0].mgmt", "Transmission My X Coordinate")
+    _t, yv = _get_vector(vectors, "host[0].wlan[0].mgmt", "Transmission My Y Coordinate")
+    _t, zv = _get_vector(vectors, "host[0].wlan[0].mgmt", "Transmission My Z Coordinate")
+
+    def dist(i):
+        return math.sqrt((xv[i] - 100)**2 + (yv[i] - 100)**2 + (zv[i] - 50)**2)
+
+    early = max(dist(i) for i in range(min(3, len(xv))))
+    late = max(dist(i) for i in range(max(0, len(xv) - 3), len(xv)))
+    assert late < early, \
+        f"Host 0 not converging: early_max={early:.1f}m, late_max={late:.1f}m"
 
 
 def test_py_trajectory_vec_hashes(py_trajectory_outputs):

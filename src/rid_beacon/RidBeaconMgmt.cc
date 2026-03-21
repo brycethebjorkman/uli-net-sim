@@ -407,6 +407,8 @@ void RidBeaconMgmt::forwardToGcs(const Ptr<const RidBeaconFrame>& beaconBody, do
     report->setClaimedHeading(beaconBody->getHeading());
 
     report->setRssiDbm(rssiDbm);
+    report->setKfNis(std::isnan(lastKfNis) ? -1.0 : lastKfNis);
+    lastKfNis = NAN;  // Reset for next RX event
 
     sendDirect(report, gcsModule, "directIn");
 }

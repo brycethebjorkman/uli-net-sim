@@ -11,6 +11,8 @@
 
 #include "RidBeaconFrame_m.h"
 
+#include <cmath>
+
 using namespace inet;
 using namespace inet::ieee80211;
 
@@ -38,6 +40,10 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
 
     // GCS report forwarding
     cModule *gcsModule = nullptr;
+
+    // Latest KF NIS for GCS report (NaN if no KF ran for this RX event).
+    // Written by KalmanFilterDetectMgmt::update(), read by forwardToGcs().
+    double lastKfNis = NAN;
 
     struct OutputVectors {
         cOutVector power;

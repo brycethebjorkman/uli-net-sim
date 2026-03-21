@@ -61,6 +61,9 @@ void KalmanFilterDetectMgmt::update(TxPowerKF &kf, double z, double R, int seria
     double appliedCorrection = std::abs(K(0,0) * innov);
     double NIS = (innov * innov) / S(0,0);
 
+    // Store for GCS report forwarding (read by RidBeaconMgmt::forwardToGcs)
+    lastKfNis = NIS;
+
     EV_INFO << "[Drone " << serialNum << "] "
             << "z=" << z << " dBm, x_est=" << kf.x(0) << " dBm, "
             << "K=" << K(0,0) << ", innov=" << innov

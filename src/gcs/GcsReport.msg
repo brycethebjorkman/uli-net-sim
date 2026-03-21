@@ -29,4 +29,7 @@ class GcsReport extends cMessage
 
     // RSSI at receiver
     double rssiDbm;
+
+    // KF NIS from C++ Kalman filter (-1 = not available, i.e. host doesn't run KF)
+    double kfNis = -1;
 }

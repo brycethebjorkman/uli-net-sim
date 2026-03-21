@@ -12,6 +12,7 @@
 #include "GcsCommand_m.h"
 #include "inet/physicallayer/wireless/common/contract/packetlevel/IRadioMedium.h"
 
+#include <cmath>
 #include <sstream>
 
 using namespace inet;
@@ -196,6 +197,8 @@ void GcsModule::pyOnReport(const BeaconKey& key,
         rd["host_id"]  = r->getReceiverHostId();
         rd["pos"]      = py::make_tuple(r->getRxPosX(), r->getRxPosY(), r->getRxPosZ());
         rd["rssi_dbm"] = r->getRssiDbm();
+        double kfNis = r->getKfNis();
+        rd["kf_nis"]   = (kfNis < 0) ? py::none().cast<py::object>() : py::cast(kfNis);
         reportList.append(rd);
     }
     txData["reports"] = reportList;

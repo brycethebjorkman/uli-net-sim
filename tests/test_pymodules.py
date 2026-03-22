@@ -831,3 +831,58 @@ def test_py_lqr_gcs_tick_count(py_lqr_gcs_outputs):
 
     assert len(values) == 15, f"Expected 15 ticks, got {len(values)}"
     assert values[-1] == 15.0, f"Last tick_count should be 15, got {values[-1]}"
+
+
+# ---------------------------------------------------------------------------
+# Combined KF + MLAT online detector fixture and tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def py_combined_detector_outputs():
+    """Run PyCombinedDetectorTest and export vectors."""
+    out = TEST_OUT / "combined_detector"
+    if out.exists():
+        shutil.rmtree(out)
+    result_dir = out / "results"
+    vec_file = _run_sim("PyCombinedDetectorTest", result_dir)
+    vectors = extract_our_vectors(vec_file)
+
+    return {
+        "vec_file": vec_file,
+        "vectors": vectors,
+    }
+
+
+def test_py_combined_detector_vec_hashes(py_combined_detector_outputs):
+    _check_hashes(py_combined_detector_outputs["vectors"],
+                  "py_combined_detector", "PyCombinedDetectorTest")
+
+
+def test_py_combined_detector_logs_mlat(py_combined_detector_outputs):
+    """GCS should log mlat_score and mlat_raw_error vectors."""
+    vectors = py_combined_detector_outputs["vectors"]
+
+    _times, scores = _get_vector(vectors, "gcs[0]", "mlat_score")
+    assert len(scores) > 0, "No mlat_score log entries"
+
+    _times, raw = _get_vector(vectors, "gcs[0]", "mlat_raw_error")
+    assert len(raw) > 0, "No mlat_raw_error log entries"
+
+
+def test_py_combined_detector_logs_kf(py_combined_detector_outputs):
+    """GCS should log kf_max_nis and kf_mean_nis vectors."""
+    vectors = py_combined_detector_outputs["vectors"]
+
+    _times, max_nis = _get_vector(vectors, "gcs[0]", "kf_max_nis")
+    assert len(max_nis) > 0, "No kf_max_nis log entries"
+
+    _times, mean_nis = _get_vector(vectors, "gcs[0]", "kf_mean_nis")
+    assert len(mean_nis) > 0, "No kf_mean_nis log entries"
+
+
+def test_py_combined_detector_logs_alert(py_combined_detector_outputs):
+    """GCS should log combined_alert vector with some alerts for the spoofer."""
+    vectors = py_combined_detector_outputs["vectors"]
+
+    _times, alerts = _get_vector(vectors, "gcs[0]", "combined_alert")
+    assert len(alerts) > 0, "No combined_alert log entries"

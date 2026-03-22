@@ -53,6 +53,8 @@ UE_TX_POWER="10-16"
 UE_BEACON_INTERVAL="0.25-0.75"
 UE_BEACON_OFFSET="0-0.1"
 UE_BACKGROUND_NOISE="-90"
+UE_OBSTACLE_LOSS="DielectricObstacleLoss"
+UE_MAX_BOUNCES="1"
 
 # Branching factors (all default to 1)
 UE_PARAM_VARIANTS=1
@@ -91,6 +93,9 @@ Radio Parameters:
     --beacon-interval RANGE   Beacon interval in s (default: $UE_BEACON_INTERVAL)
     --beacon-offset RANGE     Beacon offset in s (default: $UE_BEACON_OFFSET)
     --background-noise dBm    Background noise power (default: $UE_BACKGROUND_NOISE)
+    --obstacle-loss MODEL     Obstacle loss model: DielectricObstacleLoss or
+                              ImageMethodObstacleLoss (default: DielectricObstacleLoss)
+    --max-bounces N           Max reflection bounces for ImageMethod (default: 1)
 
 Spoofer/Ghost Configuration:
     --enable-spoofer          Enable spoofer (randomly selects ghost and spoofer hosts)
@@ -196,6 +201,8 @@ run_urbanenv() {
             --beacon-interval) UE_BEACON_INTERVAL="$2"; shift 2 ;;
             --beacon-offset) UE_BEACON_OFFSET="$2"; shift 2 ;;
             --background-noise) UE_BACKGROUND_NOISE="$2"; shift 2 ;;
+            --obstacle-loss) UE_OBSTACLE_LOSS="$2"; shift 2 ;;
+            --max-bounces) UE_MAX_BOUNCES="$2"; shift 2 ;;
             --enable-spoofer) UE_ENABLE_SPOOFER=true; shift ;;
             --param-variants) UE_PARAM_VARIANTS="$2"; shift 2 ;;
             --corridor-variants) UE_CORRIDOR_VARIANTS="$2"; shift 2 ;;
@@ -448,6 +455,8 @@ run_urbanenv() {
                                 --beacon-interval "$UE_BEACON_INTERVAL"
                                 --beacon-offset "$UE_BEACON_OFFSET"
                                 --background-noise "$UE_BACKGROUND_NOISE"
+                                --obstacle-loss "$UE_OBSTACLE_LOSS"
+                                --max-bounces "$UE_MAX_BOUNCES"
                                 --sim-time-limit "$SIM_TIME"
                                 --config-name "Scenario"
                                 --seed "$SCENARIO_SEED"
@@ -562,6 +571,8 @@ run_urbanenv() {
   "beacon_interval": "$UE_BEACON_INTERVAL",
   "beacon_offset": "$UE_BEACON_OFFSET",
   "background_noise": $UE_BACKGROUND_NOISE,
+  "obstacle_loss": "$UE_OBSTACLE_LOSS",
+  "max_bounces": $UE_MAX_BOUNCES,
   "enable_spoofer": $JSON_ENABLE_SPOOFER
 }
 EOF

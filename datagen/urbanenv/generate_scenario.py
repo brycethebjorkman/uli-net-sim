@@ -84,6 +84,11 @@ Examples:
                         help='Host index to use as spoofer (claims ghost position)')
     parser.add_argument('--enable-spoofer', action='store_true',
                         help='Randomly select ghost and spoofer hosts (requires >= 2 hosts)')
+    parser.add_argument('--obstacle-loss', default='DielectricObstacleLoss',
+                        choices=['DielectricObstacleLoss', 'ImageMethodObstacleLoss'],
+                        help='Obstacle loss model (default: DielectricObstacleLoss)')
+    parser.add_argument('--max-bounces', type=int, default=1,
+                        help='Max reflection bounces for ImageMethodObstacleLoss (default: 1)')
     parser.add_argument('--config-name', default=None,
                         help='Config name (default: derived from output filename)')
     parser.add_argument('--seed', type=int, default=None,
@@ -196,6 +201,8 @@ Examples:
             "sim_time_limit": args.sim_time_limit,
             "ghost_host": ghost_host,
             "spoofer_host": spoofer_host,
+            "obstacle_loss": args.obstacle_loss,
+            "max_bounces": args.max_bounces,
             "config_name": config_name,
             "seed": args.seed,
         }
@@ -258,6 +265,12 @@ Examples:
     lines.append(f"sim-time-limit = {int(args.sim_time_limit)}s")
     lines.append(f"*.numHosts = {num_hosts}")
     lines.append(f"*.radioMedium.backgroundNoise.power = {args.background_noise}dBm")
+
+    # Override obstacle loss model if not default
+    if args.obstacle_loss != 'DielectricObstacleLoss':
+        lines.append(f'*.radioMedium.obstacleLoss.typename = "{args.obstacle_loss}"')
+        if args.obstacle_loss == 'ImageMethodObstacleLoss':
+            lines.append(f"*.radioMedium.obstacleLoss.maxBounces = {args.max_bounces}")
     lines.append("")
 
     # No buildings - empty physical environment

@@ -190,6 +190,152 @@ bool ImageMethodObstacleLoss::isLineOfSightBlocked(const Coord& from,
     return false;
 }
 
+// ── Image method helpers ────────────────────────────────────────────────────
+
+Coord ImageMethodObstacleLoss::mirrorAcrossFace(const Coord& point,
+                                                 const BuildingFace& face) const
+{
+    Coord mirrored = point;
+    switch (face.normalAxis) {
+        case BuildingFace::X:
+            mirrored.x = 2.0 * face.planeCoord - point.x;
+            break;
+        case BuildingFace::Y:
+            mirrored.y = 2.0 * face.planeCoord - point.y;
+            break;
+        case BuildingFace::Z:
+            mirrored.z = 2.0 * face.planeCoord - point.z;
+            break;
+    }
+    return mirrored;
+}
+
+bool ImageMethodObstacleLoss::intersectFace(const Coord& from, const Coord& to,
+                                             const BuildingFace& face,
+                                             Coord& hit) const
+{
+    // Ray-plane intersection for axis-aligned face.
+    // The face lies at normalAxis = planeCoord.
+    double fromCoord, toCoord;
+    switch (face.normalAxis) {
+        case BuildingFace::X: fromCoord = from.x; toCoord = to.x; break;
+        case BuildingFace::Y: fromCoord = from.y; toCoord = to.y; break;
+        case BuildingFace::Z: fromCoord = from.z; toCoord = to.z; break;
+    }
+
+    double denom = toCoord - fromCoord;
+    if (std::abs(denom) < 1e-9)
+        return false;  // Ray parallel to face
+
+    double t = (face.planeCoord - fromCoord) / denom;
+    if (t < 0.0 || t > 1.0)
+        return false;  // Intersection outside segment
+
+    hit = from + (to - from) * t;
+
+    // Check if intersection is within the face's bounding rectangle.
+    double t1, t2;  // coordinates on the two tangent axes
+    switch (face.normalAxis) {
+        case BuildingFace::X: t1 = hit.y; t2 = hit.z; break;
+        case BuildingFace::Y: t1 = hit.x; t2 = hit.z; break;
+        case BuildingFace::Z: t1 = hit.x; t2 = hit.y; break;
+    }
+
+    return (t1 >= face.tangent1Lo && t1 <= face.tangent1Hi &&
+            t2 >= face.tangent2Lo && t2 <= face.tangent2Hi);
+}
+
+double ImageMethodObstacleLoss::computeReflectionCoefficient(
+    Hz frequency, double incidenceAngle) const
+{
+    // Fresnel reflection for TE+TM averaged (unpolarized).
+    // n2 = sqrt(εᵣ - j*σ/(ω*ε₀))  ≈ sqrt(εᵣ) for low conductivity
+    double n1 = 1.0;  // air
+    double n2 = std::sqrt(buildingPermittivity);
+
+    double cosI = std::cos(incidenceAngle);
+    double sinI = std::sin(incidenceAngle);
+    double sinT2 = (n1 / n2) * sinI;
+    sinT2 *= sinT2;
+
+    if (sinT2 >= 1.0)
+        return 1.0;  // Total internal reflection
+
+    double cosT = std::sqrt(1.0 - sinT2);
+
+    // TE (s-polarization): rs = (n1*cosI - n2*cosT) / (n1*cosI + n2*cosT)
+    double rs = (n1 * cosI - n2 * cosT) / (n1 * cosI + n2 * cosT);
+    // TM (p-polarization): rp = (n2*cosI - n1*cosT) / (n2*cosI + n1*cosT)
+    double rp = (n2 * cosI - n1 * cosT) / (n2 * cosI + n1 * cosT);
+
+    // Average power reflection coefficient
+    return (rs * rs + rp * rp) / 2.0;
+}
+
+double ImageMethodObstacleLoss::computeSingleBounceContribution(
+    Hz frequency,
+    const Coord& tx, const Coord& rx,
+    double directDist) const
+{
+    double totalReflectedPower = 0.0;
+
+    for (const auto& face : faces) {
+        // 1. Mirror TX across face
+        Coord txImage = mirrorAcrossFace(tx, face);
+
+        // 2. Check image-TX → RX intersects the face (valid reflection)
+        Coord reflectionPoint;
+        if (!intersectFace(txImage, rx, face, reflectionPoint))
+            continue;
+
+        // 3. Verify the reflection is on the correct side of the face
+        //    (TX must be on the outward-normal side)
+        double txSide;
+        switch (face.normalAxis) {
+            case BuildingFace::X: txSide = tx.x - face.planeCoord; break;
+            case BuildingFace::Y: txSide = tx.y - face.planeCoord; break;
+            case BuildingFace::Z: txSide = tx.z - face.planeCoord; break;
+        }
+        if (txSide * face.normalSign < 0)
+            continue;  // TX is behind the face
+
+        // 4. Check that TX→reflection and reflection→RX are not blocked
+        if (isLineOfSightBlocked(tx, reflectionPoint))
+            continue;
+        if (isLineOfSightBlocked(reflectionPoint, rx))
+            continue;
+
+        // 5. Compute reflected path power relative to free-space direct
+        double leg1 = tx.distance(reflectionPoint);
+        double leg2 = reflectionPoint.distance(rx);
+        double totalPathLen = leg1 + leg2;
+
+        if (totalPathLen < 1e-3)
+            continue;
+
+        // Incidence angle (from surface normal)
+        Coord faceNormal(0, 0, 0);
+        switch (face.normalAxis) {
+            case BuildingFace::X: faceNormal.x = face.normalSign; break;
+            case BuildingFace::Y: faceNormal.y = face.normalSign; break;
+            case BuildingFace::Z: faceNormal.z = face.normalSign; break;
+        }
+        Coord incoming = (reflectionPoint - tx);
+        incoming = incoming / incoming.length();
+        double cosAngle = std::abs(incoming * faceNormal);
+        double incidenceAngle = std::acos(std::min(cosAngle, 1.0));
+
+        double reflCoeff = computeReflectionCoefficient(frequency, incidenceAngle);
+
+        // Power ratio: (directDist / totalPathLen)^2 * reflCoeff
+        // This is the reflected power relative to free-space direct power.
+        double pathRatio = directDist / totalPathLen;
+        totalReflectedPower += pathRatio * pathRatio * reflCoeff;
+    }
+
+    return totalReflectedPower;
+}
+
 // ── Main entry point ────────────────────────────────────────────────────────
 
 double ImageMethodObstacleLoss::computeObstacleLoss(
@@ -199,10 +345,32 @@ double ImageMethodObstacleLoss::computeObstacleLoss(
 {
     computationCount++;
 
-    // Stage 1: direct path obstruction loss only.
-    // Stages 2-3 will add reflected path contributions here.
-    return computeDirectPathLoss(frequency, transmissionPosition,
-                                 receptionPosition);
+    double directDist = transmissionPosition.distance(receptionPosition);
+    if (directDist < 1e-3)
+        return 1.0;
+
+    // Direct path: obstruction loss through buildings
+    double directLoss = computeDirectPathLoss(frequency,
+                                              transmissionPosition,
+                                              receptionPosition);
+
+    if (maxBounces == 0)
+        return directLoss;
+
+    // Single-bounce reflections: add power from reflected paths.
+    // Total power = direct_power * directLoss + sum(reflected_powers)
+    // Return as factor relative to free-space: directLoss + reflectedContribution
+    double reflectedContribution = computeSingleBounceContribution(
+        frequency, transmissionPosition, receptionPosition, directDist);
+
+    // The returned factor is applied to the free-space received power.
+    // directLoss accounts for LOS obstruction, reflectedContribution adds
+    // power from reflected paths (relative to free-space direct power).
+    double totalFactor = directLoss + reflectedContribution;
+
+    // Clamp to reasonable range — reflected paths shouldn't amplify
+    // beyond free-space (no constructive interference in incoherent sum).
+    return std::min(totalFactor, 1.0);
 }
 
 } // namespace physicallayer

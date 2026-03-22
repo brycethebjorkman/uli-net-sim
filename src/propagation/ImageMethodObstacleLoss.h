@@ -58,6 +58,23 @@ class ImageMethodObstacleLoss : public TracingObstacleLossBase
     bool isLineOfSightBlocked(const Coord& from, const Coord& to) const;
     double computePenetrationLoss(Hz frequency, double thickness) const;
 
+    /// Mirror a point across a building face (image method).
+    Coord mirrorAcrossFace(const Coord& point, const BuildingFace& face) const;
+
+    /// Find where the line from→to intersects a building face.
+    /// Returns true and sets 'hit' if the intersection is within the face bounds.
+    bool intersectFace(const Coord& from, const Coord& to,
+                       const BuildingFace& face, Coord& hit) const;
+
+    /// Fresnel reflection coefficient (power) for the building material.
+    double computeReflectionCoefficient(Hz frequency, double incidenceAngle) const;
+
+    /// Compute power contribution from single-bounce reflections.
+    /// Returns sum of reflected path powers as a fraction of free-space direct power.
+    double computeSingleBounceContribution(Hz frequency,
+                                           const Coord& tx, const Coord& rx,
+                                           double directDist) const;
+
   public:
     virtual double computeObstacleLoss(Hz frequency,
                                        const Coord& transmissionPosition,

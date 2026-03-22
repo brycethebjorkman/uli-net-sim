@@ -70,10 +70,21 @@ class ImageMethodObstacleLoss : public TracingObstacleLossBase
     double computeReflectionCoefficient(Hz frequency, double incidenceAngle) const;
 
     /// Compute power contribution from single-bounce reflections.
-    /// Returns sum of reflected path powers as a fraction of free-space direct power.
     double computeSingleBounceContribution(Hz frequency,
                                            const Coord& tx, const Coord& rx,
                                            double directDist) const;
+
+    /// Compute power contribution from two-bounce reflections.
+    double computeDoubleBounceContribution(Hz frequency,
+                                           const Coord& tx, const Coord& rx,
+                                           double directDist) const;
+
+    /// Check that a point is on the outward-normal side of a face.
+    bool isOnOutwardSide(const Coord& point, const BuildingFace& face) const;
+
+    /// Compute incidence angle between an incoming ray and a face normal.
+    double computeIncidenceAngle(const Coord& from, const Coord& reflPt,
+                                 const BuildingFace& face) const;
 
   public:
     virtual double computeObstacleLoss(Hz frequency,

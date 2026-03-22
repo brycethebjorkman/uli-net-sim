@@ -272,6 +272,35 @@ double ImageMethodObstacleLoss::computeReflectionCoefficient(
     return (rs * rs + rp * rp) / 2.0;
 }
 
+bool ImageMethodObstacleLoss::isOnOutwardSide(const Coord& point,
+                                               const BuildingFace& face) const
+{
+    double side;
+    switch (face.normalAxis) {
+        case BuildingFace::X: side = point.x - face.planeCoord; break;
+        case BuildingFace::Y: side = point.y - face.planeCoord; break;
+        case BuildingFace::Z: side = point.z - face.planeCoord; break;
+    }
+    return side * face.normalSign >= 0;
+}
+
+double ImageMethodObstacleLoss::computeIncidenceAngle(
+    const Coord& from, const Coord& reflPt, const BuildingFace& face) const
+{
+    Coord faceNormal(0, 0, 0);
+    switch (face.normalAxis) {
+        case BuildingFace::X: faceNormal.x = face.normalSign; break;
+        case BuildingFace::Y: faceNormal.y = face.normalSign; break;
+        case BuildingFace::Z: faceNormal.z = face.normalSign; break;
+    }
+    Coord incoming = reflPt - from;
+    double len = incoming.length();
+    if (len < 1e-9) return 0;
+    incoming = incoming / len;
+    double cosAngle = std::abs(incoming * faceNormal);
+    return std::acos(std::min(cosAngle, 1.0));
+}
+
 double ImageMethodObstacleLoss::computeSingleBounceContribution(
     Hz frequency,
     const Coord& tx, const Coord& rx,
@@ -280,57 +309,85 @@ double ImageMethodObstacleLoss::computeSingleBounceContribution(
     double totalReflectedPower = 0.0;
 
     for (const auto& face : faces) {
-        // 1. Mirror TX across face
         Coord txImage = mirrorAcrossFace(tx, face);
 
-        // 2. Check image-TX → RX intersects the face (valid reflection)
-        Coord reflectionPoint;
-        if (!intersectFace(txImage, rx, face, reflectionPoint))
+        Coord reflPt;
+        if (!intersectFace(txImage, rx, face, reflPt))
+            continue;
+        if (!isOnOutwardSide(tx, face))
+            continue;
+        if (isLineOfSightBlocked(tx, reflPt) || isLineOfSightBlocked(reflPt, rx))
             continue;
 
-        // 3. Verify the reflection is on the correct side of the face
-        //    (TX must be on the outward-normal side)
-        double txSide;
-        switch (face.normalAxis) {
-            case BuildingFace::X: txSide = tx.x - face.planeCoord; break;
-            case BuildingFace::Y: txSide = tx.y - face.planeCoord; break;
-            case BuildingFace::Z: txSide = tx.z - face.planeCoord; break;
-        }
-        if (txSide * face.normalSign < 0)
-            continue;  // TX is behind the face
+        double totalPathLen = tx.distance(reflPt) + reflPt.distance(rx);
+        if (totalPathLen < 1e-3) continue;
 
-        // 4. Check that TX→reflection and reflection→RX are not blocked
-        if (isLineOfSightBlocked(tx, reflectionPoint))
-            continue;
-        if (isLineOfSightBlocked(reflectionPoint, rx))
-            continue;
-
-        // 5. Compute reflected path power relative to free-space direct
-        double leg1 = tx.distance(reflectionPoint);
-        double leg2 = reflectionPoint.distance(rx);
-        double totalPathLen = leg1 + leg2;
-
-        if (totalPathLen < 1e-3)
-            continue;
-
-        // Incidence angle (from surface normal)
-        Coord faceNormal(0, 0, 0);
-        switch (face.normalAxis) {
-            case BuildingFace::X: faceNormal.x = face.normalSign; break;
-            case BuildingFace::Y: faceNormal.y = face.normalSign; break;
-            case BuildingFace::Z: faceNormal.z = face.normalSign; break;
-        }
-        Coord incoming = (reflectionPoint - tx);
-        incoming = incoming / incoming.length();
-        double cosAngle = std::abs(incoming * faceNormal);
-        double incidenceAngle = std::acos(std::min(cosAngle, 1.0));
-
-        double reflCoeff = computeReflectionCoefficient(frequency, incidenceAngle);
-
-        // Power ratio: (directDist / totalPathLen)^2 * reflCoeff
-        // This is the reflected power relative to free-space direct power.
+        double angle = computeIncidenceAngle(tx, reflPt, face);
+        double reflCoeff = computeReflectionCoefficient(frequency, angle);
         double pathRatio = directDist / totalPathLen;
         totalReflectedPower += pathRatio * pathRatio * reflCoeff;
+    }
+
+    return totalReflectedPower;
+}
+
+double ImageMethodObstacleLoss::computeDoubleBounceContribution(
+    Hz frequency,
+    const Coord& tx, const Coord& rx,
+    double directDist) const
+{
+    double totalReflectedPower = 0.0;
+    size_t nFaces = faces.size();
+
+    // For each pair of faces (A, B): TX reflects off A then B to reach RX.
+    // Image method: mirror TX across A → TX_A, then mirror TX_A across B → TX_AB.
+    // If TX_AB→RX hits face B at point P2, and TX_A→P2 hits face A at P1,
+    // the path is TX→P1→P2→RX.
+    for (size_t ia = 0; ia < nFaces; ia++) {
+        const auto& faceA = faces[ia];
+
+        if (!isOnOutwardSide(tx, faceA))
+            continue;
+
+        Coord txA = mirrorAcrossFace(tx, faceA);
+
+        for (size_t ib = 0; ib < nFaces; ib++) {
+            if (ib == ia) continue;
+            const auto& faceB = faces[ib];
+
+            // TX_A must be on outward side of face B for valid 2nd reflection
+            if (!isOnOutwardSide(txA, faceB))
+                continue;
+
+            Coord txAB = mirrorAcrossFace(txA, faceB);
+
+            // Find where TX_AB→RX hits face B (second reflection point P2)
+            Coord p2;
+            if (!intersectFace(txAB, rx, faceB, p2))
+                continue;
+
+            // Find where TX_A→P2 hits face A (first reflection point P1)
+            Coord p1;
+            if (!intersectFace(txA, p2, faceA, p1))
+                continue;
+
+            // Verify all legs are unblocked
+            if (isLineOfSightBlocked(tx, p1) ||
+                isLineOfSightBlocked(p1, p2) ||
+                isLineOfSightBlocked(p2, rx))
+                continue;
+
+            double totalPathLen = tx.distance(p1) + p1.distance(p2) + p2.distance(rx);
+            if (totalPathLen < 1e-3) continue;
+
+            double angleA = computeIncidenceAngle(tx, p1, faceA);
+            double angleB = computeIncidenceAngle(p1, p2, faceB);
+            double reflA = computeReflectionCoefficient(frequency, angleA);
+            double reflB = computeReflectionCoefficient(frequency, angleB);
+
+            double pathRatio = directDist / totalPathLen;
+            totalReflectedPower += pathRatio * pathRatio * reflA * reflB;
+        }
     }
 
     return totalReflectedPower;
@@ -357,19 +414,22 @@ double ImageMethodObstacleLoss::computeObstacleLoss(
     if (maxBounces == 0)
         return directLoss;
 
-    // Single-bounce reflections: add power from reflected paths.
-    // Total power = direct_power * directLoss + sum(reflected_powers)
-    // Return as factor relative to free-space: directLoss + reflectedContribution
-    double reflectedContribution = computeSingleBounceContribution(
-        frequency, transmissionPosition, receptionPosition, directDist);
+    // Add power from reflected paths (incoherent sum).
+    // Each contribution is relative to free-space direct power.
+    double reflectedContribution = 0.0;
 
-    // The returned factor is applied to the free-space received power.
-    // directLoss accounts for LOS obstruction, reflectedContribution adds
-    // power from reflected paths (relative to free-space direct power).
+    if (maxBounces >= 1) {
+        reflectedContribution += computeSingleBounceContribution(
+            frequency, transmissionPosition, receptionPosition, directDist);
+    }
+    if (maxBounces >= 2) {
+        reflectedContribution += computeDoubleBounceContribution(
+            frequency, transmissionPosition, receptionPosition, directDist);
+    }
+
+    // Total factor: direct loss + reflected power contributions.
+    // Clamped to [0, 1] since incoherent sum shouldn't exceed free-space.
     double totalFactor = directLoss + reflectedContribution;
-
-    // Clamp to reasonable range — reflected paths shouldn't amplify
-    // beyond free-space (no constructive interference in incoherent sum).
     return std::min(totalFactor, 1.0);
 }
 

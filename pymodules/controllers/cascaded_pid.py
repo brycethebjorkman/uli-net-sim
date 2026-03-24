@@ -130,9 +130,9 @@ class CascadedPidController:
             self._waypoints_changed = True
 
         elif task == 'waypoints':
-            # Replace entire waypoint list
+            # Replace entire waypoint list (prepend current pos for smooth transition)
             wps = cmd['waypoints']
-            self.waypoints = [(w['x'], w['y'], w['z']) for w in wps]
+            self.waypoints = [pos] + [(w['x'], w['y'], w['z']) for w in wps]
             self.speed = wps[0].get('speed', self.speed)
             self.seg_index = 1
             self.carrot_s = 0.0

@@ -14,54 +14,94 @@
 
 Define_Module(PyBridge);
 
+// ── Process-global interpreter ───────────────────────────────────────────────
+//
+// Many C extension modules (numpy, scipy, torch, …) register global state
+// that does not survive Py_Finalize + Py_Initialize.  Calling Py_Finalize
+// after importing such modules causes hangs or crashes on re-init.
+//
+// We therefore keep the interpreter alive for the entire process lifetime.
+// On network rebuild, only the Python class instances are cleared.
+
+static std::unique_ptr<py::scoped_interpreter> globalInterpreter;
+static bool interpreterReady = false;
+
 void PyBridge::initialize()
 {
     impl = std::make_unique<PyBridgeImpl>();
 
-    // Start the Python interpreter
-    impl->interpreter = std::make_unique<py::scoped_interpreter>();
+    // Start the interpreter once; keep it alive across network rebuilds.
+    if (!interpreterReady) {
+        globalInterpreter = std::make_unique<py::scoped_interpreter>();
+        interpreterReady = true;
 
-    // Activate the .venv inside the embedded interpreter.
-    //
-    // pybind11's scoped_interpreter inherits the system Python's prefix
-    // (/usr), so sys.prefix == sys.base_prefix == "/usr".  Packages
-    // installed in the venv (numpy, scipy) need sys.prefix pointing at
-    // the venv so that their C extensions resolve correctly.
-    //
-    // We replicate what the venv's activate_this.py does:
-    //   1. Set sys.prefix / sys.exec_prefix to the venv root.
-    //   2. Re-run site.addsitedir() to pick up .venv/lib/.../site-packages.
-    // sys.base_prefix stays at /usr so the stdlib is still found.
+        // Activate the .venv inside the embedded interpreter.
+        //
+        // pybind11's scoped_interpreter inherits the system Python's prefix
+        // (/usr), so sys.prefix == sys.base_prefix == "/usr".  Packages
+        // installed in the venv (numpy, scipy) need sys.prefix pointing at
+        // the venv so that their C extensions resolve correctly.
+        //
+        // We replicate what the venv's activate_this.py does:
+        //   1. Set sys.prefix / sys.exec_prefix to the venv root.
+        //   2. Re-run site.addsitedir() to pick up .venv/lib/.../site-packages.
+        // sys.base_prefix stays at /usr so the stdlib is still found.
+        py::module_ sys = py::module_::import("sys");
+        std::string projDir = STR(PROJ_DIR);
+        std::string venvPrefix = projDir + "/.venv";
+        sys.attr("prefix") = venvPrefix;
+        sys.attr("exec_prefix") = venvPrefix;
+
+        std::string venvSitePackages = venvPrefix + "/lib/python3.10/site-packages";
+        py::module_ site = py::module_::import("site");
+        site.attr("addsitedir")(venvSitePackages);
+    }
+
+    // (Re-)configure sys.path — user modules and extra paths must be at
+    // the front so that stale module caches from a previous run don't
+    // shadow updated sources.
     py::module_ sys = py::module_::import("sys");
-    std::string projDir = STR(PROJ_DIR);
-    std::string venvPrefix = projDir + "/.venv";
-    sys.attr("prefix") = venvPrefix;
-    sys.attr("exec_prefix") = venvPrefix;
-
-    // Add .venv site-packages via site.addsitedir() which also processes
-    // .pth files (e.g. for editable pip installs).
-    std::string venvSitePackages = venvPrefix + "/lib/python3.10/site-packages";
-    py::module_ site = py::module_::import("site");
-    site.attr("addsitedir")(venvSitePackages);
-
-    // Configure sys.path
     py::list path = sys.attr("path");
 
-    // Add project directory at the front (for user modules like pymodules/)
-    path.attr("insert")(0, projDir);
+    std::string projDir = STR(PROJ_DIR);
+
+    // Remove previous PROJ_DIR entries (from prior network setup)
+    py::list cleanPath;
+    for (auto item : path) {
+        std::string s = item.cast<std::string>();
+        if (s != projDir)
+            cleanPath.append(item);
+    }
+    cleanPath.attr("insert")(0, projDir);
+    sys.attr("path") = cleanPath;
+    path = cleanPath;
 
     // Add user-specified paths
     std::string extraPaths = par("pythonPath").stdstringValue();
     if (!extraPaths.empty()) {
         std::istringstream ss(extraPaths);
         std::string token;
-        int idx = 2;
+        int idx = 1;
         while (std::getline(ss, token, ':')) {
             if (!token.empty()) {
                 path.attr("insert")(idx++, token);
             }
         }
     }
+
+    // Reload user modules so that source edits take effect on network rebuild.
+    // Only reload top-level packages under PROJ_DIR (pymodules).
+    py::module_ importlib = py::module_::import("importlib");
+    py::dict modules = sys.attr("modules");
+    py::list toReload;
+    for (auto item : modules) {
+        std::string name = item.first.cast<std::string>();
+        if (name.rfind("pymodules", 0) == 0)
+            toReload.append(item.first);
+    }
+    // Delete cached modules so they get re-imported fresh
+    for (auto key : toReload)
+        py::delattr(modules, key);
 
     EV_INFO << "PyBridge initialized. sys.path = " << py::str(path).cast<std::string>() << endl;
 }
@@ -73,6 +113,8 @@ void PyBridge::handleMessage(cMessage *msg)
 
 PyBridge::~PyBridge()
 {
+    // Clear Python instances but do NOT destroy the interpreter.
+    // The interpreter lives for the entire process (see globalInterpreter).
     impl.reset();
 }
 

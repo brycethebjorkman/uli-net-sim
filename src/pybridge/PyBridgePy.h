@@ -18,7 +18,6 @@
 namespace py = pybind11;
 
 struct PyBridgeImpl {
-    std::unique_ptr<py::scoped_interpreter> interpreter;
     std::vector<py::object> instances;  // Python class instances by handle
 
     py::object& getInstance(int handle) {

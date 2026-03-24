@@ -63,6 +63,9 @@ class MultirotorMobility : public MovingMobilityBase
     std::vector<Waypoint> waypoints;
     bool waypointsSent = false;
 
+    // OSG waypoint path visualization (Qtenv only, nullptr in headless)
+    void *waypointPathGroup = nullptr;  // opaque pointer to osg::Group (avoids OSG in header)
+
     // Python bridge
     PyBridge *pyBridge = nullptr;
     int pyHandle = -1;  // handle into PyBridge instance table
@@ -86,6 +89,9 @@ class MultirotorMobility : public MovingMobilityBase
 
     // Record state and control vectors
     void recordState();
+
+    // Draw waypoint path in the 3D OSG scene (removes previous path first)
+    void drawWaypointPath();
 
     virtual void initialize(int stage) override;
     virtual void handleMessage(cMessage *msg) override;

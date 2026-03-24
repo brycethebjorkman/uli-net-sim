@@ -85,6 +85,9 @@ class CascadedPidController:
         self.last_time = None
         self.initialized = False
 
+        # Waypoint visualization update flag
+        self._waypoints_changed = False
+
         # Precomputed segment geometry
         self._seg_dir = (1.0, 0.0, 0.0)
         self._seg_len = 0.0
@@ -109,6 +112,7 @@ class CascadedPidController:
             if self.waypoints:
                 self.waypoints[self.seg_index] = pos
             self.vel_integral = [0.0, 0.0, 0.0]
+            self._waypoints_changed = True
 
         elif task == 'goto':
             # Fly from current position to target
@@ -123,6 +127,7 @@ class CascadedPidController:
             self.vel_integral = [0.0, 0.0, 0.0]
             self.hovering = False
             self._setup_segment()
+            self._waypoints_changed = True
 
         elif task == 'waypoints':
             # Replace entire waypoint list
@@ -139,6 +144,7 @@ class CascadedPidController:
             else:
                 self.hovering = False
                 self._setup_segment()
+            self._waypoints_changed = True
 
     def _setup_segment(self):
         """Precompute direction and length for the current segment."""
@@ -385,9 +391,18 @@ class CascadedPidController:
         torque_phi = self.Kp_angle * (phi_des - phi) - self.Kd_angle * p
         torque_theta = self.Kp_angle * (theta_des - theta) - self.Kd_angle * q
 
-        return {
+        result = {
             'thrust': thrust,
             'torque_phi': torque_phi,
             'torque_theta': torque_theta,
             'torque_psi': torque_psi,
         }
+
+        if self._waypoints_changed:
+            self._waypoints_changed = False
+            result['waypoints'] = [
+                {'x': wp[0], 'y': wp[1], 'z': wp[2], 'speed': self.speed}
+                for wp in self.waypoints
+            ]
+
+        return result

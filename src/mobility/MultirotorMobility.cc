@@ -221,58 +221,82 @@ void MultirotorMobility::initialize(int stage)
             pyHandle = pyBridge->instantiateClass(pyClassName);
         }
 
-        // Draw waypoint path in the 3D OSG scene (Qtenv only)
-        if constexpr (hasOsg) {
-            if (waypoints.size() >= 2 && getEnvir()->isGUI()) {
-                auto *osgCanvas = getSystemModule()->getOsgCanvas();
-                auto *scene = osgCanvas ? dynamic_cast< ::osg::Group*>(osgCanvas->getScene()) : nullptr;
-                if (scene) {
-                    static const ::osg::Vec4 osgColors[] = {
-                        {66/255.0f, 133/255.0f, 244/255.0f, 1.0f},   // blue
-                        {234/255.0f, 67/255.0f, 53/255.0f, 1.0f},    // red
-                        {52/255.0f, 168/255.0f, 83/255.0f, 1.0f},    // green
-                        {251/255.0f, 188/255.0f, 4/255.0f, 1.0f},    // amber
-                    };
-                    int hostIdx = getParentModule()->getIndex();
-                    auto colorVec = osgColors[hostIdx % 4];
+        // Draw initial waypoint path in the 3D OSG scene (Qtenv only)
+        drawWaypointPath();
+    }
+}
 
-                    // Polyline geometry for the path
-                    auto *geometry = new ::osg::Geometry();
-                    auto *vertices = new ::osg::Vec3Array();
-                    for (const auto& wp : waypoints)
-                        vertices->push_back(::osg::Vec3d(wp.x, wp.y, wp.z));
-                    geometry->setVertexArray(vertices);
-                    geometry->addPrimitiveSet(
-                        new ::osg::DrawArrays(::osg::PrimitiveSet::LINE_STRIP, 0, vertices->size()));
+// ── Waypoint path visualization ──────────────────────────────────────────────
 
-                    auto *geode = new ::osg::Geode();
-                    geode->addDrawable(geometry);
+void MultirotorMobility::drawWaypointPath()
+{
+    if constexpr (hasOsg) {
+        if (!getEnvir()->isGUI())
+            return;
 
-                    auto *stateSet = geode->getOrCreateStateSet();
-                    auto *material = new ::osg::Material();
-                    material->setDiffuse(::osg::Material::FRONT_AND_BACK, colorVec);
-                    material->setAmbient(::osg::Material::FRONT_AND_BACK, colorVec);
-                    material->setEmission(::osg::Material::FRONT_AND_BACK, colorVec);
-                    stateSet->setAttributeAndModes(material, ::osg::StateAttribute::ON);
-                    stateSet->setAttributeAndModes(
-                        new ::osg::LineWidth(3.0f), ::osg::StateAttribute::ON);
-                    stateSet->setMode(GL_LIGHTING, ::osg::StateAttribute::OFF);
+        auto *osgCanvas = getSystemModule()->getOsgCanvas();
+        auto *scene = osgCanvas ? dynamic_cast< ::osg::Group*>(osgCanvas->getScene()) : nullptr;
+        if (!scene)
+            return;
 
-                    scene->addChild(geode);
-
-                    // Sphere markers at each waypoint
-                    for (const auto& wp : waypoints) {
-                        auto *sphere = new ::osg::ShapeDrawable(
-                            new ::osg::Sphere(::osg::Vec3d(wp.x, wp.y, wp.z), 2.0));
-                        sphere->setColor(colorVec);
-                        auto *marker = new ::osg::Geode();
-                        marker->addDrawable(sphere);
-                        marker->getOrCreateStateSet()->setMode(GL_LIGHTING, ::osg::StateAttribute::OFF);
-                        scene->addChild(marker);
-                    }
-                }
-            }
+        // Remove previous path group if it exists
+        if (waypointPathGroup) {
+            scene->removeChild(static_cast< ::osg::Node*>(waypointPathGroup));
+            waypointPathGroup = nullptr;
         }
+
+        if (waypoints.size() < 2)
+            return;
+
+        // Create a group node to hold the polyline + sphere markers
+        auto *group = new ::osg::Group();
+
+        static const ::osg::Vec4 osgColors[] = {
+            {66/255.0f, 133/255.0f, 244/255.0f, 1.0f},   // blue
+            {234/255.0f, 67/255.0f, 53/255.0f, 1.0f},    // red
+            {52/255.0f, 168/255.0f, 83/255.0f, 1.0f},    // green
+            {251/255.0f, 188/255.0f, 4/255.0f, 1.0f},    // amber
+        };
+        int hostIdx = getParentModule()->getIndex();
+        auto colorVec = osgColors[hostIdx % 4];
+
+        // Polyline geometry for the path
+        auto *geometry = new ::osg::Geometry();
+        auto *vertices = new ::osg::Vec3Array();
+        for (const auto& wp : waypoints)
+            vertices->push_back(::osg::Vec3d(wp.x, wp.y, wp.z));
+        geometry->setVertexArray(vertices);
+        geometry->addPrimitiveSet(
+            new ::osg::DrawArrays(::osg::PrimitiveSet::LINE_STRIP, 0, vertices->size()));
+
+        auto *geode = new ::osg::Geode();
+        geode->addDrawable(geometry);
+
+        auto *stateSet = geode->getOrCreateStateSet();
+        auto *material = new ::osg::Material();
+        material->setDiffuse(::osg::Material::FRONT_AND_BACK, colorVec);
+        material->setAmbient(::osg::Material::FRONT_AND_BACK, colorVec);
+        material->setEmission(::osg::Material::FRONT_AND_BACK, colorVec);
+        stateSet->setAttributeAndModes(material, ::osg::StateAttribute::ON);
+        stateSet->setAttributeAndModes(
+            new ::osg::LineWidth(3.0f), ::osg::StateAttribute::ON);
+        stateSet->setMode(GL_LIGHTING, ::osg::StateAttribute::OFF);
+
+        group->addChild(geode);
+
+        // Sphere markers at each waypoint
+        for (const auto& wp : waypoints) {
+            auto *sphere = new ::osg::ShapeDrawable(
+                new ::osg::Sphere(::osg::Vec3d(wp.x, wp.y, wp.z), 2.0));
+            sphere->setColor(colorVec);
+            auto *marker = new ::osg::Geode();
+            marker->addDrawable(sphere);
+            marker->getOrCreateStateSet()->setMode(GL_LIGHTING, ::osg::StateAttribute::OFF);
+            group->addChild(marker);
+        }
+
+        scene->addChild(group);
+        waypointPathGroup = static_cast<void*>(group);  // store for later removal
     }
 }
 
@@ -355,6 +379,22 @@ void MultirotorMobility::callPythonController()
             control[TAU_THETA] = d["torque_theta"].cast<double>();
         if (d.contains("torque_psi"))
             control[TAU_PSI] = d["torque_psi"].cast<double>();
+
+        // Update waypoint visualization if controller reports new waypoints
+        if (d.contains("waypoints") && !d["waypoints"].is_none()) {
+            py::list wpList = d["waypoints"].cast<py::list>();
+            waypoints.clear();
+            for (const auto& item : wpList) {
+                py::dict wp = item.cast<py::dict>();
+                waypoints.push_back({
+                    wp["x"].cast<double>(),
+                    wp["y"].cast<double>(),
+                    wp["z"].cast<double>(),
+                    wp.contains("speed") ? wp["speed"].cast<double>() : 10.0,
+                });
+            }
+            drawWaypointPath();
+        }
     }
 }
 

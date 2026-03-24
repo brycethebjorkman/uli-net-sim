@@ -46,6 +46,9 @@ class LqrController:
         self.ref_trajectory = None  # list of (t, px, py, pz, vx, vy, vz)
         self.hovering = False
 
+        # Waypoint visualization update flag
+        self._waypoints_changed = False
+
     def _compute_gain(self):
         """Compute LQR gain K by linearizing dynamics at hover and solving CARE.
 
@@ -259,6 +262,7 @@ class LqrController:
             self.target = pos
             self.ref_trajectory = None
             self.hovering = True
+            self._waypoints_changed = True
 
         elif task == 'goto':
             target = (cmd['x'], cmd['y'], cmd['z'])
@@ -267,6 +271,7 @@ class LqrController:
             self.target = target
             self.ref_trajectory = self._build_reference_trajectory(t)
             self.hovering = False
+            self._waypoints_changed = True
 
         elif task == 'waypoints':
             wps = cmd['waypoints']
@@ -274,6 +279,7 @@ class LqrController:
             self.speed = wps[0].get('speed', self.speed)
             self.target = self.waypoints[-1]
             self.ref_trajectory = self._build_reference_trajectory(t)
+            self._waypoints_changed = True
             if len(self.waypoints) <= 1:
                 self.hovering = True
             else:
@@ -358,9 +364,18 @@ class LqrController:
         torque_theta = max(-max_torque_theta, min(max_torque_theta, -u_correction[2]))
         torque_psi = max(-max_torque_psi, min(max_torque_psi, -u_correction[3]))
 
-        return {
+        result = {
             'thrust': thrust,
             'torque_phi': torque_phi,
             'torque_theta': torque_theta,
             'torque_psi': torque_psi,
         }
+
+        if self._waypoints_changed:
+            self._waypoints_changed = False
+            result['waypoints'] = [
+                {'x': wp[0], 'y': wp[1], 'z': wp[2], 'speed': self.speed}
+                for wp in self.waypoints
+            ]
+
+        return result

@@ -21,17 +21,34 @@ void PyBridge::initialize()
     // Start the Python interpreter
     impl->interpreter = std::make_unique<py::scoped_interpreter>();
 
-    // Configure sys.path
+    // Activate the .venv inside the embedded interpreter.
+    //
+    // pybind11's scoped_interpreter inherits the system Python's prefix
+    // (/usr), so sys.prefix == sys.base_prefix == "/usr".  Packages
+    // installed in the venv (numpy, scipy) need sys.prefix pointing at
+    // the venv so that their C extensions resolve correctly.
+    //
+    // We replicate what the venv's activate_this.py does:
+    //   1. Set sys.prefix / sys.exec_prefix to the venv root.
+    //   2. Re-run site.addsitedir() to pick up .venv/lib/.../site-packages.
+    // sys.base_prefix stays at /usr so the stdlib is still found.
     py::module_ sys = py::module_::import("sys");
+    std::string projDir = STR(PROJ_DIR);
+    std::string venvPrefix = projDir + "/.venv";
+    sys.attr("prefix") = venvPrefix;
+    sys.attr("exec_prefix") = venvPrefix;
+
+    // Add .venv site-packages via site.addsitedir() which also processes
+    // .pth files (e.g. for editable pip installs).
+    std::string venvSitePackages = venvPrefix + "/lib/python3.10/site-packages";
+    py::module_ site = py::module_::import("site");
+    site.attr("addsitedir")(venvSitePackages);
+
+    // Configure sys.path
     py::list path = sys.attr("path");
 
-    // Add project directory (for user modules)
-    std::string projDir = STR(PROJ_DIR);
+    // Add project directory at the front (for user modules like pymodules/)
     path.attr("insert")(0, projDir);
-
-    // Add .venv site-packages so users can import pip packages
-    std::string venvSitePackages = projDir + "/.venv/lib/python3.10/site-packages";
-    path.attr("insert")(1, venvSitePackages);
 
     // Add user-specified paths
     std::string extraPaths = par("pythonPath").stdstringValue();

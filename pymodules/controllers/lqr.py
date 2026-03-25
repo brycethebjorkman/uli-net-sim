@@ -362,7 +362,7 @@ class LqrController:
             if wps:
                 self.waypoints = [(w['x'], w['y'], w['z']) for w in wps]
                 self.speed = wps[0].get('speed', 10.0)
-                self.target = self.waypoints[0]
+                self.target = self.waypoints[-1]
             else:
                 self.target = pos
 

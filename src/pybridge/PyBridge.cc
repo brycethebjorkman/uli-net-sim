@@ -17,13 +17,15 @@ Define_Module(PyBridge);
 // ── Process-global interpreter ───────────────────────────────────────────────
 //
 // Many C extension modules (numpy, scipy, torch, …) register global state
-// that does not survive Py_Finalize + Py_Initialize.  Calling Py_Finalize
-// after importing such modules causes hangs or crashes on re-init.
+// that does not survive Py_Finalize + Py_Initialize.  Even calling
+// Py_FinalizeEx at process exit segfaults once such modules are loaded
+// (pybind11 internals cleanup accesses freed memory).
 //
-// We therefore keep the interpreter alive for the entire process lifetime.
-// On network rebuild, only the Python class instances are cleared.
+// We therefore initialize the interpreter once and intentionally never
+// finalize it.  On network rebuild only the Python class instances are
+// cleared.  The interpreter is leaked at process exit — this is safe
+// because the OS reclaims all process memory anyway.
 
-static std::unique_ptr<py::scoped_interpreter> globalInterpreter;
 static bool interpreterReady = false;
 
 void PyBridge::initialize()
@@ -32,7 +34,7 @@ void PyBridge::initialize()
 
     // Start the interpreter once; keep it alive across network rebuilds.
     if (!interpreterReady) {
-        globalInterpreter = std::make_unique<py::scoped_interpreter>();
+        py::initialize_interpreter();
         interpreterReady = true;
 
         // Activate the .venv inside the embedded interpreter.
@@ -101,7 +103,7 @@ void PyBridge::initialize()
     }
     // Delete cached modules so they get re-imported fresh
     for (auto key : toReload)
-        py::delattr(modules, key);
+        PyDict_DelItem(modules.ptr(), key.ptr());
 
     EV_INFO << "PyBridge initialized. sys.path = " << py::str(path).cast<std::string>() << endl;
 }

@@ -1,10 +1,18 @@
 """
-LQR hover/trajectory controller for MultirotorMobility.
+LQR controller for MultirotorMobility, adapted from NASA ProgPy's UAV LQR.
 
-Uses analytical linearization of 6-DoF dynamics at hover equilibrium
-and scipy's continuous algebraic Riccati equation (CARE) solver to
-compute the optimal gain matrix K.  More robust across airframe
-parameters than CascadedPidController — no manual tuning needed.
+Uses full-state linearization of 6-DoF dynamics with yaw-scheduled gain
+lookup, following the approach in ProgPy's SmallRotorcraft + LQR controller.
+The system is linearized at (phi=0, theta=0, psi_k, p=q=r=0, T=mg) for a grid of yaw angles,
+and the nearest gain K is selected at runtime based on the current heading.
+
+Key adaptations from ProgPy:
+  - State ordering: [pos, vel, angles, rates] vs ProgPy's [pos, angles, vel, rates]
+  - Rotational damping term in A matrix (our dynamics include -krot*omega)
+  - Yaw torque scaled by arm_length (our convention) vs ProgPy's direct 1/Izz
+  - CARE solver (scipy) instead of Hamiltonian eigenvalue decomposition
+  - Trajectory tracking with trapezoidal speed profile
+  - GCS command handling (hold/goto/waypoints)
 
 State vector: [x, y, z, vx, vy, vz, phi, theta, psi, p, q, r]  (12)
 Control:      [T, tau_phi, tau_theta, tau_psi]                    (4)
@@ -23,9 +31,12 @@ from scipy.linalg import solve_continuous_are
 
 GRAVITY = 9.81
 
+# Number of yaw grid points for gain scheduling (ProgPy uses 721 = 360*2+1)
+N_PSI_GRID = 721
+
 
 class LqrController:
-    """LQR controller with hover-point linearization and trajectory tracking."""
+    """LQR controller with yaw-scheduled gains and trajectory tracking."""
 
     def __init__(self):
         self.mass = 5.0
@@ -38,9 +49,12 @@ class LqrController:
         self.waypoints = []  # list of (x, y, z)
         self.speed = 10.0
         self.target = None   # current hover/goto target (x, y, z)
-        self.K = None         # gain matrix (4x12)
         self.initialized = False
         self.last_time = None
+
+        # Gain schedule: array of K matrices indexed by yaw grid
+        self.gain_schedule = None  # (N_PSI_GRID, 4, 12)
+        self.psi_grid = None       # (N_PSI_GRID,)
 
         # Trajectory tracking state
         self.ref_trajectory = None  # list of (t, px, py, pz, vx, vy, vz)
@@ -49,105 +63,142 @@ class LqrController:
         # Waypoint visualization update flag
         self._waypoints_changed = False
 
-    def _compute_gain(self):
-        """Compute LQR gain K by linearizing dynamics at hover and solving CARE.
+    # -- Linearization (adapted from ProgPy SmallRotorcraft.linear_model) ------
 
-        At hover equilibrium:
-          x_eq: all zeros except position = target
-          u_eq: [m*g, 0, 0, 0]
+    def _linearize(self, phi, theta, psi, p, q, r, T):
+        """Compute linearized A, B matrices at an arbitrary operating point.
 
-        Linearized: dx/dt = A*(x - x_eq) + B*(u - u_eq)
+        This is the Jacobian of our 6-DoF dynamics (see MultirotorMobility.cc)
+        with respect to state and control, evaluated at the given attitude,
+        angular rates, and thrust.
 
-        The A matrix (Jacobian of f w.r.t. x at hover):
-          Position rows: d(pos)/d(vel) = I
-          Velocity rows:
-            d(vx_dot)/d(theta) = g   (from T/m * sin(theta) at hover where T=mg)
-            d(vy_dot)/d(phi)   = -g  (from T/m * sin(phi) at hover)
-            d(vz_dot)/d(phi)   = 0, d(vz_dot)/d(theta) = 0  (cos terms vanish)
-          Euler angle rows:
-            d(phi_dot)/d(p) = 1  (at hover, sin/cos/tan terms vanish)
-            d(theta_dot)/d(q) = 1
-            d(psi_dot)/d(r) = 1
-          Angular rate rows:
-            d(p_dot)/d(p) = -rot_drag  (rotational damping)
-            d(q_dot)/d(q) = -rot_drag
-            d(r_dot)/d(r) = -rot_drag
-            (cross-coupling qr, pr terms vanish at hover since q=r=p=0)
-
-        The B matrix (Jacobian of f w.r.t. u at hover):
-          d(vz_dot)/d(T) = 1/m  (from T/m * cos(phi)*cos(theta), at hover = T/m)
-          d(p_dot)/d(tau_phi) = arm_length / Ixx
-          d(q_dot)/d(tau_theta) = arm_length / Iyy
-          d(r_dot)/d(tau_psi) = arm_length / Izz
+        Adapted from ProgPy SmallRotorcraft.linear_model() with:
+          - Our state ordering: [pos, vel, angles, rates] (indices 0-11)
+          - Rotational damping: -krot * [p, q, r] (our dynamics, not in ProgPy)
+          - Yaw torque: arm_length / Izz (our convention, ProgPy uses 1/Izz)
         """
         m = self.mass
         L = self.arm_length
         Ixx, Iyy, Izz = self.Ixx, self.Iyy, self.Izz
         krot = self.rot_drag
-        g = GRAVITY
+
+        sp, cp = math.sin(phi), math.cos(phi)
+        st, ct = math.sin(theta), math.cos(theta)
+        tt = math.tan(theta)
+        ss, cs = math.sin(psi), math.cos(psi)
 
         A = np.zeros((12, 12))
-        B = np.zeros((12, 4))
 
-        # Position derivatives w.r.t. velocity: dx/dvx = 1, etc.
+        # Position derivatives w.r.t. velocity
         A[0, 3] = 1.0  # dx/dvx
         A[1, 4] = 1.0  # dy/dvy
         A[2, 5] = 1.0  # dz/dvz
 
-        # Velocity derivatives w.r.t. Euler angles (at hover, T=mg):
-        # vx_dot = (T/m)(sin(theta)*cos(psi)*cos(phi) + sin(phi)*sin(psi))
-        # At hover (phi=theta=psi=0): d(vx_dot)/d(theta) = (mg/m)*cos(0)*cos(0)*cos(0) = g
-        A[3, 7] = g     # d(vx_dot)/d(theta)
-        # vy_dot = (T/m)(sin(theta)*sin(psi)*cos(phi) - sin(phi)*cos(psi))
-        # At hover: d(vy_dot)/d(phi) = (mg/m)*(0 - cos(0)*cos(0)) = -g
-        A[4, 6] = -g    # d(vy_dot)/d(phi)
-        # vz_dot = -g + (T/m)*cos(phi)*cos(theta)
-        # At hover: d(vz_dot)/d(phi) = -(mg/m)*sin(0)*cos(0) = 0
-        # d(vz_dot)/d(theta) = -(mg/m)*cos(0)*sin(0) = 0
+        # Velocity derivatives w.r.t. Euler angles
+        # vx_dot = T/m * (sin(theta)*cos(psi)*cos(phi) + sin(phi)*sin(psi))
+        A[3, 6] = T / m * (-sp * st * cs + cp * ss)       # d(vx_dot)/d(phi)
+        A[3, 7] = T / m * ct * cs * cp                     # d(vx_dot)/d(theta)
+        A[3, 8] = T / m * (-st * ss * cp + sp * cs)        # d(vx_dot)/d(psi)
 
-        # Euler angle kinematics w.r.t. angular rates (at hover):
+        # vy_dot = T/m * (sin(theta)*sin(psi)*cos(phi) - sin(phi)*cos(psi))
+        A[4, 6] = T / m * (-sp * st * ss - cp * cs)        # d(vy_dot)/d(phi)
+        A[4, 7] = T / m * ct * ss * cp                     # d(vy_dot)/d(theta)
+        A[4, 8] = T / m * (st * cs * cp + sp * ss)         # d(vy_dot)/d(psi)
+
+        # vz_dot = -g + T/m * cos(phi)*cos(theta)
+        A[5, 6] = -T / m * sp * ct                         # d(vz_dot)/d(phi)
+        A[5, 7] = -T / m * cp * st                         # d(vz_dot)/d(theta)
+
+        # Euler angle kinematics
         # phi_dot = p + q*sin(phi)*tan(theta) + r*cos(phi)*tan(theta)
-        # At hover: d(phi_dot)/d(p) = 1
-        A[6, 9] = 1.0   # d(phi_dot)/d(p)
-        # theta_dot = q*cos(phi) - r*sin(phi)
-        # At hover: d(theta_dot)/d(q) = 1
-        A[7, 10] = 1.0  # d(theta_dot)/d(q)
-        # psi_dot = (q*sin(phi) + r*cos(phi))/cos(theta)
-        # At hover: d(psi_dot)/d(r) = 1
-        A[8, 11] = 1.0  # d(psi_dot)/d(r)
+        A[6, 6] = q * cp * tt - r * sp * tt                # d(phi_dot)/d(phi)
+        A[6, 7] = q * sp * (tt**2 + 1) + r * cp * (tt**2 + 1)  # d(phi_dot)/d(theta)
+        A[6, 9] = 1.0                                      # d(phi_dot)/d(p)
+        A[6, 10] = sp * tt                                  # d(phi_dot)/d(q)
+        A[6, 11] = cp * tt                                  # d(phi_dot)/d(r)
 
-        # Angular rate dynamics w.r.t. angular rates (rotational damping):
-        A[9, 9] = -krot    # d(p_dot)/d(p)
-        A[10, 10] = -krot  # d(q_dot)/d(q)
-        A[11, 11] = -krot  # d(r_dot)/d(r)
+        # theta_dot = q*cos(phi) - r*sin(phi)
+        A[7, 6] = -q * sp - r * cp                         # d(theta_dot)/d(phi)
+        A[7, 10] = cp                                       # d(theta_dot)/d(q)
+        A[7, 11] = -sp                                      # d(theta_dot)/d(r)
+
+        # psi_dot = (q*sin(phi) + r*cos(phi)) / cos(theta)
+        if abs(ct) > 1e-6:
+            A[8, 6] = (q * cp - r * sp) / ct               # d(psi_dot)/d(phi)
+            A[8, 7] = (q * sp * st + r * cp * st) / ct**2  # d(psi_dot)/d(theta)
+            A[8, 10] = sp / ct                               # d(psi_dot)/d(q)
+            A[8, 11] = cp / ct                               # d(psi_dot)/d(r)
+
+        # Angular rate dynamics (with gyroscopic coupling + rotational damping)
+        # p_dot = (Iyy-Izz)/Ixx * q*r + L/Ixx * tau_phi - krot*p
+        A[9, 9] = -krot                                     # d(p_dot)/d(p)
+        A[9, 10] = (Iyy - Izz) / Ixx * r                   # d(p_dot)/d(q)
+        A[9, 11] = (Iyy - Izz) / Ixx * q                   # d(p_dot)/d(r)
+
+        # q_dot = (Izz-Ixx)/Iyy * p*r + L/Iyy * tau_theta - krot*q
+        A[10, 9] = (Izz - Ixx) / Iyy * r                   # d(q_dot)/d(p)
+        A[10, 10] = -krot                                    # d(q_dot)/d(q)
+        A[10, 11] = (Izz - Ixx) / Iyy * p                   # d(q_dot)/d(r)
+
+        # r_dot = (Ixx-Iyy)/Izz * p*q + L/Izz * tau_psi - krot*r
+        A[11, 9] = (Ixx - Iyy) / Izz * q                   # d(r_dot)/d(p)
+        A[11, 10] = (Ixx - Iyy) / Izz * p                   # d(r_dot)/d(q)
+        A[11, 11] = -krot                                    # d(r_dot)/d(r)
 
         # B matrix: control input effects
-        B[5, 0] = 1.0 / m          # d(vz_dot)/d(T)
-        B[9, 1] = L / Ixx          # d(p_dot)/d(tau_phi)
-        B[10, 2] = L / Iyy         # d(q_dot)/d(tau_theta)
-        B[11, 3] = L / Izz         # d(r_dot)/d(tau_psi)
+        B = np.zeros((12, 4))
+        # Thrust direction depends on attitude (not just 1/m for vz)
+        B[3, 0] = (sp * ss + st * cp * cs) / m              # d(vx_dot)/d(T)
+        B[4, 0] = (-sp * cs + st * cp * ss) / m             # d(vy_dot)/d(T)
+        B[5, 0] = cp * ct / m                               # d(vz_dot)/d(T)
+        B[9, 1] = L / Ixx                                   # d(p_dot)/d(tau_phi)
+        B[10, 2] = L / Iyy                                   # d(q_dot)/d(tau_theta)
+        B[11, 3] = L / Izz                                   # d(r_dot)/d(tau_psi)
+
+        return A, B
+
+    # -- Gain scheduling (adapted from ProgPy LQR.build_scheduled_control) -----
+
+    def _build_gain_schedule(self):
+        """Pre-compute LQR gains over a yaw-angle grid.
+
+        Following ProgPy's approach: linearize at (phi=0, theta=0, psi_k,
+        p=q=r=0, T=mg) for 721 evenly-spaced yaw angles in [-2pi, 2pi],
+        then solve CARE for each to get K_k.  At runtime, look up the
+        nearest K by current psi.
+        """
+        mg = self.mass * GRAVITY
 
         # Q matrix: state error penalty
-        # Angle weights must dominate position weights to keep the drone
-        # upright — LQR is linearized at hover and diverges past ~25°.
         Q = np.diag([
-            10.0, 10.0, 20.0,    # x, y, z position (moderate — let angles win)
+            10.0, 10.0, 20.0,    # x, y, z position
             10.0, 10.0, 15.0,    # vx, vy, vz velocity
-            80.0, 80.0, 20.0,    # phi, theta, psi angles (high — stay upright)
+            80.0, 80.0, 20.0,    # phi, theta, psi angles
             20.0, 20.0, 10.0,    # p, q, r angular rates
         ])
 
         # R matrix: control effort penalty
         R = np.diag([
-            0.5,   # thrust (lower = more responsive altitude)
-            10.0,  # tau_phi  (moderate — allow corrective torques)
+            0.5,   # thrust
+            10.0,  # tau_phi
             10.0,  # tau_theta
             15.0,  # tau_psi
         ])
 
-        # Solve continuous algebraic Riccati equation: A'P + PA - PBR^{-1}B'P + Q = 0
-        P = solve_continuous_are(A, B, Q, R)
-        self.K = np.linalg.solve(R, B.T @ P)  # K = R^{-1} B' P
+        self.psi_grid = np.linspace(-2.0 * np.pi, 2.0 * np.pi, N_PSI_GRID)
+        self.gain_schedule = np.zeros((N_PSI_GRID, 4, 12))
+
+        for i, psi_k in enumerate(self.psi_grid):
+            A, B = self._linearize(0.0, 0.0, psi_k, 0.0, 0.0, 0.0, mg)
+            P = solve_continuous_are(A, B, Q, R)
+            self.gain_schedule[i] = np.linalg.solve(R, B.T @ P)
+
+    def _lookup_gain(self, psi):
+        """Find the pre-computed gain matrix nearest to current yaw angle."""
+        idx = np.argmin(np.abs(self.psi_grid - psi))
+        return self.gain_schedule[idx]
+
+    # -- Reference trajectory --------------------------------------------------
 
     def _build_reference_trajectory(self, t0):
         """Pre-compute reference trajectory from waypoints.
@@ -248,6 +299,8 @@ class LqrController:
             for i in range(6)
         )
 
+    # -- GCS command handling --------------------------------------------------
+
     def _handle_gcs_command(self, pos, t, cmd_str):
         """Parse and execute a GCS command (JSON string from state['gcs_command'])."""
         if cmd_str is None or not isinstance(cmd_str, str):
@@ -286,6 +339,8 @@ class LqrController:
             else:
                 self.hovering = False
 
+    # -- Main control loop -----------------------------------------------------
+
     def on_ctl_tick(self, state):
         pos = state['pos']
         vel = state['vel']
@@ -293,7 +348,7 @@ class LqrController:
         omega = state['omega']
         t = state['time']
 
-        # --- First call: extract params and compute gain ---
+        # --- First call: extract params and build gain schedule ---
         if not self.initialized:
             self.initialized = True
             self.last_time = t
@@ -311,7 +366,7 @@ class LqrController:
             else:
                 self.target = pos
 
-            self._compute_gain()
+            self._build_gain_schedule()
 
             # Build reference trajectory if we have multiple waypoints
             if len(self.waypoints) > 1:
@@ -333,10 +388,8 @@ class LqrController:
             vx_ref, vy_ref, vz_ref = 0.0, 0.0, 0.0
 
         # --- Build state error vector (tracking error) ---
-        # Clamp position and velocity errors so LQR doesn't command
-        # tilt angles beyond the linear regime (~20°).  Without this,
-        # large tracking errors produce torques that tip the drone past
-        # the point where the hover-linearization is valid.
+        # Clamp position and velocity errors to prevent the controller from
+        # commanding extreme corrections when far off-track.
         MAX_POS_ERR = 15.0   # meters
         MAX_VEL_ERR = 8.0    # m/s
 
@@ -353,8 +406,11 @@ class LqrController:
             omega[0], omega[1], omega[2],
         ])
 
-        # --- LQR control: u = u_hover - K * x_err ---
-        u_correction = self.K @ x_err
+        # --- LQR control: u = u_hover - K(psi) * x_err ---
+        # Look up the gain matrix scheduled on current yaw angle
+        psi = euler[2]
+        K = self._lookup_gain(psi)
+        u_correction = K @ x_err
 
         mg = self.mass * GRAVITY
         thrust = mg - u_correction[0]

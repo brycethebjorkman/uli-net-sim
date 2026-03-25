@@ -128,20 +128,21 @@ class LqrController:
         B[11, 3] = L / Izz         # d(r_dot)/d(tau_psi)
 
         # Q matrix: state error penalty
-        # Position: high weight; velocity: high (to avoid overshoot); angles: medium; rates: medium
+        # Angle weights must dominate position weights to keep the drone
+        # upright — LQR is linearized at hover and diverges past ~25°.
         Q = np.diag([
-            40.0, 40.0, 60.0,    # x, y, z position
-            20.0, 20.0, 30.0,    # vx, vy, vz velocity (high to damp oscillation)
-            15.0, 15.0, 5.0,     # phi, theta, psi angles
-            5.0,  5.0,  3.0,     # p, q, r angular rates
+            10.0, 10.0, 20.0,    # x, y, z position (moderate — let angles win)
+            10.0, 10.0, 15.0,    # vx, vy, vz velocity
+            80.0, 80.0, 20.0,    # phi, theta, psi angles (high — stay upright)
+            20.0, 20.0, 10.0,    # p, q, r angular rates
         ])
 
         # R matrix: control effort penalty
         R = np.diag([
             0.5,   # thrust (lower = more responsive altitude)
-            20.0,  # tau_phi  (penalize torques to avoid aggressive tilting)
-            20.0,  # tau_theta
-            20.0,  # tau_psi
+            10.0,  # tau_phi  (moderate — allow corrective torques)
+            10.0,  # tau_theta
+            15.0,  # tau_psi
         ])
 
         # Solve continuous algebraic Riccati equation: A'P + PA - PBR^{-1}B'P + Q = 0
@@ -332,9 +333,22 @@ class LqrController:
             vx_ref, vy_ref, vz_ref = 0.0, 0.0, 0.0
 
         # --- Build state error vector (tracking error) ---
+        # Clamp position and velocity errors so LQR doesn't command
+        # tilt angles beyond the linear regime (~20°).  Without this,
+        # large tracking errors produce torques that tip the drone past
+        # the point where the hover-linearization is valid.
+        MAX_POS_ERR = 15.0   # meters
+        MAX_VEL_ERR = 8.0    # m/s
+
+        pos_err = [pos[0] - px, pos[1] - py, pos[2] - pz]
+        vel_err = [vel[0] - vx_ref, vel[1] - vy_ref, vel[2] - vz_ref]
+        for i in range(3):
+            pos_err[i] = max(-MAX_POS_ERR, min(MAX_POS_ERR, pos_err[i]))
+            vel_err[i] = max(-MAX_VEL_ERR, min(MAX_VEL_ERR, vel_err[i]))
+
         x_err = np.array([
-            pos[0] - px, pos[1] - py, pos[2] - pz,
-            vel[0] - vx_ref, vel[1] - vy_ref, vel[2] - vz_ref,
+            pos_err[0], pos_err[1], pos_err[2],
+            vel_err[0], vel_err[1], vel_err[2],
             euler[0], euler[1], euler[2],
             omega[0], omega[1], omega[2],
         ])

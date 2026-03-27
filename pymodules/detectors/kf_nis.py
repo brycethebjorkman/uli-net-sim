@@ -3,9 +3,9 @@ GCS-side KF NIS detector.
 
 Reads the per-receiver KF NIS values computed by the C++
 KalmanFilterDetectMgmt module (piped through GcsReport.kfNis).
-Logs per-RX-event NIS for each receiver (matching the offline
-KalmanFilterDetector granularity) and also the max/mean across
-receivers for convenience.
+Logs per-RX-event NIS for each (receiver, serial_number) pair
+(matching the offline KalmanFilterDetector granularity) and also
+the max/mean across receivers for convenience.
 
 Requires federate hosts to use KalmanFilterDetectMgmt (or a subclass)
 as their beacon management module. Non-KF hosts will have kf_nis = None.
@@ -22,9 +22,9 @@ INI usage:
 class KfNisDetector:
     """Online KF NIS spoofing detector using C++ Kalman filter output.
 
-    Logs one ``kf_nis_host{id}`` value per receiver per transmission
-    (same granularity as the offline KalmanFilterDetector), plus
-    ``kf_max_nis`` and ``kf_mean_nis`` aggregates.
+    Logs one ``kf_nis_host{id}_sn{serial}`` value per receiver per
+    transmission (same granularity as the offline KalmanFilterDetector),
+    plus ``kf_max_nis`` and ``kf_mean_nis`` aggregates.
     """
 
     def __init__(self):
@@ -32,6 +32,7 @@ class KfNisDetector:
 
     def on_gcs_reports(self, data):
         reports = data['reports']
+        serial_number = data['serial_number']
 
         log = {}
         nis_values = []
@@ -42,7 +43,7 @@ class KfNisDetector:
                 continue
             nis_values.append(nis)
             host_id = r['host_id']
-            log[f'kf_nis_host{host_id}'] = nis
+            log[f'kf_nis_host{host_id}_sn{serial_number}'] = nis
 
         if nis_values:
             log['kf_max_nis'] = max(nis_values)

@@ -3,7 +3,9 @@ GCS-side KF NIS detector.
 
 Reads the per-receiver KF NIS values computed by the C++
 KalmanFilterDetectMgmt module (piped through GcsReport.kfNis).
-Reports the maximum NIS across all receivers for each transmission.
+Logs per-RX-event NIS for each receiver (matching the offline
+KalmanFilterDetector granularity) and also the max/mean across
+receivers for convenience.
 
 Requires federate hosts to use KalmanFilterDetectMgmt (or a subclass)
 as their beacon management module. Non-KF hosts will have kf_nis = None.
@@ -18,26 +20,35 @@ INI usage:
 
 
 class KfNisDetector:
-    """Online KF NIS spoofing detector using C++ Kalman filter output."""
+    """Online KF NIS spoofing detector using C++ Kalman filter output.
+
+    Logs one ``kf_nis_host{id}`` value per receiver per transmission
+    (same granularity as the offline KalmanFilterDetector), plus
+    ``kf_max_nis`` and ``kf_mean_nis`` aggregates.
+    """
 
     def __init__(self):
-        self._detections = 0
+        pass
 
     def on_gcs_reports(self, data):
         reports = data['reports']
 
-        # Collect all non-None KF NIS values from this transmission
-        nis_values = [r['kf_nis'] for r in reports if r.get('kf_nis') is not None]
+        log = {}
+        nis_values = []
 
-        if not nis_values:
-            return {'log': {'kf_max_nis': 0.0, 'kf_mean_nis': 0.0}}
+        for r in reports:
+            nis = r.get('kf_nis')
+            if nis is None:
+                continue
+            nis_values.append(nis)
+            host_id = r['host_id']
+            log[f'kf_nis_host{host_id}'] = nis
 
-        max_nis = max(nis_values)
-        mean_nis = sum(nis_values) / len(nis_values)
+        if nis_values:
+            log['kf_max_nis'] = max(nis_values)
+            log['kf_mean_nis'] = sum(nis_values) / len(nis_values)
+        else:
+            log['kf_max_nis'] = 0.0
+            log['kf_mean_nis'] = 0.0
 
-        return {
-            'log': {
-                'kf_max_nis': max_nis,
-                'kf_mean_nis': mean_nis,
-            },
-        }
+        return {'log': log}

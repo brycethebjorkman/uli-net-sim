@@ -84,6 +84,10 @@ Examples:
                         help='Host index to use as spoofer (claims ghost position)')
     parser.add_argument('--enable-spoofer', action='store_true',
                         help='Randomly select ghost and spoofer hosts (requires >= 2 hosts)')
+    parser.add_argument('--spoofer-type', default='dynamic_trajectory',
+                        choices=['dynamic_trajectory', 'snow_plow'],
+                        help='Spoofer type: dynamic_trajectory (GhostHost+DynamicTrajectorySpooferHost) '
+                             'or snow_plow (SnowPlowSpoofer TX hook, no ghost) (default: dynamic_trajectory)')
     parser.add_argument('--obstacle-loss', default='DielectricObstacleLoss',
                         choices=['DielectricObstacleLoss', 'ImageMethodObstacleLoss'],
                         help='Obstacle loss model (default: DielectricObstacleLoss)')
@@ -99,14 +103,20 @@ Examples:
     args = parser.parse_args()
 
     # Validate spoofer/ghost options
-    if args.enable_spoofer and (args.ghost_host is not None or args.spoofer_host is not None):
-        parser.error("--enable-spoofer cannot be used with --ghost-host or --spoofer-host")
-
-    if (args.ghost_host is None) != (args.spoofer_host is None):
-        parser.error("--ghost-host and --spoofer-host must be used together")
-
-    if args.ghost_host is not None and args.ghost_host == args.spoofer_host:
-        parser.error("--ghost-host and --spoofer-host must be different hosts")
+    if args.spoofer_type == 'snow_plow':
+        # Snow plow spoofer has no ghost — only --enable-spoofer or --spoofer-host
+        if args.ghost_host is not None:
+            parser.error("--ghost-host is not used with --spoofer-type snow_plow (no ghost needed)")
+        if args.enable_spoofer and args.spoofer_host is not None:
+            parser.error("--enable-spoofer cannot be used with --spoofer-host")
+    else:
+        # Dynamic trajectory spoofer needs ghost+spoofer pair
+        if args.enable_spoofer and (args.ghost_host is not None or args.spoofer_host is not None):
+            parser.error("--enable-spoofer cannot be used with --ghost-host or --spoofer-host")
+        if (args.ghost_host is None) != (args.spoofer_host is None):
+            parser.error("--ghost-host and --spoofer-host must be used together")
+        if args.ghost_host is not None and args.ghost_host == args.spoofer_host:
+            parser.error("--ghost-host and --spoofer-host must be different hosts")
 
     # Set seed if provided (before any random operations)
     if args.seed is not None:
@@ -128,28 +138,36 @@ Examples:
     num_hosts = count_hosts_in_waypoints(trajectories_path)
     print(f"Found {num_hosts} hosts in waypoints file")
 
-    # Handle --enable-spoofer: randomly select ghost and spoofer
+    # Handle --enable-spoofer: randomly select ghost and/or spoofer
     ghost_host = args.ghost_host
     spoofer_host = args.spoofer_host
+    spoofer_type = args.spoofer_type
 
     if args.enable_spoofer:
-        if num_hosts < 2:
-            print(f"Error: --enable-spoofer requires at least 2 hosts, found {num_hosts}", file=sys.stderr)
-            sys.exit(1)
-        # Randomly select two different hosts
-        selected = random.sample(range(num_hosts), 2)
-        ghost_host = selected[0]
-        spoofer_host = selected[1]
-        print(f"Randomly selected: ghost={ghost_host}, spoofer={spoofer_host}")
+        if spoofer_type == 'snow_plow':
+            # Snow plow: pick one spoofer, no ghost
+            spoofer_host = random.randrange(num_hosts)
+            print(f"Randomly selected: spoofer={spoofer_host} (snow_plow, no ghost)")
+        else:
+            # Dynamic trajectory: pick ghost + spoofer pair
+            if num_hosts < 2:
+                print(f"Error: --enable-spoofer requires at least 2 hosts, found {num_hosts}", file=sys.stderr)
+                sys.exit(1)
+            selected = random.sample(range(num_hosts), 2)
+            ghost_host = selected[0]
+            spoofer_host = selected[1]
+            print(f"Randomly selected: ghost={ghost_host}, spoofer={spoofer_host}")
 
-    # Validate host indices (only for explicit --ghost-host/--spoofer-host, not --enable-spoofer)
-    if ghost_host is not None and not args.enable_spoofer:
-        if ghost_host < 0 or ghost_host >= num_hosts:
-            print(f"Error: ghost-host index {ghost_host} out of range [0, {num_hosts-1}]", file=sys.stderr)
-            sys.exit(1)
-        if spoofer_host < 0 or spoofer_host >= num_hosts:
-            print(f"Error: spoofer-host index {spoofer_host} out of range [0, {num_hosts-1}]", file=sys.stderr)
-            sys.exit(1)
+    # Validate host indices (only for explicit args, not --enable-spoofer)
+    if not args.enable_spoofer:
+        if ghost_host is not None:
+            if ghost_host < 0 or ghost_host >= num_hosts:
+                print(f"Error: ghost-host index {ghost_host} out of range [0, {num_hosts-1}]", file=sys.stderr)
+                sys.exit(1)
+        if spoofer_host is not None:
+            if spoofer_host < 0 or spoofer_host >= num_hosts:
+                print(f"Error: spoofer-host index {spoofer_host} out of range [0, {num_hosts-1}]", file=sys.stderr)
+                sys.exit(1)
 
     # Parse ranges
     tx_power_min, tx_power_max = parse_range(args.tx_power)
@@ -201,6 +219,7 @@ Examples:
             "sim_time_limit": args.sim_time_limit,
             "ghost_host": ghost_host,
             "spoofer_host": spoofer_host,
+            "spoofer_type": spoofer_type,
             "obstacle_loss": args.obstacle_loss,
             "max_bounces": args.max_bounces,
             "config_name": config_name,
@@ -256,8 +275,11 @@ Examples:
 
     # Description
     desc_parts = [f"{num_hosts} hosts", "open space"]
-    if ghost_host is not None:
-        desc_parts.append(f"ghost[{ghost_host}]+spoofer[{spoofer_host}]")
+    if spoofer_host is not None:
+        if spoofer_type == 'snow_plow':
+            desc_parts.append(f"snow_plow_spoofer[{spoofer_host}]")
+        else:
+            desc_parts.append(f"ghost[{ghost_host}]+spoofer[{spoofer_host}]")
     lines.append(f'description = "{", ".join(desc_parts)}"')
     lines.append("")
 
@@ -278,7 +300,11 @@ Examples:
     lines.append("")
 
     # Host types and configurations
-    if ghost_host is not None:
+    if spoofer_host is not None and spoofer_type == 'snow_plow':
+        lines.append(f"# Snow plow spoofer (claims position further along its waypoint path)")
+        lines.append(f'*.host[{spoofer_host}].wlan[0].mgmt.pyTxClass = "pymodules.spoofers.snow_plow.SnowPlowSpoofer"')
+        lines.append("")
+    elif ghost_host is not None:
         lines.append(f"# Ghost host (silent, no RF)")
         lines.append(f'*.host[{ghost_host}].typename = "GhostHost"')
         lines.append("")
@@ -290,7 +316,7 @@ Examples:
     # Per-host radio and beacon parameters
     lines.append("# Per-host parameters (sampled deterministically from seed)")
     for i in range(num_hosts):
-        # Skip radio params for ghost host (no wlan)
+        # Skip radio params for ghost host (no wlan) — only for dynamic_trajectory
         if ghost_host is not None and i == ghost_host:
             continue
         params = host_params[i]
@@ -317,8 +343,11 @@ Examples:
         lines.append("[Config ScenarioWithBuildings]")
         lines.append("extends = ScenarioOpenSpace")
         desc_parts = [f"{num_hosts} hosts", "with buildings"]
-        if ghost_host is not None:
-            desc_parts.append(f"ghost[{ghost_host}]+spoofer[{spoofer_host}]")
+        if spoofer_host is not None:
+            if spoofer_type == 'snow_plow':
+                desc_parts.append(f"snow_plow_spoofer[{spoofer_host}]")
+            else:
+                desc_parts.append(f"ghost[{ghost_host}]+spoofer[{spoofer_host}]")
         lines.append(f'description = "{", ".join(desc_parts)}"')
         lines.append("")
         lines.append(f'*.physicalEnvironment.config = xmldoc("{buildings_rel}")')
@@ -336,8 +365,11 @@ Examples:
     print(f"  Beacon Interval: {beacon_interval_min}-{beacon_interval_max}s (per-host sampled)")
     if beacon_offset_min != 0 or beacon_offset_max != 0:
         print(f"  Beacon Offset: {beacon_offset_min}-{beacon_offset_max}s (per-host sampled)")
-    if ghost_host is not None:
-        print(f"  Ghost: host[{ghost_host}], Spoofer: host[{spoofer_host}]")
+    if spoofer_host is not None:
+        if spoofer_type == 'snow_plow':
+            print(f"  Snow plow spoofer: host[{spoofer_host}]")
+        else:
+            print(f"  Ghost: host[{ghost_host}], Spoofer: host[{spoofer_host}]")
 
     # Output machine-readable metadata for downstream tools
     # Format: SPOOFER_HOST=N (only if spoofer is configured)

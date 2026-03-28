@@ -30,6 +30,7 @@ UE_SIM_TIME="300"
 
 # Spoofer/ghost settings (optional)
 UE_ENABLE_SPOOFER=false
+UE_SPOOFER_TYPE="dynamic_trajectory"
 
 # Parallelization
 UE_PARALLEL=1  # Default: sequential execution
@@ -99,6 +100,7 @@ Radio Parameters:
 
 Spoofer/Ghost Configuration:
     --enable-spoofer          Enable spoofer (randomly selects ghost and spoofer hosts)
+    --spoofer-type TYPE       dynamic_trajectory (default) or snow_plow
 
 Branching Factors:
     --param-variants N        Number of top-level parameter sets (default: $UE_PARAM_VARIANTS)
@@ -204,6 +206,7 @@ run_urbanenv() {
             --obstacle-loss) UE_OBSTACLE_LOSS="$2"; shift 2 ;;
             --max-bounces) UE_MAX_BOUNCES="$2"; shift 2 ;;
             --enable-spoofer) UE_ENABLE_SPOOFER=true; shift ;;
+            --spoofer-type) UE_SPOOFER_TYPE="$2"; shift 2 ;;
             --param-variants) UE_PARAM_VARIANTS="$2"; shift 2 ;;
             --corridor-variants) UE_CORRIDOR_VARIANTS="$2"; shift 2 ;;
             --building-variants) UE_BUILDING_VARIANTS="$2"; shift 2 ;;
@@ -249,7 +252,7 @@ run_urbanenv() {
     echo "  Beacon interval:   $UE_BEACON_INTERVAL s"
     echo "  Beacon offset:     $UE_BEACON_OFFSET s"
     echo "  Background noise:  $UE_BACKGROUND_NOISE dBm"
-    echo "Spoofer:             $UE_ENABLE_SPOOFER"
+    echo "Spoofer:             $UE_ENABLE_SPOOFER ($UE_SPOOFER_TYPE)"
     echo "Branching factors:"
     echo "  Param variants:    $UE_PARAM_VARIANTS"
     echo "  Corridor variants: $UE_CORRIDOR_VARIANTS"
@@ -466,7 +469,7 @@ run_urbanenv() {
                                 SCENARIO_ARGS+=(-b "$BLDG_FILE")
                             fi
                             if [ "$UE_ENABLE_SPOOFER" = true ]; then
-                                SCENARIO_ARGS+=(--enable-spoofer)
+                                SCENARIO_ARGS+=(--enable-spoofer --spoofer-type "$UE_SPOOFER_TYPE")
                             fi
                             # Capture output to extract SPOOFER_HOST
                             SCENARIO_OUTPUT=$(python3 "$GEN_SCENARIO" "${SCENARIO_ARGS[@]}")
@@ -573,7 +576,8 @@ run_urbanenv() {
   "background_noise": $UE_BACKGROUND_NOISE,
   "obstacle_loss": "$UE_OBSTACLE_LOSS",
   "max_bounces": $UE_MAX_BOUNCES,
-  "enable_spoofer": $JSON_ENABLE_SPOOFER
+  "enable_spoofer": $JSON_ENABLE_SPOOFER,
+  "spoofer_type": "$UE_SPOOFER_TYPE"
 }
 EOF
 )

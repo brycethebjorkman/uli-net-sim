@@ -26,6 +26,12 @@ simple MultirotorMobility extends MovingMobilityBase
         @class(MultirotorMobility);
 
         // Signal declarations and vector recording
+        @signal[posX](type=double);
+        @signal[posY](type=double);
+        @signal[posZ](type=double);
+        @signal[velX](type=double);
+        @signal[velY](type=double);
+        @signal[velZ](type=double);
         @signal[thrust](type=double);
         @signal[tauPhi](type=double);
         @signal[tauTheta](type=double);
@@ -37,6 +43,12 @@ simple MultirotorMobility extends MovingMobilityBase
         @signal[omegaQ](type=double);
         @signal[omegaR](type=double);
 
+        @statistic[posX](title="Position X"; source=posX; record=vector);
+        @statistic[posY](title="Position Y"; source=posY; record=vector);
+        @statistic[posZ](title="Position Z"; source=posZ; record=vector);
+        @statistic[velX](title="Velocity X"; source=velX; record=vector);
+        @statistic[velY](title="Velocity Y"; source=velY; record=vector);
+        @statistic[velZ](title="Velocity Z"; source=velZ; record=vector);
         @statistic[thrust](title="Thrust"; source=thrust; record=vector);
         @statistic[tauPhi](title="Torque phi"; source=tauPhi; record=vector);
         @statistic[tauTheta](title="Torque theta"; source=tauTheta; record=vector);

@@ -29,6 +29,12 @@ from pathlib import Path
 
 DEFAULT_VECTOR_SPECS = [
     # MultirotorMobility signals (explicit — no inherited stats)
+    ("*.host[*].mobility", "posX:vector"),
+    ("*.host[*].mobility", "posY:vector"),
+    ("*.host[*].mobility", "posZ:vector"),
+    ("*.host[*].mobility", "velX:vector"),
+    ("*.host[*].mobility", "velY:vector"),
+    ("*.host[*].mobility", "velZ:vector"),
     ("*.host[*].mobility", "thrust:vector"),
     ("*.host[*].mobility", "tauPhi:vector"),
     ("*.host[*].mobility", "tauTheta:vector"),

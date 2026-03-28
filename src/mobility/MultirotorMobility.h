@@ -71,6 +71,8 @@ class MultirotorMobility : public MovingMobilityBase
     int pyHandle = -1;  // handle into PyBridge instance table
 
     // Vector recording
+    simsignal_t posXSignal, posYSignal, posZSignal;
+    simsignal_t velXSignal, velYSignal, velZSignal;
     simsignal_t thrustSignal;
     simsignal_t tauPhiSignal, tauThetaSignal, tauPsiSignal;
     simsignal_t phiSignal, thetaSignal, psiSignal;

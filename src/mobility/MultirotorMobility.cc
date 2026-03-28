@@ -195,6 +195,12 @@ void MultirotorMobility::initialize(int stage)
         }
 
         // Register signals for vector recording
+        posXSignal     = registerSignal("posX");
+        posYSignal     = registerSignal("posY");
+        posZSignal     = registerSignal("posZ");
+        velXSignal     = registerSignal("velX");
+        velYSignal     = registerSignal("velY");
+        velZSignal     = registerSignal("velZ");
         thrustSignal   = registerSignal("thrust");
         tauPhiSignal   = registerSignal("tauPhi");
         tauThetaSignal = registerSignal("tauTheta");
@@ -402,6 +408,12 @@ void MultirotorMobility::callPythonController()
 
 void MultirotorMobility::recordState()
 {
+    emit(posXSignal,     state[POS_X]);
+    emit(posYSignal,     state[POS_Y]);
+    emit(posZSignal,     state[POS_Z]);
+    emit(velXSignal,     state[VEL_X]);
+    emit(velYSignal,     state[VEL_Y]);
+    emit(velZSignal,     state[VEL_Z]);
     emit(thrustSignal,   control[THRUST]);
     emit(tauPhiSignal,   control[TAU_PHI]);
     emit(tauThetaSignal, control[TAU_THETA]);

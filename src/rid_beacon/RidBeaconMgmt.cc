@@ -361,6 +361,45 @@ void RidBeaconMgmt::callPyTxHook(const inet::Ptr<RidBeaconFrame>& body)
     txState["serial"]  = body->getSerialNumber();
     txState["time"]    = simTime().dbl();
 
+    // One-shot delivery of waypoints (parsed from mobility's XML script).
+    // Works with both TurtleMobility (turtleScript) and MultirotorMobility
+    // (waypointScript) since both use <set>/<moveto> XML format.
+    if (!pyTxWaypointsSent) {
+        pyTxWaypointsSent = true;
+        py::list wpList;
+        auto host = getContainingNode(this);
+        auto mobility = host->getSubmodule("mobility");
+        if (mobility) {
+            cXMLElement *wpXml = nullptr;
+            if (mobility->hasPar("waypointScript"))
+                wpXml = mobility->par("waypointScript").xmlValue();
+            else if (mobility->hasPar("turtleScript"))
+                wpXml = mobility->par("turtleScript").xmlValue();
+
+            if (wpXml) {
+                double wpSpeed = 10.0;
+                for (auto *child = wpXml->getFirstChild(); child;
+                     child = child->getNextSibling()) {
+                    const char *tag = child->getTagName();
+                    if (strcmp(tag, "set") == 0 || strcmp(tag, "moveto") == 0) {
+                        double x = child->getAttribute("x") ? atof(child->getAttribute("x")) : 0;
+                        double y = child->getAttribute("y") ? atof(child->getAttribute("y")) : 0;
+                        double z = child->getAttribute("z") ? atof(child->getAttribute("z")) : 0;
+                        if (strcmp(tag, "set") == 0 && child->getAttribute("speed"))
+                            wpSpeed = atof(child->getAttribute("speed"));
+                        py::dict wp;
+                        wp["x"] = x;
+                        wp["y"] = y;
+                        wp["z"] = z;
+                        wp["speed"] = wpSpeed;
+                        wpList.append(wp);
+                    }
+                }
+            }
+        }
+        txState["waypoints"] = wpList;
+    }
+
     // Call on_rid_tx(state)
     py::object result = impl->callMethod(pyTxHandle, "on_rid_tx", txState);
 

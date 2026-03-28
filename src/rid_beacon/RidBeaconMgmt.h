@@ -37,6 +37,7 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     // Python TX hook
     PyBridge *pyBridge = nullptr;
     int pyTxHandle = -1;
+    bool pyTxWaypointsSent = false;
 
     // GCS report forwarding
     cModule *gcsModule = nullptr;

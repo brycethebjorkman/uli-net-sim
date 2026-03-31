@@ -8,6 +8,7 @@
 #include "PyBridgePy.h"
 #include "PyBridge.h"
 #include <sstream>
+#include <filesystem>
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
@@ -54,7 +55,17 @@ void PyBridge::initialize()
         sys.attr("prefix") = venvPrefix;
         sys.attr("exec_prefix") = venvPrefix;
 
-        std::string venvSitePackages = venvPrefix + "/lib/python3.10/site-packages";
+        // Discover the Python version directory dynamically
+        std::string venvLib = venvPrefix + "/lib";
+        std::string venvSitePackages;
+        for (auto& entry : std::filesystem::directory_iterator(venvLib)) {
+            if (entry.is_directory() && entry.path().filename().string().rfind("python", 0) == 0) {
+                venvSitePackages = entry.path().string() + "/site-packages";
+                break;
+            }
+        }
+        if (venvSitePackages.empty())
+            venvSitePackages = venvLib + "/python3.14/site-packages";
         py::module_ site = py::module_::import("site");
         site.attr("addsitedir")(venvSitePackages);
     }

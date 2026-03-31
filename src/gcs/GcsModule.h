@@ -19,6 +19,8 @@ class GcsReport;
 //
 // Ground Control Station: aggregates per-transmission RX reports,
 // calls a Python decision algorithm, optionally sends control commands.
+// Supports OSG visualization of chance-constraint ellipsoid and
+// spoofer claimed-position trail.
 //
 class GcsModule : public cSimpleModule, public cListener
 {
@@ -30,6 +32,13 @@ class GcsModule : public cSimpleModule, public cListener
 
     // Forward a control command to a UAV's mobility module
     void sendCommand(int hostId, const std::string& commandJson);
+
+    // OSG visualization: draw/update chance-constraint ellipsoid and claimed trail
+    void updateVisualization(const std::vector<double>& mu,
+                             const std::vector<std::vector<double>>& sigma,
+                             double alpha,
+                             bool detected);
+    void addClaimedTrailPoint(double x, double y, double z);
 
   protected:
     // Federate host indices this GCS manages (empty = all)
@@ -55,6 +64,12 @@ class GcsModule : public cSimpleModule, public cListener
 
     // Dynamic vector registry: Python "log" keys → cOutVector (always recorded)
     std::map<std::string, cOutVector*> logVectors;
+
+    // OSG visualization state (opaque pointers to avoid OSG in header)
+    void *ellipsoidTransform = nullptr;
+    void *claimedTrailGeode = nullptr;
+    std::vector<std::tuple<double, double, double>> claimedTrailPoints;
+    bool visualizationInitialized = false;
 
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;

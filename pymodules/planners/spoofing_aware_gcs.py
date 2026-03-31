@@ -2,8 +2,9 @@
 Spoofing-aware GCS: detection, IMM localization, chance constraint, broadcast.
 
 Full pipeline per the paper (Sec. IV-VI):
-  on_gcs_reports: RSSI multilateration + TX-power KF detection, IMM update
-  on_gcs_tick:    IMM predict, chance constraint, broadcast unsafe_region
+  on_gcs_reports: RSSI multilateration + TX-power KF detection,
+                  IMM predict+update (only on measurement)
+  on_gcs_tick:    chance constraint from IMM state, broadcast unsafe_region
                   + other_positions + goals to benign agents
 
 All agents (including spoofer) report RSSI to this GCS.
@@ -12,6 +13,10 @@ Detection combines:
   2. TX-power Kalman filter: NIS > 6.63 or correction > 6 dB (Sec. V-A)
 Localization uses IMM with CV+CA hypotheses (Sec. V-B).
 Unsafe region via chance constraint (Sec. VI-A, Eq. 24-25).
+
+Visualization (OSG):
+  - Red sphere trail for the spoofer's claimed RID position
+  - Semi-transparent ellipsoid for the chance constraint unsafe region
 
 INI usage:
     *.gcs[0].pyClass = "pymodules.planners.spoofing_aware_gcs.SpoofingAwareGcs"
@@ -33,11 +38,14 @@ KF_CORRECTION_THRESHOLD_DB = 6.0
 MIN_FEDERATES = 4
 DEFAULT_AGENT_RADIUS = 25.0
 
+SPOOFER_HOST_ID = 4
+
 
 class SpoofingAwareGcs:
     """
     GCS that detects spoofers, localizes them with IMM, and broadcasts
     unsafe region + other agent positions + goals to all benign hosts.
+    Spoofer claimed position rendered as red sphere trail in OSG.
     """
 
     def __init__(
@@ -46,7 +54,7 @@ class SpoofingAwareGcs:
         agent_radius: float = DEFAULT_AGENT_RADIUS,
         goals: dict | None = None,
     ):
-        self.alpha = alpha
+        self.alpha = .00001
         self.agent_radius = agent_radius
         self.goals = goals or {}
 
@@ -67,6 +75,11 @@ class SpoofingAwareGcs:
         reports = data["reports"]
 
         self.rid_positions[serial] = tuple(claimed_pos)
+
+        # Prepare visualization: add claimed pos sphere for the spoofer
+        visualization = {}
+        if serial == SPOOFER_HOST_ID:
+            visualization["claimed_pos"] = [float(c) for c in claimed_pos]
 
         rx_positions = []
         rssi_values = []
@@ -97,14 +110,14 @@ class SpoofingAwareGcs:
             self.spoofers.add(serial)
             self.spoofer_serial = serial
             if self.imm is None:
-                self.imm = IMMEstimator(dt=0.25)
+                self.imm = IMMEstimator(dt=1.0)
             if est_pos is not None:
                 self.imm.update(est_pos)
 
         if serial in self.spoofers:
             self.rid_positions.pop(serial, None)
 
-        return {
+        result = {
             "log": {
                 "position_error": position_error,
                 "kf_nis": kf_nis,
@@ -112,14 +125,13 @@ class SpoofingAwareGcs:
                 "num_spoofers": float(len(self.spoofers)),
             },
         }
+        if visualization:
+            result["visualization"] = visualization
+        return result
 
     def on_gcs_tick(self, data: dict) -> dict:
-        """Periodic: IMM predict, chance constraint, broadcast to agents."""
+        """Periodic: chance constraint broadcast to agents."""
         host_ids = list(data.get("host_ids", []))
-        time = data.get("time", 0.0)
-
-        if self.imm is not None:
-            self.imm.predict()
 
         unsafe_region = None
         if self.imm is not None and self.spoofer_serial is not None:
@@ -148,8 +160,14 @@ class SpoofingAwareGcs:
 
             commands[hid] = cmd
 
+        visualization = {}
+        if unsafe_region is not None:
+            visualization["ellipsoid"] = unsafe_region
+            visualization["detected"] = True
+
         return {
             "commands": commands,
+            "visualization": visualization,
             "log": {
                 "tick_count": data.get("tick_count", 0),
                 "has_unsafe_region": 1.0 if unsafe_region else 0.0,

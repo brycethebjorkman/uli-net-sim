@@ -38,33 +38,36 @@ class KalmanFilter3D:
         return y, S
 
     @staticmethod
-    def create_cv(dt, process_noise=2.0, measurement_noise=50.0):
-        """Constant velocity model (Eq. 19)."""
+    def create_cv(dt, pos_noise=0.1, vel_noise=2.0, measurement_noise=50.0):
+        """Constant velocity model (Eq. 19) with structured process noise."""
         F = np.eye(6)
         F[0, 3] = dt
         F[1, 4] = dt
         F[2, 5] = dt
         H = np.zeros((3, 6))
         H[0, 0] = H[1, 1] = H[2, 2] = 1.0
-        Q = np.eye(6) * process_noise
+        Q = np.diag([pos_noise, pos_noise, pos_noise,
+                      vel_noise, vel_noise, vel_noise])
         R = np.eye(3) * measurement_noise
         x0 = np.zeros(6)
-        P0 = np.eye(6) * 1000.0
+        P0 = np.eye(6) * 500.0
         return KalmanFilter3D(F, H, Q, R, x0, P0)
 
     @staticmethod
-    def create_ca(dt, process_noise=5.0, measurement_noise=50.0):
-        """Constant acceleration model (Eq. 20)."""
+    def create_ca(dt, pos_noise=0.1, vel_noise=1.0, acc_noise=5.0, measurement_noise=50.0):
+        """Constant acceleration model (Eq. 20) with structured process noise."""
         F = np.eye(9)
         F[0, 3] = dt; F[1, 4] = dt; F[2, 5] = dt
         F[0, 6] = 0.5*dt*dt; F[1, 7] = 0.5*dt*dt; F[2, 8] = 0.5*dt*dt
         F[3, 6] = dt; F[4, 7] = dt; F[5, 8] = dt
         H = np.zeros((3, 9))
         H[0, 0] = H[1, 1] = H[2, 2] = 1.0
-        Q = np.eye(9) * process_noise
+        Q = np.diag([pos_noise, pos_noise, pos_noise,
+                      vel_noise, vel_noise, vel_noise,
+                      acc_noise, acc_noise, acc_noise])
         R = np.eye(3) * measurement_noise
         x0 = np.zeros(9)
-        P0 = np.eye(9) * 1000.0
+        P0 = np.eye(9) * 500.0
         return KalmanFilter3D(F, H, Q, R, x0, P0)
 
 
@@ -74,26 +77,21 @@ class IMMEstimator:
 
     Fuses CV and CA hypotheses with model-transition probabilities.
     Produces merged position estimate (mu) and covariance (Sigma).
+
+    predict() is only called internally right before update() to avoid
+    unbounded covariance growth between measurements.
     """
 
-    def __init__(self, dt: float = 0.25):
-        self.kf_cv = KalmanFilter3D.create_cv(dt, process_noise=2.0, measurement_noise=50.0)
-        self.kf_ca = KalmanFilter3D.create_ca(dt, process_noise=5.0, measurement_noise=50.0)
-        self.mu = np.array([0.5, 0.5])  # model probabilities
-        # Markov transition matrix (CV stays CV, CA stays CA with high prob)
+    def __init__(self, dt: float = 1.0):
+        self.kf_cv = KalmanFilter3D.create_cv(dt)
+        self.kf_ca = KalmanFilter3D.create_ca(dt)
+        self.mu = np.array([0.6, 0.4])  # prefer CV (spoofer likely steady)
         self.pi = np.array([[0.95, 0.05],
                             [0.05, 0.95]])
         self._initialized = False
 
-    def predict(self):
-        if not self._initialized:
-            return
-        self.kf_cv.predict()
-        self.kf_ca.predict()
-        self.mu = self.pi.T @ self.mu
-        self.mu /= self.mu.sum()
-
     def update(self, z: np.ndarray):
+        """Predict-then-update cycle, called when a new measurement arrives."""
         z = np.asarray(z, dtype=float).ravel()[:3]
         if not self._initialized:
             self.kf_cv.x[:3] = z
@@ -101,6 +99,13 @@ class IMMEstimator:
             self._initialized = True
             return
 
+        # Predict step (only right before measurement)
+        self.kf_cv.predict()
+        self.kf_ca.predict()
+        self.mu = self.pi.T @ self.mu
+        self.mu /= self.mu.sum()
+
+        # Update step
         y_cv, S_cv = self.kf_cv.update(z)
         y_ca, S_ca = self.kf_ca.update(z)
 

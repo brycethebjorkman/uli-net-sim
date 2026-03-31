@@ -4,7 +4,7 @@ Decentralized MDP-based trajectory planner controller (Sec. VI-B in paper).
 Each agent independently computes its next control action using a per-timestep
 MDP reward function (Table I):
   - Goal reached:                 R_goal   = +100
-  - Progress toward goal:         R_prog   = +5
+  - Progress toward goal:         R_prog   = proportional to distance gained
   - Enter spoofer risk domain:    R_spoof  = -200
   - Near cooperative agent:       R_agents = -150
   - Time step penalty:            R_time   = -1
@@ -34,19 +34,21 @@ from pymodules.gcs.chance_constraint import is_safe, mahalanobis_squared
 GRAVITY = 9.81
 
 # Planning parameters
-PLAN_DT = 0.5
-PLAN_HORIZON = 5
+PLAN_DT = 0.25
+PLAN_HORIZON = 6
 CRUISE_SPEED = 8.0
 
 # Reward values (Table I)
 R_GOAL = 100.0
-R_PROGRESS = 5.0
+R_PROGRESS_PER_M = 3.0
 R_SPOOFER = -200.0
 R_AGENTS = -150.0
 R_TIME = -1.0
 
 # Proximity threshold for cooperative agent penalty
-D_MIN_AGENTS = 25.0
+D_MIN_AGENTS = 25.0*4
+
+GOAL_REACHED_DIST = 8.0
 
 
 def _clamp(v, lo, hi):
@@ -120,29 +122,32 @@ class MdpTrajectoryPlanner:
         actions = []
         step = CRUISE_SPEED * PLAN_DT
 
-        # 16 planar headings at cruise speed
-        for k in range(16):
-            a = 2.0 * math.pi * k / 16.0
-            actions.append(np.array([math.cos(a) * step, math.sin(a) * step, 0.0]))
+        # 24 planar headings at full and half speed for finer resolution
+        for k in range(24):
+            a = 2.0 * math.pi * k / 24.0
+            d = np.array([math.cos(a), math.sin(a), 0.0])
+            actions.append(d * step)
+            actions.append(d * step * 0.5)
 
-        # Goal-directed actions
+        # Goal-directed actions at multiple speeds
         goal = self._current_goal()
         if goal is not None:
             to_goal = goal - pos
             d = np.linalg.norm(to_goal)
-            if d > 1.0:
+            if d > 0.5:
                 direction = to_goal / d
-                actions.append(direction * step)
-                actions.append(direction * step * 0.5)
+                # Clamp step to not overshoot the goal
+                goal_step = min(step, d)
+                actions.append(direction * goal_step)
+                actions.append(direction * goal_step * 0.5)
+                actions.append(direction * goal_step * 0.25)
                 perp = np.array([-direction[1], direction[0], 0.0])
-                actions.append(perp * step)
-                actions.append(-perp * step)
+                actions.append((direction * 0.7 + perp * 0.3) * step)
+                actions.append((direction * 0.7 - perp * 0.3) * step)
 
-        # Vertical actions
-        actions.append(np.array([0.0, 0.0, step * 0.5]))
-        actions.append(np.array([0.0, 0.0, -step * 0.5]))
-
-        # Hover
+        # Vertical + hover
+        actions.append(np.array([0.0, 0.0, step * 0.3]))
+        actions.append(np.array([0.0, 0.0, -step * 0.3]))
         actions.append(np.zeros(3))
 
         return actions
@@ -154,21 +159,23 @@ class MdpTrajectoryPlanner:
         goal = self._current_goal()
         if goal is not None:
             goal_dist = np.linalg.norm(goal - pos)
-            if goal_dist < 5.0:
+            if goal_dist < GOAL_REACHED_DIST:
                 reward += R_GOAL
-            elif goal_dist < prev_goal_dist:
-                reward += R_PROGRESS
+            else:
+                # Proportional progress reward: reward per meter closer
+                delta = prev_goal_dist - goal_dist
+                reward += R_PROGRESS_PER_M * delta
 
         # Cooperative agent proximity penalty
         for oid, op in self.other_positions.items():
             oid_int = int(oid) if isinstance(oid, str) else oid
             if self.host_id is not None and oid_int == self.host_id:
                 continue
-            d = np.linalg.norm(pos - np.asarray(op, dtype=float))
-            if d < self.agent_radius:
-                reward += R_AGENTS * (1.0 + (self.agent_radius - d) / self.agent_radius)
-            elif d < self.agent_radius * 2.0:
-                reward += R_AGENTS * 0.3 * ((self.agent_radius * 2.0 - d) / self.agent_radius)
+            d_agent = np.linalg.norm(pos - np.asarray(op, dtype=float))
+            if d_agent < self.agent_radius:
+                reward += R_AGENTS * (1.0 + (self.agent_radius - d_agent) / self.agent_radius)
+            elif d_agent < self.agent_radius * 2.0:
+                reward += R_AGENTS * 0.3 * ((self.agent_radius * 2.0 - d_agent) / self.agent_radius)
 
         # Spoofer risk domain penalty (chance constraint violation)
         if self.unsafe_region is not None:
@@ -190,7 +197,7 @@ class MdpTrajectoryPlanner:
         init_goal_dist = np.linalg.norm(goal - pos) if goal is not None else 0.0
 
         best_score = -float("inf")
-        best_action = np.zeros(3)
+        best_target = pos.copy()
 
         for action in actions:
             p = pos.copy()
@@ -207,9 +214,9 @@ class MdpTrajectoryPlanner:
                 prev_dist = cur_dist
             if score > best_score:
                 best_score = score
-                best_action = action
+                best_target = pos + action  # only take first step
 
-        return pos + best_action
+        return best_target
 
     def on_ctl_tick(self, state: dict) -> dict:
         """Controller entry point: plan + PID control."""
@@ -245,15 +252,26 @@ class MdpTrajectoryPlanner:
         # Waypoint advancement (if using waypoint list as goals)
         if self.goal is None and self.waypoints and self.wp_index < len(self.waypoints):
             wp = self.waypoints[self.wp_index]
-            if np.linalg.norm(pos - np.array([wp[0], wp[1], wp[2]])) < 5.0:
+            if np.linalg.norm(pos - np.array([wp[0], wp[1], wp[2]])) < GOAL_REACHED_DIST:
                 self.wp_index = min(self.wp_index + 1, len(self.waypoints) - 1)
 
-        # MDP planning at PLAN_DT intervals (~2 Hz)
-        self.plan_counter += 1
-        steps_per_plan = max(1, int(PLAN_DT / max(dt, 0.001)))
-        if self.plan_counter >= steps_per_plan:
-            self.plan_counter = 0
-            self.target_pos = self._plan(pos)
+        # Check if goal is reached — hover in place
+        goal = self._current_goal()
+        if goal is not None and np.linalg.norm(goal - pos) < GOAL_REACHED_DIST:
+            if not self.goal_reached:
+                self.goal_reached = True
+                self.target_pos = goal.copy()
+                self.vel_integral = [0.0, 0.0, 0.0]
+        else:
+            self.goal_reached = False
+
+        # MDP planning at PLAN_DT intervals (~4 Hz), skip when at goal
+        if not self.goal_reached:
+            self.plan_counter += 1
+            steps_per_plan = max(1, int(PLAN_DT / max(dt, 0.001)))
+            if self.plan_counter >= steps_per_plan:
+                self.plan_counter = 0
+                self.target_pos = self._plan(pos)
 
         target = self.target_pos
 

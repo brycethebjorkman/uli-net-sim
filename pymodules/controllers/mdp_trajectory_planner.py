@@ -40,24 +40,27 @@ FWD_STEPS = 20          # 20 × 0.5s = 10s lookahead
 SAMPLE_COUNT = 10
 ONE_STEP_INDEX = 1       # ~1s ahead, used as execution target
 CRUISE_SPEED = 8.0
-GOAL_REACHED_DIST = 8.0
+GOAL_REACHED_DIST = 30
 
-# ── Value function parameters (Table 1 adapted for ~500m domain) ─────────────
-GOAL_REWARD = 200.0
-GOAL_DISCOUNT = 0.999    # slow decay → attraction over entire field
+# ── Value function parameters (Table 1, scaled for ~500m domain) ─────────────
+# Paper uses κ_goal=0.999 for 15km world. For 500m we need steeper gradient:
+# V(0)=166,917  V(200)=91,470  V(500)=37,223 — strong pull across whole field
+GOAL_REWARD = 1000.0
+GOAL_DISCOUNT = 0.997
 
 AGENT_REWARD = 1000.0
-AGENT_DISCOUNT = 0.97    # matches paper's intruder decay factor
-AGENT_LIMIT = 80.0       # negative peak radius (meters)
+AGENT_DISCOUNT = 0.97
+AGENT_LIMIT = 60.0       # negative peak radius (meters)
 
-SPOOFER_REWARD = 1000.0
-SPOOFER_DISCOUNT = 0.97
+SPOOFER_REWARD = 5000.0
+SPOOFER_DISCOUNT = 0.99
+SPOOFER_LIMIT = 120.0    # repulsion radius around unsafe region center (meters)
 
-MIN_CYCLE = 2            # normalization constant (grid-world minimum distance)
+MIN_CYCLE = 2
 
 # ── Action space ─────────────────────────────────────────────────────────────
 NUM_HEADINGS = 16
-SPEED_LEVELS = [CRUISE_SPEED, CRUISE_SPEED * 0.5, 0.0]
+SPEED_LEVELS = [CRUISE_SPEED, 6.0, 4.0, 2.0, 0.0]
 
 
 def _clamp(v, lo, hi):
@@ -208,80 +211,65 @@ class MdpTrajectoryPlanner:
                 v_neg += self._agent_peak * (AGENT_DISCOUNT ** d_agent)
 
         # ── Negative value: spoofer unsafe region ──
+        # Distance-based repulsion from the unsafe region center, active within
+        # SPOOFER_LIMIT. No Mahalanobis gate — the agent sees danger coming.
         if self.unsafe_region is not None:
             mu = np.asarray(self.unsafe_region["mu"], dtype=float)
-            sigma = np.asarray(self.unsafe_region["sigma"], dtype=float)
-            alpha = self.unsafe_region.get("alpha", 0.05)
-            if not is_safe(pos, mu, sigma, alpha):
-                d_spoof = np.linalg.norm(pos - mu)
+            d_spoof = np.linalg.norm(pos - mu)
+            if d_spoof < SPOOFER_LIMIT:
                 v_neg += self._spoofer_peak * (SPOOFER_DISCOUNT ** d_spoof)
 
         return v_pos - v_neg
 
-    # ── MDP planning with action shielding + reward shaping ─────────────────
+    # ── MDP planning (Algorithm 2) ──────────────────────────────────────────
 
-    def _is_safe_trajectory(self, traj: list[np.ndarray],
-                            sample_indices: np.ndarray) -> bool:
-        """Action shielding (Sec. IV.B): reject if any sampled state enters
-        an intruder zone or spoofer unsafe region."""
-        for idx in sample_indices:
-            p = traj[idx]
-            for oid, op in self.other_positions.items():
-                oid_int = int(oid) if isinstance(oid, str) else oid
-                if self.host_id is not None and oid_int == self.host_id:
-                    continue
-                if np.linalg.norm(p - np.asarray(op, dtype=float)) < self.agent_radius * 0.5:
-                    return False
-            if self.unsafe_region is not None:
-                mu = np.asarray(self.unsafe_region["mu"], dtype=float)
-                sigma = np.asarray(self.unsafe_region["sigma"], dtype=float)
-                alpha = self.unsafe_region.get("alpha", 0.05)
-                if not is_safe(p, mu, sigma, alpha):
-                    return False
-        return True
+    def _trajectory_enters_unsafe(self, traj: list[np.ndarray]) -> bool:
+        """Hard constraint: reject trajectories that enter the chance-constraint ellipsoid."""
+        if self.unsafe_region is None:
+            return False
+        mu = np.asarray(self.unsafe_region["mu"], dtype=float)
+        sigma = np.asarray(self.unsafe_region["sigma"], dtype=float)
+        alpha = self.unsafe_region.get("alpha", 0.05)
+        for p in traj:
+            if not is_safe(p, mu, sigma, alpha):
+                return True
+        return False
 
     def _plan(self, pos: np.ndarray) -> np.ndarray:
-        """Forward-project each action, evaluate value with reward shaping,
-        apply action shielding, pick best."""
+        """Forward-project each action, evaluate value at sampled states,
+        pick action with max value (Algorithm 2, line 26).
+        Actions whose trajectories enter the unsafe ellipsoid are rejected."""
         actions = self._build_actions(pos)
         sample_indices = np.linspace(0, FWD_STEPS - 1, SAMPLE_COUNT, dtype=int)
-        v_current = self._value_at(pos)
 
         best_value = -float("inf")
         best_one_step = pos.copy()
-        shielded_best_value = -float("inf")
-        shielded_best_one_step = pos.copy()
+        best_safe_value = -float("inf")
+        best_safe_one_step = pos.copy()
 
         for heading, speed in actions:
             traj = self._forward_project(pos, heading, speed)
+            enters_unsafe = self._trajectory_enters_unsafe(traj)
 
-            # Reward shaping (Sec. IV.C, Eq. 16): accumulate shaped reward
-            # F(s,a,s') = κ·V(s') - V(s) along trajectory
-            total_shaped = 0.0
-            v_prev = v_current
+            max_val = -float("inf")
             for idx in sample_indices:
-                v_next = self._value_at(traj[idx])
-                total_shaped += 0.99 * v_next - v_prev
-                v_prev = v_next
-
-            # Also add the terminal value (best state along trajectory)
-            total_shaped += v_prev
-
-            # Action shielding: prefer safe actions
-            safe = self._is_safe_trajectory(traj, sample_indices)
+                v = self._value_at(traj[idx])
+                if v > max_val:
+                    max_val = v
 
             step_idx = min(ONE_STEP_INDEX, len(traj) - 1)
-            if safe and total_shaped > shielded_best_value:
-                shielded_best_value = total_shaped
-                shielded_best_one_step = traj[step_idx]
 
-            if total_shaped > best_value:
-                best_value = total_shaped
+            if not enters_unsafe and max_val > best_safe_value:
+                best_safe_value = max_val
+                best_safe_one_step = traj[step_idx]
+
+            if max_val > best_value:
+                best_value = max_val
                 best_one_step = traj[step_idx]
 
-        # Use shielded action if available, otherwise fall back to unshielded
-        if shielded_best_value > -float("inf"):
-            return shielded_best_one_step
+        # Prefer safe trajectories; fall back to best-value if all are unsafe
+        if best_safe_value > -float("inf"):
+            return best_safe_one_step
         return best_one_step
 
     # ── Controller entry point ───────────────────────────────────────────────

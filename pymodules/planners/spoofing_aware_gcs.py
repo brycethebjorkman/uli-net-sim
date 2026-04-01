@@ -1,22 +1,22 @@
 """
-Spoofing-aware GCS: detection, IMM localization, chance constraint, broadcast.
+Spoofing-aware GCS: RSSI multilateration detection → position-only localization.
 
-Full pipeline per the paper (Sec. IV-VI):
-  on_gcs_reports: RSSI multilateration + TX-power KF detection,
-                  IMM predict+update (only on measurement)
-  on_gcs_tick:    chance constraint from IMM state, broadcast unsafe_region
-                  + other_positions + goals to benign agents
+Two-phase pipeline per the paper (AIAA SciTech '26, Sec. V-B):
 
-All agents (including spoofer) report RSSI to this GCS.
-Detection combines:
-  1. Multilateration: |est_pos - claimed_pos| > threshold (Sec. V-A)
-  2. TX-power Kalman filter: NIS > 6.63 or correction > 6 dB (Sec. V-A)
-Localization uses IMM with CV+CA hypotheses (Sec. V-B).
-Unsafe region via chance constraint (Sec. VI-A, Eq. 24-25).
+  Phase 1 — Detection (runs on EVERY transmitter):
+    For every transmission from an unknown serial, jointly estimate position +
+    TX power via NLLS. Track raw position error with a consecutive-hit counter.
+    When the raw error exceeds the threshold for DETECT_COUNT consecutive
+    transmissions, the serial is flagged as a spoofer. TX power is locked as
+    the median of all joint estimates accumulated during detection.
 
-Visualization (OSG):
-  - Red sphere trail for the spoofer's claimed RID position
-  - Semi-transparent ellipsoid for the chance constraint unsafe region
+  Phase 2 — Localization (per detected spoofer, rest of sim):
+    Position-only multilateration (3 unknowns) with locked TX power →
+    overdetermined (N eqs / 3 unknowns). Feed measurements to per-spoofer
+    IMM for state estimation and chance-constraint computation.
+
+  on_gcs_tick: broadcast IMM-based chance constraint + cooperative agent
+               positions + goals to benign agents.
 
 INI usage:
     *.gcs[0].pyClass = "pymodules.planners.spoofing_aware_gcs.SpoofingAwareGcs"
@@ -24,29 +24,22 @@ INI usage:
     *.gcs[0].sendControlCommands = true
 """
 
-
 import numpy as np
 
 from pymodules.gcs.chance_constraint import unsafe_region_to_dict
 from pymodules.gcs.imm_estimator import IMMEstimator
-from pymodules.gcs.multilateration import multilaterate_with_tx
-from pymodules.gcs.tx_power_kf import TxPowerKFDetector
+from pymodules.gcs.multilateration import (
+    multilaterate_with_tx_power,
+    multilaterate_position,
+)
 
+MIN_RECEIVERS = 4
 DETECTION_THRESHOLD_M = 30.0
-KF_NIS_THRESHOLD = 6.63
-KF_CORRECTION_THRESHOLD_DB = 6.0
-MIN_FEDERATES = 4
-DEFAULT_AGENT_RADIUS = 80.0
-
-SPOOFER_HOST_ID = 4
+DETECT_COUNT = 3              # consecutive hits to declare spoofer
+DEFAULT_AGENT_RADIUS = 60.0
 
 
 class SpoofingAwareGcs:
-    """
-    GCS that detects spoofers, localizes them with IMM, and broadcasts
-    unsafe region + other agent positions + goals to all benign hosts.
-    Spoofer claimed position rendered as red sphere trail in OSG.
-    """
 
     def __init__(
         self,
@@ -58,85 +51,121 @@ class SpoofingAwareGcs:
         self.agent_radius = agent_radius
         self.goals = goals or {}
 
+        # Detection state: per-transmitter
+        self._hit_count: dict[int, int] = {}            # consecutive detections
+        self._tx_power_samples: dict[int, list] = {}    # all joint TX estimates
+        self._pos_samples: dict[int, list] = {}         # all joint pos estimates
+
+        # Post-detection state: per-spoofer tracking
         self.spoofers: set[int] = set()
+        self._imm: dict[int, IMMEstimator] = {}
+        self._spoofer_tx_power: dict[int, float] = {}
+
+        # Latest RID positions for cooperative agents
         self.rid_positions: dict[int, tuple[float, float, float]] = {}
-        self.imm: IMMEstimator | None = None
-        self.spoofer_serial: int | None = None
         self.federate_ids: set[int] = set()
-        self.kf_detector = TxPowerKFDetector(
-            nis_threshold=KF_NIS_THRESHOLD,
-            correction_threshold=KF_CORRECTION_THRESHOLD_DB,
-        )
+
+    # ------------------------------------------------------------------
+    # Per-transmission callback
+    # ------------------------------------------------------------------
 
     def on_gcs_reports(self, data: dict) -> dict | None:
-        """Per-transmission: multilateration + KF detection, IMM update."""
         serial = data["serial_number"]
         claimed_pos = np.array(data["claimed_pos"])
         reports = data["reports"]
 
         self.rid_positions[serial] = tuple(claimed_pos)
 
-        # Prepare visualization: add claimed pos sphere for the spoofer
-        visualization = {}
-        if serial == SPOOFER_HOST_ID:
-            visualization["claimed_pos"] = [float(c) for c in claimed_pos]
-
-        rx_positions = []
-        rssi_values = []
-        report_list = []
+        rx_positions = np.array([r["pos"] for r in reports])
+        rssi_values = np.array([r["rssi_dbm"] for r in reports])
         for r in reports:
             self.federate_ids.add(r["host_id"])
-            rx_positions.append(r["pos"])
-            rssi_values.append(r["rssi_dbm"])
-            report_list.append({
-                "host_id": r["host_id"], "pos": r["pos"], "rssi_dbm": r["rssi_dbm"]
-            })
-        rx_positions = np.array(rx_positions)
-        rssi_values = np.array(rssi_values)
 
-        kf_nis, kf_spoofer = self.kf_detector.process_report(serial, claimed_pos, report_list)
+        mlat_raw_error = 0.0
+        visualization = {}
 
-        position_error = 0.0
-        mlat_spoofer = False
-        est_pos = None
-        if len(rx_positions) >= MIN_FEDERATES:
-            est_pos, _ = multilaterate_with_tx(rx_positions, rssi_values, claimed_pos)
-            if est_pos is not None:
-                position_error = float(np.linalg.norm(est_pos - claimed_pos))
-                mlat_spoofer = position_error > DETECTION_THRESHOLD_M
+        if serial in self.spoofers:
+            # ── Phase 2: localization (position-only, TX power locked) ──
+            visualization["claimed_pos"] = [float(c) for c in claimed_pos]
 
-        is_spoofer = mlat_spoofer or kf_spoofer
-        if is_spoofer:
-            self.spoofers.add(serial)
-            self.spoofer_serial = serial
-            if self.imm is None:
-                self.imm = IMMEstimator(dt=1.0)
-            if est_pos is not None:
-                self.imm.update(est_pos)
+            if len(rx_positions) >= 3:
+                imm = self._imm[serial]
+                if imm._initialized:
+                    mlat_init, _ = imm.get_state()
+                else:
+                    mlat_init = np.mean(rx_positions, axis=0)
+
+                est_pos = multilaterate_position(
+                    rx_positions, rssi_values, mlat_init,
+                    self._spoofer_tx_power[serial],
+                )
+                if est_pos is not None:
+                    imm.update(est_pos)
+        else:
+            # ── Phase 1: detection (runs on every unknown transmitter) ──
+            if len(rx_positions) >= MIN_RECEIVERS:
+                est_pos, est_tx = multilaterate_with_tx_power(
+                    rx_positions, rssi_values, claimed_pos,
+                )
+                if est_pos is not None and est_tx is not None:
+                    mlat_raw_error = float(np.linalg.norm(est_pos - claimed_pos))
+
+                    # Accumulate TX power and position estimates
+                    self._tx_power_samples.setdefault(serial, []).append(est_tx)
+                    self._pos_samples.setdefault(serial, []).append(est_pos.copy())
+
+                    if mlat_raw_error > DETECTION_THRESHOLD_M:
+                        self._hit_count[serial] = self._hit_count.get(serial, 0) + 1
+                    else:
+                        self._hit_count[serial] = 0
+
+                    if self._hit_count.get(serial, 0) >= DETECT_COUNT:
+                        self.spoofers.add(serial)
+
+                        # Lock TX power as median of all accumulated estimates
+                        tx_samples = self._tx_power_samples[serial]
+                        self._spoofer_tx_power[serial] = float(np.median(tx_samples))
+
+                        # Initialize IMM with all accumulated position estimates
+                        self._imm[serial] = IMMEstimator(dt=1.0)
+                        for p in self._pos_samples[serial]:
+                            self._imm[serial].update(p)
+
+                        # Clean up detection buffers
+                        self._tx_power_samples.pop(serial, None)
+                        self._pos_samples.pop(serial, None)
+                        self._hit_count.pop(serial, None)
 
         if serial in self.spoofers:
             self.rid_positions.pop(serial, None)
 
         result = {
             "log": {
-                "position_error": position_error,
-                "kf_nis": kf_nis,
-                "spoofer_detected": 1.0 if is_spoofer else 0.0,
+                "mlat_raw_error": mlat_raw_error,
+                "spoofer_detected": 1.0 if serial in self.spoofers else 0.0,
                 "num_spoofers": float(len(self.spoofers)),
+                "hit_count": float(self._hit_count.get(serial, 0)),
             },
         }
         if visualization:
             result["visualization"] = visualization
         return result
 
+    # ------------------------------------------------------------------
+    # Periodic tick callback
+    # ------------------------------------------------------------------
+
     def on_gcs_tick(self, data: dict) -> dict:
-        """Periodic: chance constraint broadcast to agents."""
         host_ids = list(data.get("host_ids", []))
 
-        unsafe_region = None
-        if self.imm is not None and self.spoofer_serial is not None:
-            mu, sigma = self.imm.get_state()
-            unsafe_region = unsafe_region_to_dict(mu, sigma, self.alpha)
+        unsafe_regions = []
+        for serial in self.spoofers:
+            imm = self._imm.get(serial)
+            if imm is not None and imm._initialized:
+                mu, sigma = imm.get_state()
+                unsafe_regions.append(unsafe_region_to_dict(mu, sigma, self.alpha))
+
+        primary_unsafe = unsafe_regions[0] if unsafe_regions else None
 
         commands = {}
         for hid in host_ids:
@@ -149,7 +178,8 @@ class SpoofingAwareGcs:
                     other_positions[int(serial)] = list(pos)
 
             cmd = {
-                "unsafe_region": unsafe_region,
+                "unsafe_region": primary_unsafe,
+                "unsafe_regions": unsafe_regions,
                 "other_positions": other_positions,
                 "agent_radius": self.agent_radius,
                 "alpha": self.alpha,
@@ -161,8 +191,8 @@ class SpoofingAwareGcs:
             commands[hid] = cmd
 
         visualization = {}
-        if unsafe_region is not None:
-            visualization["ellipsoid"] = unsafe_region
+        if primary_unsafe is not None:
+            visualization["ellipsoid"] = primary_unsafe
             visualization["detected"] = True
 
         return {
@@ -170,6 +200,7 @@ class SpoofingAwareGcs:
             "visualization": visualization,
             "log": {
                 "tick_count": data.get("tick_count", 0),
-                "has_unsafe_region": 1.0 if unsafe_region else 0.0,
+                "has_unsafe_region": 1.0 if primary_unsafe else 0.0,
+                "num_spoofers": float(len(self.spoofers)),
             },
         }

@@ -38,7 +38,7 @@ class KalmanFilter3D:
         return y, S
 
     @staticmethod
-    def create_cv(dt, pos_noise=0.1, vel_noise=2.0, measurement_noise=50.0):
+    def create_cv(dt, pos_noise=1.0, vel_noise=20.0, measurement_noise=1000.0):
         """Constant velocity model (Eq. 19) with structured process noise."""
         F = np.eye(6)
         F[0, 3] = dt
@@ -54,7 +54,7 @@ class KalmanFilter3D:
         return KalmanFilter3D(F, H, Q, R, x0, P0)
 
     @staticmethod
-    def create_ca(dt, pos_noise=0.1, vel_noise=1.0, acc_noise=5.0, measurement_noise=50.0):
+    def create_ca(dt, pos_noise=1.0, vel_noise=10.0, acc_noise=20.0, measurement_noise=1000.0):
         """Constant acceleration model (Eq. 20) with structured process noise."""
         F = np.eye(9)
         F[0, 3] = dt; F[1, 4] = dt; F[2, 5] = dt

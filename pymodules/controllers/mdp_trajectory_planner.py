@@ -40,6 +40,7 @@ FWD_STEPS = 20          # 20 × 0.5s = 10s lookahead
 SAMPLE_COUNT = 10
 ONE_STEP_INDEX = 1       # ~1s ahead, used as execution target
 CRUISE_SPEED = 8.0
+VERTICAL_SPEED = 3.0          # m/s climb/descend rate used in forward projection
 GOAL_REACHED_DIST = 30
 
 # ── Value function parameters (Table 1, scaled for ~500m domain) ─────────────
@@ -178,13 +179,21 @@ class MdpTrajectoryPlanner:
     # ── Forward projection ───────────────────────────────────────────────────
 
     def _forward_project(self, pos: np.ndarray, heading: float, speed: float) -> list[np.ndarray]:
-        """Simplified kinematic forward projection at constant heading/speed."""
+        """Kinematic forward projection including vertical motion toward goal."""
         dx = speed * math.cos(heading) * FWD_DT
         dy = speed * math.sin(heading) * FWD_DT
+
+        goal = self._current_goal()
+        if goal is not None:
+            alt_err = goal[2] - pos[2]
+            dz = _clamp(alt_err / max(FWD_STEPS * FWD_DT, 1.0), -VERTICAL_SPEED, VERTICAL_SPEED) * FWD_DT
+        else:
+            dz = 0.0
+
         traj = []
         p = pos.copy()
         for _ in range(FWD_STEPS):
-            p = p + np.array([dx, dy, 0.0])
+            p = p + np.array([dx, dy, dz])
             traj.append(p.copy())
         return traj
 
@@ -289,6 +298,7 @@ class MdpTrajectoryPlanner:
             wps = state.get("waypoints", [])
             if wps:
                 self.waypoints = [(w["x"], w["y"], w["z"]) for w in wps]
+                self.wp_index = len(self.waypoints) - 1
                 self.mass = state.get("mass", 5.0)
                 arm = state.get("arm_length", 0.5)
                 ixx = state.get("Ixx", 0.5)
@@ -305,12 +315,6 @@ class MdpTrajectoryPlanner:
 
         self._parse_gcs_command(state.get("gcs_command"))
 
-        # Waypoint advancement
-        if self.goal is None and self.waypoints and self.wp_index < len(self.waypoints):
-            wp = self.waypoints[self.wp_index]
-            if np.linalg.norm(pos - np.array([wp[0], wp[1], wp[2]])) < GOAL_REACHED_DIST:
-                self.wp_index = min(self.wp_index + 1, len(self.waypoints) - 1)
-
         # Goal-reached hover
         goal = self._current_goal()
         if goal is not None and np.linalg.norm(goal - pos) < GOAL_REACHED_DIST:
@@ -318,6 +322,9 @@ class MdpTrajectoryPlanner:
                 self.goal_reached = True
                 self.target_pos = goal.copy()
                 self.vel_integral = [0.0, 0.0, 0.0]
+                print(f"[MDP] Host {self.host_id} REACHED GOAL at t={t:.1f}s "
+                      f"pos=({pos[0]:.0f},{pos[1]:.0f},{pos[2]:.0f}) "
+                      f"goal=({goal[0]:.0f},{goal[1]:.0f},{goal[2]:.0f})")
         else:
             self.goal_reached = False
 
@@ -327,7 +334,8 @@ class MdpTrajectoryPlanner:
             steps_per_plan = max(1, int(REPLAN_DT / max(dt, 0.001)))
             if self.plan_counter >= steps_per_plan:
                 self.plan_counter = 0
-                self.target_pos = self._plan(pos)
+                planned = self._plan(pos)
+                self.target_pos = planned
 
         target = self.target_pos
 
@@ -373,9 +381,12 @@ class MdpTrajectoryPlanner:
         torque_theta = self.Kp_angle * (theta_des - theta) - self.Kd_angle * q
         torque_psi = -self.Kd_angle * r
 
-        return {
+        result = {
             "thrust": float(thrust),
             "torque_phi": float(torque_phi),
             "torque_theta": float(torque_theta),
             "torque_psi": float(torque_psi),
         }
+        if self.goal_reached:
+            result["goal_reached"] = True
+        return result

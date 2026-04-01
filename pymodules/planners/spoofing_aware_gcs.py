@@ -36,7 +36,7 @@ DETECTION_THRESHOLD_M = 30.0
 KF_NIS_THRESHOLD = 6.63
 KF_CORRECTION_THRESHOLD_DB = 6.0
 MIN_FEDERATES = 4
-DEFAULT_AGENT_RADIUS = 25.0
+DEFAULT_AGENT_RADIUS = 80.0
 
 SPOOFER_HOST_ID = 4
 
@@ -54,7 +54,7 @@ class SpoofingAwareGcs:
         agent_radius: float = DEFAULT_AGENT_RADIUS,
         goals: dict | None = None,
     ):
-        self.alpha = .00001
+        self.alpha = alpha
         self.agent_radius = agent_radius
         self.goals = goals or {}
 

@@ -1,25 +1,25 @@
 """
-Decentralized MDP-based trajectory planner controller (Sec. VI-B in paper).
+Decentralized MDP-based trajectory planner controller.
 
-Each agent independently computes its next control action using a per-timestep
-MDP reward function (Table I):
-  - Goal reached:                 R_goal   = +100
-  - Progress toward goal:         R_prog   = proportional to distance gained
-  - Enter spoofer risk domain:    R_spoof  = -200
-  - Near cooperative agent:       R_agents = -150
-  - Time step penalty:            R_time   = -1
+Based on the value function formulation from Taye et al., "Safe and Scalable
+Real-Time Trajectory Planning Framework for Urban Air Mobility" (2024), and
+the reference MATLAB implementation in Safe-and-Scalable-UAM-Trajectory-Planner.
 
-At each planning step, the agent forward-projects candidate actions over a
-short horizon, evaluates cumulative reward, and executes the best action
-in a receding-horizon fashion. Low-level control uses cascaded PID
-(same gains as CascadedPidController).
+Value function (Eq. 6):
+    V(s) = κ+^d+ * r+  −  κ-^d- * r-
 
-Receives GCS commands containing:
-  - unsafe_region: {mu, sigma, alpha, threshold} from chance constraint
-  - other_positions: {id: [x,y,z]} for cooperative agents
-  - agent_radius: pre-detection separation distance (m)
-  - goal: [x,y,z] destination
-  - host_id: this agent's id
+where κ is the discount factor, d is Euclidean distance to the reward source,
+and r is the reward magnitude. Positive peaks attract toward goal; negative
+peaks repel from intruder aircraft and spoofer unsafe regions.
+
+Each planning step:
+  1. Forward-project candidate actions through simplified kinematics (~10s)
+  2. Sample 10 future states along each trajectory
+  3. Evaluate closed-form value at each sampled state
+  4. Select the action yielding the max value at any future state
+  5. Execute only the one-step-ahead state (receding horizon)
+
+Low-level control uses cascaded PID (same as CascadedPidController).
 
 INI usage:
     *.host[*].mobility.pyClass = "pymodules.controllers.mdp_trajectory_planner.MdpTrajectoryPlanner"
@@ -29,30 +29,47 @@ import json
 import math
 import numpy as np
 
-from pymodules.gcs.chance_constraint import is_safe, mahalanobis_squared
+from pymodules.gcs.chance_constraint import is_safe
 
 GRAVITY = 9.81
 
-# Planning parameters
-PLAN_DT = 0.25
-PLAN_HORIZON = 6
+# ── Planning parameters ──────────────────────────────────────────────────────
+REPLAN_DT = 0.5
+FWD_DT = 0.5
+FWD_STEPS = 20          # 20 × 0.5s = 10s lookahead
+SAMPLE_COUNT = 10
+ONE_STEP_INDEX = 1       # ~1s ahead, used as execution target
 CRUISE_SPEED = 8.0
-
-# Reward values (Table I)
-R_GOAL = 100.0
-R_PROGRESS_PER_M = 3.0
-R_SPOOFER = -200.0
-R_AGENTS = -150.0
-R_TIME = -1.0
-
-# Proximity threshold for cooperative agent penalty
-D_MIN_AGENTS = 25.0*4
-
 GOAL_REACHED_DIST = 8.0
+
+# ── Value function parameters (Table 1 adapted for ~500m domain) ─────────────
+GOAL_REWARD = 200.0
+GOAL_DISCOUNT = 0.999    # slow decay → attraction over entire field
+
+AGENT_REWARD = 1000.0
+AGENT_DISCOUNT = 0.97    # matches paper's intruder decay factor
+AGENT_LIMIT = 80.0       # negative peak radius (meters)
+
+SPOOFER_REWARD = 1000.0
+SPOOFER_DISCOUNT = 0.97
+
+MIN_CYCLE = 2            # normalization constant (grid-world minimum distance)
+
+# ── Action space ─────────────────────────────────────────────────────────────
+NUM_HEADINGS = 16
+SPEED_LEVELS = [CRUISE_SPEED, CRUISE_SPEED * 0.5, 0.0]
 
 
 def _clamp(v, lo, hi):
     return max(lo, min(hi, v))
+
+
+def _peak_value(reward, discount):
+    """Normalized peak value: r / (1 - κ^minCycle)"""
+    denom = 1.0 - discount ** MIN_CYCLE
+    if denom < 1e-12:
+        return reward * 1e6
+    return reward / denom
 
 
 class MdpTrajectoryPlanner:
@@ -69,7 +86,7 @@ class MdpTrajectoryPlanner:
         # GCS data
         self.unsafe_region = None
         self.other_positions = {}
-        self.agent_radius = D_MIN_AGENTS
+        self.agent_radius = AGENT_LIMIT
         self.goal = None
         self.goal_reached = False
 
@@ -91,6 +108,13 @@ class MdpTrajectoryPlanner:
         self.Ki_vel = 0.1
         self.max_integral = 3.0
 
+        # Precomputed peak values
+        self._goal_peak = _peak_value(GOAL_REWARD, GOAL_DISCOUNT)
+        self._agent_peak = _peak_value(AGENT_REWARD, AGENT_DISCOUNT)
+        self._spoofer_peak = _peak_value(SPOOFER_REWARD, SPOOFER_DISCOUNT)
+
+    # ── GCS command parsing ──────────────────────────────────────────────────
+
     def _parse_gcs_command(self, gcs_cmd):
         if gcs_cmd is None or not isinstance(gcs_cmd, str):
             return
@@ -100,7 +124,7 @@ class MdpTrajectoryPlanner:
             new_others = cmd.get("other_positions", {})
             if new_others:
                 self.other_positions = new_others
-            self.agent_radius = cmd.get("agent_radius", D_MIN_AGENTS)
+            self.agent_radius = cmd.get("agent_radius", AGENT_LIMIT)
             if "host_id" in cmd:
                 self.host_id = cmd["host_id"]
             if "goal" in cmd:
@@ -117,109 +141,153 @@ class MdpTrajectoryPlanner:
             return np.array([wp[0], wp[1], wp[2]], dtype=float)
         return None
 
-    def _action_set(self, pos: np.ndarray) -> list[np.ndarray]:
-        """Generate discrete velocity action candidates (3D)."""
-        actions = []
-        step = CRUISE_SPEED * PLAN_DT
+    # ── Action set ───────────────────────────────────────────────────────────
 
-        # 24 planar headings at full and half speed for finer resolution
-        for k in range(24):
-            a = 2.0 * math.pi * k / 24.0
-            d = np.array([math.cos(a), math.sin(a), 0.0])
-            actions.append(d * step)
-            actions.append(d * step * 0.5)
+    def _build_actions(self, pos: np.ndarray) -> list[tuple[float, float]]:
+        """Build (heading, speed) action set. Headings are log-spaced near
+        the goal direction for fine control, plus uniform coverage."""
+        actions = []
+
+        # Uniform headings at each speed level
+        for k in range(NUM_HEADINGS):
+            heading = 2.0 * math.pi * k / NUM_HEADINGS
+            for speed in SPEED_LEVELS:
+                actions.append((heading, speed))
 
         # Goal-directed actions at multiple speeds
         goal = self._current_goal()
         if goal is not None:
-            to_goal = goal - pos
+            to_goal = goal[:2] - pos[:2]
             d = np.linalg.norm(to_goal)
-            if d > 0.5:
-                direction = to_goal / d
-                # Clamp step to not overshoot the goal
-                goal_step = min(step, d)
-                actions.append(direction * goal_step)
-                actions.append(direction * goal_step * 0.5)
-                actions.append(direction * goal_step * 0.25)
-                perp = np.array([-direction[1], direction[0], 0.0])
-                actions.append((direction * 0.7 + perp * 0.3) * step)
-                actions.append((direction * 0.7 - perp * 0.3) * step)
-
-        # Vertical + hover
-        actions.append(np.array([0.0, 0.0, step * 0.3]))
-        actions.append(np.array([0.0, 0.0, -step * 0.3]))
-        actions.append(np.zeros(3))
+            if d > 1.0:
+                goal_heading = math.atan2(to_goal[1], to_goal[0])
+                for speed in SPEED_LEVELS:
+                    actions.append((goal_heading, speed))
+                # Flanking: ±15°, ±30° off goal heading
+                for offset_deg in [15, 30]:
+                    offset = math.radians(offset_deg)
+                    for speed in [CRUISE_SPEED, CRUISE_SPEED * 0.5]:
+                        actions.append((goal_heading + offset, speed))
+                        actions.append((goal_heading - offset, speed))
 
         return actions
 
-    def _reward_at(self, pos: np.ndarray, prev_goal_dist: float) -> float:
-        """Compute MDP reward at a candidate position (Table I)."""
-        reward = R_TIME
+    # ── Forward projection ───────────────────────────────────────────────────
 
+    def _forward_project(self, pos: np.ndarray, heading: float, speed: float) -> list[np.ndarray]:
+        """Simplified kinematic forward projection at constant heading/speed."""
+        dx = speed * math.cos(heading) * FWD_DT
+        dy = speed * math.sin(heading) * FWD_DT
+        traj = []
+        p = pos.copy()
+        for _ in range(FWD_STEPS):
+            p = p + np.array([dx, dy, 0.0])
+            traj.append(p.copy())
+        return traj
+
+    # ── Value function (Eq. 6) ───────────────────────────────────────────────
+
+    def _value_at(self, pos: np.ndarray) -> float:
+        """Closed-form value at a state: V = V+ − V−"""
+
+        # ── Positive value: goal attraction ──
+        v_pos = 0.0
         goal = self._current_goal()
         if goal is not None:
-            goal_dist = np.linalg.norm(goal - pos)
-            if goal_dist < GOAL_REACHED_DIST:
-                reward += R_GOAL
-            else:
-                # Proportional progress reward: reward per meter closer
-                delta = prev_goal_dist - goal_dist
-                reward += R_PROGRESS_PER_M * delta
+            d_goal = np.linalg.norm(goal - pos)
+            v_pos = self._goal_peak * (GOAL_DISCOUNT ** d_goal)
 
-        # Cooperative agent proximity penalty
+        # ── Negative value: agent repulsion ──
+        v_neg = 0.0
         for oid, op in self.other_positions.items():
             oid_int = int(oid) if isinstance(oid, str) else oid
             if self.host_id is not None and oid_int == self.host_id:
                 continue
             d_agent = np.linalg.norm(pos - np.asarray(op, dtype=float))
             if d_agent < self.agent_radius:
-                reward += R_AGENTS * (1.0 + (self.agent_radius - d_agent) / self.agent_radius)
-            elif d_agent < self.agent_radius * 2.0:
-                reward += R_AGENTS * 0.3 * ((self.agent_radius * 2.0 - d_agent) / self.agent_radius)
+                v_neg += self._agent_peak * (AGENT_DISCOUNT ** d_agent)
 
-        # Spoofer risk domain penalty (chance constraint violation)
+        # ── Negative value: spoofer unsafe region ──
         if self.unsafe_region is not None:
             mu = np.asarray(self.unsafe_region["mu"], dtype=float)
             sigma = np.asarray(self.unsafe_region["sigma"], dtype=float)
             alpha = self.unsafe_region.get("alpha", 0.05)
             if not is_safe(pos, mu, sigma, alpha):
-                d2 = mahalanobis_squared(pos, mu, sigma)
-                thresh = self.unsafe_region.get("threshold", 7.81)
-                severity = max(0.0, thresh - d2) / max(thresh, 1.0)
-                reward += R_SPOOFER * (1.0 + severity)
+                d_spoof = np.linalg.norm(pos - mu)
+                v_neg += self._spoofer_peak * (SPOOFER_DISCOUNT ** d_spoof)
 
-        return reward
+        return v_pos - v_neg
+
+    # ── MDP planning with action shielding + reward shaping ─────────────────
+
+    def _is_safe_trajectory(self, traj: list[np.ndarray],
+                            sample_indices: np.ndarray) -> bool:
+        """Action shielding (Sec. IV.B): reject if any sampled state enters
+        an intruder zone or spoofer unsafe region."""
+        for idx in sample_indices:
+            p = traj[idx]
+            for oid, op in self.other_positions.items():
+                oid_int = int(oid) if isinstance(oid, str) else oid
+                if self.host_id is not None and oid_int == self.host_id:
+                    continue
+                if np.linalg.norm(p - np.asarray(op, dtype=float)) < self.agent_radius * 0.5:
+                    return False
+            if self.unsafe_region is not None:
+                mu = np.asarray(self.unsafe_region["mu"], dtype=float)
+                sigma = np.asarray(self.unsafe_region["sigma"], dtype=float)
+                alpha = self.unsafe_region.get("alpha", 0.05)
+                if not is_safe(p, mu, sigma, alpha):
+                    return False
+        return True
 
     def _plan(self, pos: np.ndarray) -> np.ndarray:
-        """MDP planning: evaluate actions over finite horizon, pick best."""
-        actions = self._action_set(pos)
-        goal = self._current_goal()
-        init_goal_dist = np.linalg.norm(goal - pos) if goal is not None else 0.0
+        """Forward-project each action, evaluate value with reward shaping,
+        apply action shielding, pick best."""
+        actions = self._build_actions(pos)
+        sample_indices = np.linspace(0, FWD_STEPS - 1, SAMPLE_COUNT, dtype=int)
+        v_current = self._value_at(pos)
 
-        best_score = -float("inf")
-        best_target = pos.copy()
+        best_value = -float("inf")
+        best_one_step = pos.copy()
+        shielded_best_value = -float("inf")
+        shielded_best_one_step = pos.copy()
 
-        for action in actions:
-            p = pos.copy()
-            score = 0.0
-            prev_dist = init_goal_dist
-            for h in range(PLAN_HORIZON):
-                p = p + action
-                if goal is not None:
-                    cur_dist = np.linalg.norm(goal - p)
-                else:
-                    cur_dist = prev_dist
-                r = self._reward_at(p, prev_dist)
-                score += r * (0.95 ** h)
-                prev_dist = cur_dist
-            if score > best_score:
-                best_score = score
-                best_target = pos + action  # only take first step
+        for heading, speed in actions:
+            traj = self._forward_project(pos, heading, speed)
 
-        return best_target
+            # Reward shaping (Sec. IV.C, Eq. 16): accumulate shaped reward
+            # F(s,a,s') = κ·V(s') - V(s) along trajectory
+            total_shaped = 0.0
+            v_prev = v_current
+            for idx in sample_indices:
+                v_next = self._value_at(traj[idx])
+                total_shaped += 0.99 * v_next - v_prev
+                v_prev = v_next
+
+            # Also add the terminal value (best state along trajectory)
+            total_shaped += v_prev
+
+            # Action shielding: prefer safe actions
+            safe = self._is_safe_trajectory(traj, sample_indices)
+
+            step_idx = min(ONE_STEP_INDEX, len(traj) - 1)
+            if safe and total_shaped > shielded_best_value:
+                shielded_best_value = total_shaped
+                shielded_best_one_step = traj[step_idx]
+
+            if total_shaped > best_value:
+                best_value = total_shaped
+                best_one_step = traj[step_idx]
+
+        # Use shielded action if available, otherwise fall back to unshielded
+        if shielded_best_value > -float("inf"):
+            return shielded_best_one_step
+        return best_one_step
+
+    # ── Controller entry point ───────────────────────────────────────────────
 
     def on_ctl_tick(self, state: dict) -> dict:
-        """Controller entry point: plan + PID control."""
+        """Plan + PID control."""
         pos = np.array(state["pos"], dtype=float)
         vel = np.array(state["vel"], dtype=float)
         euler = state["euler"]
@@ -249,13 +317,13 @@ class MdpTrajectoryPlanner:
 
         self._parse_gcs_command(state.get("gcs_command"))
 
-        # Waypoint advancement (if using waypoint list as goals)
+        # Waypoint advancement
         if self.goal is None and self.waypoints and self.wp_index < len(self.waypoints):
             wp = self.waypoints[self.wp_index]
             if np.linalg.norm(pos - np.array([wp[0], wp[1], wp[2]])) < GOAL_REACHED_DIST:
                 self.wp_index = min(self.wp_index + 1, len(self.waypoints) - 1)
 
-        # Check if goal is reached — hover in place
+        # Goal-reached hover
         goal = self._current_goal()
         if goal is not None and np.linalg.norm(goal - pos) < GOAL_REACHED_DIST:
             if not self.goal_reached:
@@ -265,17 +333,17 @@ class MdpTrajectoryPlanner:
         else:
             self.goal_reached = False
 
-        # MDP planning at PLAN_DT intervals (~4 Hz), skip when at goal
+        # MDP planning at REPLAN_DT intervals, skip when at goal
         if not self.goal_reached:
             self.plan_counter += 1
-            steps_per_plan = max(1, int(PLAN_DT / max(dt, 0.001)))
+            steps_per_plan = max(1, int(REPLAN_DT / max(dt, 0.001)))
             if self.plan_counter >= steps_per_plan:
                 self.plan_counter = 0
                 self.target_pos = self._plan(pos)
 
         target = self.target_pos
 
-        # --- Cascaded PID ---
+        # ── Cascaded PID ─────────────────────────────────────────────────────
         err_x = target[0] - pos[0]
         err_y = target[1] - pos[1]
         err_z = target[2] - pos[2]
@@ -288,9 +356,12 @@ class MdpTrajectoryPlanner:
         vel_err_y = vel_sp_y - vel[1]
         vel_err_z = vel_sp_z - vel[2]
 
-        self.vel_integral[0] = _clamp(self.vel_integral[0] + vel_err_x * dt, -self.max_integral, self.max_integral)
-        self.vel_integral[1] = _clamp(self.vel_integral[1] + vel_err_y * dt, -self.max_integral, self.max_integral)
-        self.vel_integral[2] = _clamp(self.vel_integral[2] + vel_err_z * dt, -self.max_integral, self.max_integral)
+        self.vel_integral[0] = _clamp(self.vel_integral[0] + vel_err_x * dt,
+                                       -self.max_integral, self.max_integral)
+        self.vel_integral[1] = _clamp(self.vel_integral[1] + vel_err_y * dt,
+                                       -self.max_integral, self.max_integral)
+        self.vel_integral[2] = _clamp(self.vel_integral[2] + vel_err_z * dt,
+                                       -self.max_integral, self.max_integral)
 
         accel_x = 2.0 * vel_err_x + self.Ki_vel * self.vel_integral[0]
         accel_y = 2.0 * vel_err_y + self.Ki_vel * self.vel_integral[1]

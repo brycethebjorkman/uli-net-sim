@@ -18,6 +18,7 @@ import inet.mobility.contract.IMobility;
 module GhostHost extends NodeBase
 {
     parameters:
+        string hostType = default("ghost");
         @display("i=misc/drone");
         @networkNode();
         mobility.typename = default("TurtleMobility");

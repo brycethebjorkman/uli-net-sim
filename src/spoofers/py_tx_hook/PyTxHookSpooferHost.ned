@@ -15,5 +15,6 @@ import uav_rid.spoofers.py_tx_hook.PyTxHookSpooferMgmt;
 module PyTxHookSpooferHost extends DroneHost
 {
     parameters:
+        hostType = default("spoofer");
         wlan[0].mgmt.typename = "PyTxHookSpooferMgmt";
 }

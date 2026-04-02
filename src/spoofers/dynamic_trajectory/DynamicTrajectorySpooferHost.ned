@@ -14,5 +14,6 @@ import uav_rid.rid_host.DroneHost;
 module DynamicTrajectorySpooferHost extends DroneHost
 {
     parameters:
+        hostType = default("spoofer");
         wlan[0].mgmt.typename = "DynamicTrajectorySpooferMgmt";
 }

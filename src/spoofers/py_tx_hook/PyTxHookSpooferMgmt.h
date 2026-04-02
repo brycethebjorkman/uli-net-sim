@@ -17,7 +17,7 @@ class PyTxHookSpooferMgmt : public RidBeaconMgmt
     bool waypointsSent = false;
 
     virtual void initialize(int stage) override;
-    virtual void fillRidMsg(const inet::Ptr<RidBeaconFrame>& body) override;
+    virtual bool fillRidMsg(const inet::Ptr<RidBeaconFrame>& body) override;
 };
 
 #endif

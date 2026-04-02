@@ -22,10 +22,13 @@ void PyTxHookSpooferMgmt::initialize(int stage)
     }
 }
 
-void PyTxHookSpooferMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame>& body)
+bool PyTxHookSpooferMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame>& body)
 {
     // Fill with true position first
     RidBeaconMgmt::fillRidMsg(body);
+
+    // Snapshot before Python hook to detect modification
+    auto before = body->dup();
 
     // Call Python hook to modify beacon fields
     PyBridgeImpl *impl = pyBridge->getImpl();
@@ -92,4 +95,17 @@ void PyTxHookSpooferMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame>& body)
             body->setHeading(vel[2].cast<double>());
         }
     }
+
+    // Compare against pre-hook snapshot to detect any field modification.
+    // Use tolerance to avoid false positives from float round-trip through Python.
+    auto ne = [](double a, double b) { return std::abs(a - b) > 1e-6; };
+    bool spoofed = (ne(body->getPosX(), before->getPosX()) ||
+                    ne(body->getPosY(), before->getPosY()) ||
+                    ne(body->getPosZ(), before->getPosZ()) ||
+                    ne(body->getSpeedVertical(), before->getSpeedVertical()) ||
+                    ne(body->getSpeedHorizontal(), before->getSpeedHorizontal()) ||
+                    ne(body->getHeading(), before->getHeading()) ||
+                    body->getSerialNumber() != before->getSerialNumber());
+    delete before;
+    return spoofed;
 }

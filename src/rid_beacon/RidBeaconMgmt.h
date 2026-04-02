@@ -70,6 +70,7 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector txMySpeedVertical;
         cOutVector txMySpeedHorizontal;
         cOutVector txMyHeading;
+        cOutVector txIsSpoofed;
     } recvec;
 
     struct DetectionSample {
@@ -119,8 +120,9 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     /** Utility function: creates and sends a beacon frame */
     virtual void sendBeacon();
 
-    /** Utility function: fills in Remote ID message fields */
-    virtual void fillRidMsg(const inet::Ptr<RidBeaconFrame> & body);
+    /** Fills in Remote ID message fields. Returns true if this
+     *  transmission was spoofed (fields differ from host's true state). */
+    virtual bool fillRidMsg(const inet::Ptr<RidBeaconFrame> & body);
 
     /** Utility function: handles a received beacon frame */
     virtual void handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;

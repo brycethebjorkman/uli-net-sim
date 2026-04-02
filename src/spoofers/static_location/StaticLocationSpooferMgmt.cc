@@ -13,9 +13,10 @@ using namespace physicallayer;
 
 Define_Module(StaticLocationSpooferMgmt);
 
-void StaticLocationSpooferMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
+bool StaticLocationSpooferMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
 {
     body->setPosX(par("spoofPosX"));
     body->setPosY(par("spoofPosY"));
     body->setPosZ(par("spoofPosZ"));
+    return true;  // always spoofed
 }

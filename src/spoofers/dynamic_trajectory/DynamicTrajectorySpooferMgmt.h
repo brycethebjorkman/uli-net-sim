@@ -32,7 +32,7 @@ protected:
     virtual void initialize(int stage) override;
 
     /** Utility function: fills Remote ID fields with target drone's position */
-    virtual void fillRidMsg(const inet::Ptr<RidBeaconFrame> & body) override;
+    virtual bool fillRidMsg(const inet::Ptr<RidBeaconFrame> & body) override;
 };
 
 #endif

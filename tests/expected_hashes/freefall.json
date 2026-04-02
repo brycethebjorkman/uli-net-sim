@@ -17,6 +17,7 @@
   "host[0].mobility||velZ:vector": "c0c6f2e27c46f10aee099034eb03f40f4636b39f40782e46670a1c8a70b90a08",
   "host[0].wlan[0].mgmt||Transmission Heading": "9ab13d227f865d606eda1aec3e1b97b16ca139f5a8fff866110d43e63a90be87",
   "host[0].wlan[0].mgmt||Transmission Horizontal Speed": "c842a9b0a96c84229f9b72cc166ecdd917c2b9be4126ef7397ed23e75d347c11",
+  "host[0].wlan[0].mgmt||Transmission Is Spoofed": "c842a9b0a96c84229f9b72cc166ecdd917c2b9be4126ef7397ed23e75d347c11",
   "host[0].wlan[0].mgmt||Transmission My Heading": "9ab13d227f865d606eda1aec3e1b97b16ca139f5a8fff866110d43e63a90be87",
   "host[0].wlan[0].mgmt||Transmission My Horizontal Speed": "c842a9b0a96c84229f9b72cc166ecdd917c2b9be4126ef7397ed23e75d347c11",
   "host[0].wlan[0].mgmt||Transmission My Vertical Speed": "a889fcadbd81cf134d68dc6a58d208eb3358dcd21b503bc471f15145eef71e47",

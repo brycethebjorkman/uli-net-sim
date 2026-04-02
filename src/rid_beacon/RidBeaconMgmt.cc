@@ -72,6 +72,7 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.txMySpeedVertical.setName("Transmission My Vertical Speed");
         recvec.txMySpeedHorizontal.setName("Transmission My Horizontal Speed");
         recvec.txMyHeading.setName("Transmission My Heading");
+        recvec.txIsSpoofed.setName("Transmission Is Spoofed");
 
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -151,7 +152,7 @@ void RidBeaconMgmt::sendBeacon()
     body->setChunkLength(B(8 + 2 + 2 + (2 + ssid.length()) + (2 + supportedRates.numRates)));
 
     // use specific implementation logic to fill in Remote ID message fields
-    fillRidMsg(body);
+    bool isSpoofed = fillRidMsg(body);
 
     EV << "BODY: " << body << std::endl;
     recvec.txPosX.record(body->getPosX());
@@ -177,6 +178,7 @@ void RidBeaconMgmt::sendBeacon()
     recvec.txMySpeedVertical.record(mySpeedVertical);
     recvec.txMySpeedHorizontal.record(mySpeedHorizontal);
     recvec.txMyHeading.record(myHeading);
+    recvec.txIsSpoofed.record(isSpoofed ? 1.0 : 0.0);
 
     // Record transmission power from radio
     cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -189,7 +191,7 @@ void RidBeaconMgmt::sendBeacon()
     sendManagementFrame("Beacon", body, ST_BEACON, MacAddress::BROADCAST_ADDRESS);
 }
 
-void RidBeaconMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
+bool RidBeaconMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
 {
     auto currentTime = simTime();
     body->setTimestamp(currentTime.inUnit(SimTimeUnit::SIMTIME_MS));
@@ -214,6 +216,7 @@ void RidBeaconMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
     body->setSpeedVertical(speedVertical);
     body->setSpeedHorizontal(speedHorizontal);
     body->setHeading(heading);
+    return false;  // not spoofed
 }
 
 void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header)

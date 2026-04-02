@@ -32,7 +32,7 @@ void DynamicTrajectorySpooferMgmt::initialize(int stage)
     }
 }
 
-void DynamicTrajectorySpooferMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
+bool DynamicTrajectorySpooferMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
 {
     // Set timestamp and our own serial number (spoofer's identity)
     auto currentTime = simTime();
@@ -64,4 +64,5 @@ void DynamicTrajectorySpooferMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & 
     EV << "DynamicTrajectorySpooferMgmt: broadcasting spoofed position ("
        << posX << ", " << posY << ", " << posZ << ") from host["
        << targetHostIndex << "]" << endl;
+    return true;  // always spoofed
 }

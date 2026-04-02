@@ -17,6 +17,7 @@ import uav_rid.rid_beacon.RidBeaconMgmt;
 module DroneHost extends WirelessHost
 {
     parameters:
+        string hostType = default("benign");
         @display("bgb=1806,1526");
         wlan[0].agent.typename = "";
         wlan[0].mgmt.typename = default("RidBeaconMgmt");

@@ -72,6 +72,7 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.txMySpeedVertical.setName("Transmission My Vertical Speed");
         recvec.txMySpeedHorizontal.setName("Transmission My Horizontal Speed");
         recvec.txMyHeading.setName("Transmission My Heading");
+        recvec.txPacketId.setName("Transmission Packet ID");
         recvec.txIsSpoofed.setName("Transmission Is Spoofed");
 
         // subscribe for notifications
@@ -135,6 +136,7 @@ void RidBeaconMgmt::receiveSignal(cComponent *src, simsignal_t id, cObject *obj,
 void RidBeaconMgmt::sendManagementFrame(const char *name, const Ptr<Ieee80211MgmtFrame>& body, int subtype, const MacAddress& destAddr)
 {
     auto packet = new Packet(name);
+    recvec.txPacketId.record(packet->getId());
     packet->addTag<MacAddressReq>()->setDestAddress(destAddr);
     packet->addTag<Ieee80211SubtypeReq>()->setSubtype(subtype);
     packet->insertAtBack(body);

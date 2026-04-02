@@ -70,6 +70,7 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector txMySpeedVertical;
         cOutVector txMySpeedHorizontal;
         cOutVector txMyHeading;
+        cOutVector txPacketId;
         cOutVector txIsSpoofed;
     } recvec;
 

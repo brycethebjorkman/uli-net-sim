@@ -302,6 +302,7 @@ Examples:
     # Host types and configurations
     if spoofer_host is not None and spoofer_type == 'snow_plow':
         lines.append(f"# Snow plow spoofer (claims position further along its waypoint path)")
+        lines.append(f'*.host[{spoofer_host}].typename = "PyTxHookSpooferHost"')
         lines.append(f'*.host[{spoofer_host}].wlan[0].mgmt.pyTxClass = "pymodules.spoofers.snow_plow.SnowPlowSpoofer"')
         lines.append("")
     elif ghost_host is not None:

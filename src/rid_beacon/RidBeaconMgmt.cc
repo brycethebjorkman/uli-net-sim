@@ -3,12 +3,8 @@
 //
 // Based on inet/linklayer/ieee80211/mgmt/Ieee80211MgmtAp.cc
 //
-// IMPORTANT: PyBridgePy.h must come BEFORE omnetpp.h to avoid macro conflicts.
-//
 
-#include "pybridge/PyBridgePy.h"
 #include "RidBeaconMgmt.h"
-#include "pybridge/PyBridge.h"
 
 #include "gcs/GcsReport_m.h"
 
@@ -100,16 +96,6 @@ void RidBeaconMgmt::initialize(int stage)
             }
         }
     }
-    else if (stage == INITSTAGE_SINGLE_MOBILITY) {
-        // Initialize Python TX hook (needs interpreter from PyBridge, which
-        // initializes at INITSTAGE_LOCAL, so we do this in a later stage)
-        std::string pyTxClassName = par("pyTxClass").stdstringValue();
-        if (!pyTxClassName.empty()) {
-            cModule *mod = getModuleByPath(par("pyBridgePath").stdstringValue().c_str());
-            pyBridge = check_and_cast<PyBridge *>(mod);
-            pyTxHandle = pyBridge->instantiateClass(pyTxClassName);
-        }
-    }
 }
 
 void RidBeaconMgmt::handleTimer(cMessage *msg)
@@ -166,11 +152,6 @@ void RidBeaconMgmt::sendBeacon()
 
     // use specific implementation logic to fill in Remote ID message fields
     fillRidMsg(body);
-
-    // Python TX hook: optionally modify beacon fields (e.g. spoofing)
-    if (pyTxHandle >= 0) {
-        callPyTxHook(body);
-    }
 
     EV << "BODY: " << body << std::endl;
     recvec.txPosX.record(body->getPosX());
@@ -343,82 +324,6 @@ void RidBeaconMgmt::stop()
     cancelEvent(beaconTimer);
     cancelEvent(terminateMsg);
     Ieee80211MgmtApBase::stop();
-}
-
-// ── Python TX hook ──────────────────────────────────────────────────────────
-
-void RidBeaconMgmt::callPyTxHook(const inet::Ptr<RidBeaconFrame>& body)
-{
-    PyBridgeImpl *impl = pyBridge->getImpl();
-    py::gil_scoped_acquire gil;
-
-    // Build state dict with current beacon fields
-    py::dict txState;
-    txState["pos"]     = py::make_tuple(body->getPosX(), body->getPosY(), body->getPosZ());
-    txState["vel"]     = py::make_tuple(body->getSpeedVertical(),
-                                        body->getSpeedHorizontal(),
-                                        body->getHeading());
-    txState["serial"]  = body->getSerialNumber();
-    txState["time"]    = simTime().dbl();
-
-    // One-shot delivery of waypoints (parsed from mobility's XML script).
-    // Works with both TurtleMobility (turtleScript) and MultirotorMobility
-    // (waypointScript) since both use <set>/<moveto> XML format.
-    if (!pyTxWaypointsSent) {
-        pyTxWaypointsSent = true;
-        py::list wpList;
-        auto host = getContainingNode(this);
-        auto mobility = host->getSubmodule("mobility");
-        if (mobility) {
-            cXMLElement *wpXml = nullptr;
-            if (mobility->hasPar("waypointScript"))
-                wpXml = mobility->par("waypointScript").xmlValue();
-            else if (mobility->hasPar("turtleScript"))
-                wpXml = mobility->par("turtleScript").xmlValue();
-
-            if (wpXml) {
-                double wpSpeed = 10.0;
-                for (auto *child = wpXml->getFirstChild(); child;
-                     child = child->getNextSibling()) {
-                    const char *tag = child->getTagName();
-                    if (strcmp(tag, "set") == 0 || strcmp(tag, "moveto") == 0) {
-                        double x = child->getAttribute("x") ? atof(child->getAttribute("x")) : 0;
-                        double y = child->getAttribute("y") ? atof(child->getAttribute("y")) : 0;
-                        double z = child->getAttribute("z") ? atof(child->getAttribute("z")) : 0;
-                        if (strcmp(tag, "set") == 0 && child->getAttribute("speed"))
-                            wpSpeed = atof(child->getAttribute("speed"));
-                        py::dict wp;
-                        wp["x"] = x;
-                        wp["y"] = y;
-                        wp["z"] = z;
-                        wp["speed"] = wpSpeed;
-                        wpList.append(wp);
-                    }
-                }
-            }
-        }
-        txState["waypoints"] = wpList;
-    }
-
-    // Call on_rid_tx(state)
-    py::object result = impl->callMethod(pyTxHandle, "on_rid_tx", txState);
-
-    // If result is a dict, overwrite beacon fields
-    if (!result.is_none() && py::isinstance<py::dict>(result)) {
-        py::dict d = result.cast<py::dict>();
-        if (d.contains("pos")) {
-            py::tuple pos = d["pos"].cast<py::tuple>();
-            body->setPosX(pos[0].cast<double>());
-            body->setPosY(pos[1].cast<double>());
-            body->setPosZ(pos[2].cast<double>());
-        }
-        if (d.contains("vel")) {
-            py::tuple vel = d["vel"].cast<py::tuple>();
-            body->setSpeedVertical(vel[0].cast<double>());
-            body->setSpeedHorizontal(vel[1].cast<double>());
-            body->setHeading(vel[2].cast<double>());
-        }
-    }
 }
 
 // ── GCS report forwarding ───────────────────────────────────────────────────

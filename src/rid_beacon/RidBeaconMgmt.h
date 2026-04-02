@@ -16,8 +16,6 @@
 using namespace inet;
 using namespace inet::ieee80211;
 
-class PyBridge;
-
 class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
 {
   protected:
@@ -33,11 +31,6 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     cMessage *beaconTimer = nullptr;
     cMessage *terminateMsg = nullptr;
     cModule *medium = nullptr;
-
-    // Python TX hook
-    PyBridge *pyBridge = nullptr;
-    int pyTxHandle = -1;
-    bool pyTxWaypointsSent = false;
 
     // GCS report forwarding
     cModule *gcsModule = nullptr;
@@ -134,9 +127,6 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
 
     /** Utility function: hook for derived classes to process received Remote ID message */
     virtual void hookRidMsg(Packet *packet, const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm) {};
-
-    /** Call Python TX hook to optionally modify beacon fields */
-    void callPyTxHook(const inet::Ptr<RidBeaconFrame>& body);
 
     /** Forward RX report to GCS module */
     void forwardToGcs(const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm);

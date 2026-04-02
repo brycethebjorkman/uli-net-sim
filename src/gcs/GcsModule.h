@@ -72,6 +72,7 @@ class GcsModule : public cSimpleModule, public cListener
     bool visualizationInitialized = false;
 
     virtual void initialize() override;
+    virtual void finish() override;
     virtual void handleMessage(cMessage *msg) override;
 
     // IRadioMedium::signalRemovedSignal handler
@@ -88,6 +89,9 @@ class GcsModule : public cSimpleModule, public cListener
 
     // Call Python on_tick() periodically
     void pyOnTick();
+
+    // End of simulation: optional Python on_gcs_finish() → recordScalar
+    void pyOnFinish();
 };
 
 #endif

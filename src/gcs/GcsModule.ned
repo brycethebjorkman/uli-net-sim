@@ -23,6 +23,9 @@ package uav_rid.gcs;
 //   - "commands": {host_id: {...}, ...}  — forwarded to UAV mobility
 //   - "log": {"name": value, ...}        — recorded as cOutVector entries
 //
+// Optional: on_gcs_finish() at simulation end:
+//   - "scalars": {"name": value, ...}    — recorded via recordScalar() → .sca
+//
 // This keeps the GCS general-purpose: the Python class decides what
 // algorithm to run (detection, coordination, mission planning, etc.)
 // and what to log.

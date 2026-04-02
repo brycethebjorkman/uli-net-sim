@@ -89,6 +89,7 @@ class MdpTrajectoryPlanner:
 
         # GCS data
         self.unsafe_region = None
+        self.unsafe_regions_list = None  # all chance-constraint regions (from GCS)
         self.other_positions = {}
         self.agent_radius = AGENT_LIMIT
         self.goal = None
@@ -125,6 +126,7 @@ class MdpTrajectoryPlanner:
         try:
             cmd = json.loads(gcs_cmd)
             self.unsafe_region = cmd.get("unsafe_region")
+            self.unsafe_regions_list = cmd.get("unsafe_regions")
             new_others = cmd.get("other_positions", {})
             if new_others:
                 self.other_positions = new_others
@@ -232,16 +234,26 @@ class MdpTrajectoryPlanner:
 
     # ── MDP planning (Algorithm 2) ──────────────────────────────────────────
 
+    def _regions_for_unsafe_test(self) -> list[dict]:
+        """Ellipsoids used for trajectory hard constraint (matches GCS broadcast)."""
+        if self.unsafe_regions_list:
+            return list(self.unsafe_regions_list)
+        if self.unsafe_region is not None:
+            return [self.unsafe_region]
+        return []
+
     def _trajectory_enters_unsafe(self, traj: list[np.ndarray]) -> bool:
         """Hard constraint: reject trajectories that enter the chance-constraint ellipsoid."""
-        if self.unsafe_region is None:
+        regions = self._regions_for_unsafe_test()
+        if not regions:
             return False
-        mu = np.asarray(self.unsafe_region["mu"], dtype=float)
-        sigma = np.asarray(self.unsafe_region["sigma"], dtype=float)
-        alpha = self.unsafe_region.get("alpha", 0.05)
         for p in traj:
-            if not is_safe(p, mu, sigma, alpha):
-                return True
+            for reg in regions:
+                mu = np.asarray(reg["mu"], dtype=float)
+                sigma = np.asarray(reg["sigma"], dtype=float)
+                alpha = reg.get("alpha", 0.05)
+                if not is_safe(p, mu, sigma, alpha):
+                    return True
         return False
 
     def _plan(self, pos: np.ndarray) -> np.ndarray:

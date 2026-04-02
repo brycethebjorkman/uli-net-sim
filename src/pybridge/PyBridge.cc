@@ -7,8 +7,8 @@
 
 #include "PyBridgePy.h"
 #include "PyBridge.h"
-#include <sstream>
 #include <filesystem>
+#include <sstream>
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
@@ -55,17 +55,23 @@ void PyBridge::initialize()
         sys.attr("prefix") = venvPrefix;
         sys.attr("exec_prefix") = venvPrefix;
 
-        // Discover the Python version directory dynamically
+        // site-packages must match the *embedded* interpreter (linked libpython),
+        // not the first pythonX.Y directory under lib/ — lexical / FS order can
+        // pick e.g. python3.10 before python3.14 when a stale venv layout exists.
         std::string venvLib = venvPrefix + "/lib";
-        std::string venvSitePackages;
-        for (auto& entry : std::filesystem::directory_iterator(venvLib)) {
-            if (entry.is_directory() && entry.path().filename().string().rfind("python", 0) == 0) {
-                venvSitePackages = entry.path().string() + "/site-packages";
-                break;
-            }
+        py::tuple version_info = sys.attr("version_info");
+        int pyMajor = version_info[0].cast<int>();
+        int pyMinor = version_info[1].cast<int>();
+        std::ostringstream sitePath;
+        sitePath << venvLib << "/python" << pyMajor << "." << pyMinor << "/site-packages";
+        std::string venvSitePackages = sitePath.str();
+        if (!std::filesystem::exists(venvSitePackages)) {
+            throw cRuntimeError(
+                "PyBridge: expected venv site-packages at %s — use the same Python as the "
+                "simulation binary (embedded: %d.%d). Recreate .venv with that interpreter and "
+                "pip install -r requirements.txt.",
+                venvSitePackages.c_str(), pyMajor, pyMinor);
         }
-        if (venvSitePackages.empty())
-            venvSitePackages = venvLib + "/python3.14/site-packages";
         py::module_ site = py::module_::import("site");
         site.attr("addsitedir")(venvSitePackages);
     }

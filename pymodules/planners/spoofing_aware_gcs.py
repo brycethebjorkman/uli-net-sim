@@ -18,6 +18,16 @@ Two-phase pipeline per the paper (AIAA SciTech '26, Sec. V-B):
   on_gcs_tick: broadcast IMM-based chance constraint + cooperative agent
                positions + goals to benign agents.
 
+  NMAC metrics (evaluated on GCS ticks; uses ``ground_truth_positions`` from
+  GcsModule when present — true mobility from OMNeT++ — else RID positions):
+    - Proximity: any pair of benign agents with 3D separation < 10 m (new
+      entry into that condition per pair counts once until they separate).
+    - Spoofer unsafe: benign agent inside the chance-constraint ellipsoid
+      (same is_safe test as the MDP hard constraint); entry events per serial.
+  End-of-run: ``on_gcs_finish`` records scalars ``nmac_proximity_final`` and
+  ``nmac_spoofer_unsafe_final`` (cumulative totals) to the .sca file for
+  cross-run bar charts; tick ``log`` vectors remain for time series.
+
 INI usage:
     *.gcs[0].pyClass = "pymodules.planners.spoofing_aware_gcs.SpoofingAwareGcs"
     *.gcs[0].tickInterval = 0.25s
@@ -26,7 +36,7 @@ INI usage:
 
 import numpy as np
 
-from pymodules.gcs.chance_constraint import unsafe_region_to_dict
+from pymodules.gcs.chance_constraint import is_safe, unsafe_region_to_dict
 from pymodules.gcs.imm_estimator import IMMEstimator
 from pymodules.gcs.multilateration import (
     multilaterate_with_tx_power,
@@ -37,6 +47,9 @@ MIN_RECEIVERS = 4
 DETECTION_THRESHOLD_M = 30.0
 DETECT_COUNT = 3              # consecutive hits to declare spoofer
 DEFAULT_AGENT_RADIUS = 60.0
+
+# NMAC: pairwise proximity (m); spoofer unsafe uses chance-constraint ellipsoid (is_safe)
+NMAC_PROXIMITY_M = 10.0
 
 
 class SpoofingAwareGcs:
@@ -64,6 +77,12 @@ class SpoofingAwareGcs:
         # Latest RID positions for cooperative agents
         self.rid_positions: dict[int, tuple[float, float, float]] = {}
         self.federate_ids: set[int] = set()
+
+        # NMAC: edge-detection state (see module docstring)
+        self._nmac_proximity_pairs_active: set[tuple[int, int]] = set()
+        self._nmac_serial_inside_unsafe: set[int] = set()
+        self.nmac_proximity_count = 0
+        self.nmac_spoofer_unsafe_count = 0
 
     # ------------------------------------------------------------------
     # Per-transmission callback
@@ -151,12 +170,79 @@ class SpoofingAwareGcs:
             result["visualization"] = visualization
         return result
 
+    def _benign_positions_for_nmac(self, ground_truth: dict | None) -> dict[int, np.ndarray]:
+        """Prefer simulation ground truth from GcsModule; fall back to RID."""
+        if ground_truth is not None and len(ground_truth) > 0:
+            benign: dict[int, np.ndarray] = {}
+            for k, v in ground_truth.items():
+                hid = int(k)
+                if hid in self.spoofers:
+                    continue
+                benign[hid] = np.asarray(v, dtype=float).ravel()[:3]
+            return benign
+        return {
+            int(s): np.array(p, dtype=float)
+            for s, p in self.rid_positions.items()
+            if s not in self.spoofers
+        }
+
+    def _update_nmac_metrics(
+        self,
+        sim_time: float,
+        unsafe_regions: list[dict],
+        ground_truth: dict | None,
+    ) -> None:
+        """Proximity NMAC (< NMAC_PROXIMITY_M) and spoofer-unsafe ellipsoid NMAC."""
+        benign = self._benign_positions_for_nmac(ground_truth)
+        serials = sorted(benign.keys())
+
+        active_pairs: set[tuple[int, int]] = set()
+        for i in range(len(serials)):
+            for j in range(i + 1, len(serials)):
+                a, b = serials[i], serials[j]
+                pa, pb = benign[a], benign[b]
+                d = float(np.linalg.norm(pa - pb))
+                if d < NMAC_PROXIMITY_M:
+                    pair = (a, b) if a < b else (b, a)
+                    active_pairs.add(pair)
+                    if pair not in self._nmac_proximity_pairs_active:
+                        self.nmac_proximity_count += 1
+                        print(
+                            f"[NMAC] proximity serial_a={a} serial_b={b} dist_m={d:.2f} "
+                            f"t={sim_time:.3f}s total_proximity_nmac={self.nmac_proximity_count}",
+                            flush=True,
+                        )
+        self._nmac_proximity_pairs_active = active_pairs
+
+        inside_now: set[int] = set()
+        for s, pos in benign.items():
+            inside = False
+            for reg in unsafe_regions:
+                mu = np.asarray(reg["mu"], dtype=float)
+                sigma = np.asarray(reg["sigma"], dtype=float)
+                alpha = float(reg.get("alpha", self.alpha))
+                if not is_safe(pos, mu, sigma, alpha):
+                    inside = True
+                    break
+            if inside:
+                inside_now.add(s)
+                if s not in self._nmac_serial_inside_unsafe:
+                    self.nmac_spoofer_unsafe_count += 1
+                    print(
+                        f"[NMAC] spoofer_unsafe serial={s} t={sim_time:.3f}s "
+                        f"pos=({pos[0]:.1f},{pos[1]:.1f},{pos[2]:.1f}) "
+                        f"total_spoofer_unsafe_nmac={self.nmac_spoofer_unsafe_count}",
+                        flush=True,
+                    )
+        self._nmac_serial_inside_unsafe = inside_now
+
     # ------------------------------------------------------------------
     # Periodic tick callback
     # ------------------------------------------------------------------
 
     def on_gcs_tick(self, data: dict) -> dict:
         host_ids = list(data.get("host_ids", []))
+        sim_time = float(data.get("time", 0.0))
 
         unsafe_regions = []
         for serial in self.spoofers:
@@ -166,6 +252,12 @@ class SpoofingAwareGcs:
                 unsafe_regions.append(unsafe_region_to_dict(mu, sigma, self.alpha))
 
         primary_unsafe = unsafe_regions[0] if unsafe_regions else None
+
+        self._update_nmac_metrics(
+            sim_time,
+            unsafe_regions,
+            data.get("ground_truth_positions"),
+        )
 
         commands = {}
         for hid in host_ids:
@@ -202,5 +294,16 @@ class SpoofingAwareGcs:
                 "tick_count": data.get("tick_count", 0),
                 "has_unsafe_region": 1.0 if primary_unsafe else 0.0,
                 "num_spoofers": float(len(self.spoofers)),
+                "nmac_proximity_total": float(self.nmac_proximity_count),
+                "nmac_spoofer_unsafe_total": float(self.nmac_spoofer_unsafe_count),
+            },
+        }
+
+    def on_gcs_finish(self) -> dict:
+        """Simulation end: emit final NMAC totals as OMNeT++ scalars (.sca) for analysis filters."""
+        return {
+            "scalars": {
+                "nmac_proximity_final": float(self.nmac_proximity_count),
+                "nmac_spoofer_unsafe_final": float(self.nmac_spoofer_unsafe_count),
             },
         }

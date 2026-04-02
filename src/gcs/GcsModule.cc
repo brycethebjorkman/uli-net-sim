@@ -11,6 +11,7 @@
 #include "GcsReport_m.h"
 #include "GcsCommand_m.h"
 #include "inet/physicallayer/wireless/common/contract/packetlevel/IRadioMedium.h"
+#include "inet/mobility/contract/IMobility.h"
 
 #include <cmath>
 #include <sstream>
@@ -348,6 +349,39 @@ void GcsModule::initialize()
     }
 }
 
+void GcsModule::finish()
+{
+    pyOnFinish();
+}
+
+void GcsModule::pyOnFinish()
+{
+    if (pyHandle < 0 || pyBridge == nullptr)
+        return;
+
+    PyBridgeImpl *impl = pyBridge->getImpl();
+    py::gil_scoped_acquire gil;
+
+    py::object instance = impl->getInstance(pyHandle);
+    if (!py::hasattr(instance, "on_gcs_finish"))
+        return;
+
+    py::object result = impl->callMethod(pyHandle, "on_gcs_finish");
+    if (result.is_none() || !py::isinstance<py::dict>(result))
+        return;
+
+    py::dict d = result.cast<py::dict>();
+    if (!d.contains("scalars") || d["scalars"].is_none())
+        return;
+
+    py::dict scalars = d["scalars"].cast<py::dict>();
+    for (auto &item : scalars) {
+        std::string name = item.first.cast<std::string>();
+        double value = item.second.cast<double>();
+        recordScalar(name.c_str(), value);
+    }
+}
+
 // ── Message handling ────────────────────────────────────────────────────────
 
 void GcsModule::handleMessage(cMessage *msg)
@@ -484,6 +518,30 @@ void GcsModule::pyOnTick()
             hostIds.append(id);
     }
     data["host_ids"] = hostIds;
+
+    // Ground-truth positions (simulation mobility) for NMAC / analysis — host_id -> (x,y,z)
+    py::dict groundTruth;
+    std::vector<int> hostIdList;
+    if (!allFederates) {
+        for (int id : federateSet)
+            hostIdList.push_back(id);
+    }
+    else {
+        int n = getSystemModule()->par("numHosts").intValue();
+        for (int i = 0; i < n; ++i)
+            hostIdList.push_back(i);
+    }
+    cModule *network = getSimulation()->getSystemModule();
+    for (int hid : hostIdList) {
+        std::string path = "host[" + std::to_string(hid) + "].mobility";
+        cModule *mobilityMod = network->getModuleByPath(path.c_str());
+        if (!mobilityMod)
+            continue;
+        auto *mobility = check_and_cast<IMobility *>(mobilityMod);
+        Coord pos = mobility->getCurrentPosition();
+        groundTruth[py::int_(hid)] = py::make_tuple(pos.getX(), pos.getY(), pos.getZ());
+    }
+    data["ground_truth_positions"] = groundTruth;
 
     // Skip if method not defined
     py::object instance = impl->getInstance(pyHandle);

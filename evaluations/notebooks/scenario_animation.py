@@ -11,12 +11,14 @@ Interactive 3D replay of a single simulation scenario showing:
 '''
 
 # %%
-# Configuration
-SCENARIO_PATH = '../../datasets/snowplow/test/e9897d1b-o.parquet'
+import os
+
+# Configuration — override via environment variables for automated testing
+SCENARIO_PATH = os.environ.get('NOTEBOOK_SCENARIO', '../../datasets/snowplow/test/e9897d1b-o.parquet')
 
 # Optional: directory containing kf_scores.parquet / mlat_scores.parquet from unified_eval score
 # Set to None to use only the raw kf_nis column from the scenario data
-SCORES_DIR = '../../evaluations/results/snowplow'
+SCORES_DIR = os.environ.get('NOTEBOOK_SCORES_DIR', '../../evaluations/results/snowplow')
 
 # Animation time step (seconds) — controls frame spacing
 FRAME_DT = 0.5

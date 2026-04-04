@@ -23,7 +23,7 @@ EXPECTED = {
     "buildings.xml":     "7cb38f3c58eb84eaa79aade9daa469a4d5c766fd11e8acb7cd0f019a334ca0b5",
     "trajectories.xml":  "81acc917eea2c3b3a616afce5d93aabeaf0cfa9bd6d2d212c0b96bca421d935e",
     "scenario.ini":      "81d093802ddfab2c0b1f9eb9e2e980e24a003f7427198ffd38760dad9b258057",
-    "raw_scenario.parquet": "c2c617fa44963e00b93aef251f3da00d4c0a89e440a55366e3a9ef6b4a57a1a0",
+    "raw_scenario.parquet": "f4bba8113b0c76265024ba7b8d9c4594fda572c3fd6ce0f947a6db8569b2a681",
 }
 
 EXPECTED_VEC_HASHES_FILE = Path(__file__).parent / "expected_hashes" / "datagen_scenario.json"

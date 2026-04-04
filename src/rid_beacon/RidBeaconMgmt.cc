@@ -136,7 +136,7 @@ void RidBeaconMgmt::receiveSignal(cComponent *src, simsignal_t id, cObject *obj,
 void RidBeaconMgmt::sendManagementFrame(const char *name, const Ptr<Ieee80211MgmtFrame>& body, int subtype, const MacAddress& destAddr)
 {
     auto packet = new Packet(name);
-    recvec.txPacketId.record(packet->getId());
+    recvec.txPacketId.record(packet->getTreeId());
     packet->addTag<MacAddressReq>()->setDestAddress(destAddr);
     packet->addTag<Ieee80211SubtypeReq>()->setSubtype(subtype);
     packet->insertAtBack(body);
@@ -224,9 +224,9 @@ bool RidBeaconMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
 void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header)
 {
     DetectionSample sample;
-    msgid_t packetId = packet->getId();
-    if (packetId >= 0) {
-        recvec.packetId.record(packetId);
+    msgid_t packetTreeId = packet->getTreeId();
+    if (packetTreeId >= 0) {
+        recvec.packetId.record(packetTreeId);
     }
 
     double rssiDbm = 0.0;

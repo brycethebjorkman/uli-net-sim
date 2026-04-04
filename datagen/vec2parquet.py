@@ -246,11 +246,18 @@ def _generate_events(host_vectors):
         # TX events
         tx_x = vecs.get('Transmission X Coordinate')
         if tx_x and tx_x.times:
+            tx_pkt_id_vec = vecs.get('Transmission Packet ID', empty)
+            tx_spoofed_vec = vecs.get('Transmission Is Spoofed', empty)
             for i, time in enumerate(tx_x.times):
+                pkt_id = tx_pkt_id_vec.get_value_at_index(i)
+                if pkt_id is not None:
+                    pkt_id = int(pkt_id)
+                spoofed = tx_spoofed_vec.get_value_at_index(i)
                 events.append({
                     'time': time,
                     'event_type': 'TX',
                     'host_id': host_id,
+                    'packet_id': pkt_id,
                     'serial_number': host_id,
                     'rid_timestamp': int(time * 1000),
                     'pos_x': vecs.get('Transmission My X Coordinate', empty).get_value_at_index(i),
@@ -266,6 +273,7 @@ def _generate_events(host_vectors):
                     'rid_speed_horizontal': vecs.get('Transmission Horizontal Speed', empty).get_value_at_index(i),
                     'rid_heading': vecs.get('Transmission Heading', empty).get_value_at_index(i),
                     'tx_power': vecs.get('Transmission Power', empty).get_value_at_index(i),
+                    'is_spoofed': int(spoofed) if spoofed is not None else None,
                     'rssi': None,
                     'kf_nis': None,
                 })
@@ -273,12 +281,16 @@ def _generate_events(host_vectors):
         # RX events
         rx_power = vecs.get('Reception Power')
         if rx_power and rx_power.times:
+            rx_pkt_id_vec = vecs.get('Packet ID', empty)
             for i, time in enumerate(rx_power.times):
                 sn = vecs.get('Serial Number', empty).get_value_at_index(i)
                 if sn is not None:
                     sn = int(sn)
                 rid_ts_val = vecs.get('Reception Timestamp', empty).get_value_at_index(i)
                 rid_ts = int(rid_ts_val) if rid_ts_val is not None else None
+                pkt_id = rx_pkt_id_vec.get_value_at_index(i)
+                if pkt_id is not None:
+                    pkt_id = int(pkt_id)
 
                 kf_nis_vec = vecs.get(f'KF NIS Drone {sn}', empty)
 
@@ -286,6 +298,7 @@ def _generate_events(host_vectors):
                     'time': time,
                     'event_type': 'RX',
                     'host_id': host_id,
+                    'packet_id': pkt_id,
                     'serial_number': sn,
                     'rid_timestamp': rid_ts,
                     'pos_x': vecs.get('Reception My X Coordinate', empty).get_value_at_index(i),
@@ -301,6 +314,7 @@ def _generate_events(host_vectors):
                     'rid_speed_horizontal': vecs.get('Reception Horizontal Speed', empty).get_value_at_index(i),
                     'rid_heading': vecs.get('Reception Heading', empty).get_value_at_index(i),
                     'tx_power': None,
+                    'is_spoofed': None,  # filled by packet_id join below
                     'rssi': rx_power.get_value_at_index(i),
                     'kf_nis': kf_nis_vec.find_closest_value(time),
                 })
@@ -329,13 +343,21 @@ def events_to_parquet(vec_file, output_path, spoofer_hosts=None):
     events = _generate_events(host_vectors)
     df = pd.DataFrame(events)
 
+    # Join RX is_spoofed from TX via packet_id (shared tree ID).
+    tx_spoofed = (df.loc[df['event_type'] == 'TX', ['packet_id', 'is_spoofed']]
+                  .dropna(subset=['packet_id'])
+                  .drop_duplicates(subset=['packet_id'])
+                  .rename(columns={'is_spoofed': '_tx_is_spoofed'}))
+    df = df.merge(tx_spoofed, on='packet_id', how='left')
+    rx_mask = df['event_type'] == 'RX'
+    df.loc[rx_mask, 'is_spoofed'] = df.loc[rx_mask, '_tx_is_spoofed']
+    df.drop(columns=['_tx_is_spoofed'], inplace=True)
+    df['is_spoofed'] = df['is_spoofed'].fillna(0).astype(int)
+
     if spoofer_hosts is not None:
         spoofer_hosts = set(int(h) for h in spoofer_hosts)
         df['host_type'] = df['host_id'].apply(
             lambda h: 'spoofer' if int(h) in spoofer_hosts else 'benign')
-        is_tx_spoof = (df['event_type'] == 'TX') & df['host_id'].isin(spoofer_hosts)
-        is_rx_spoof = (df['event_type'] == 'RX') & df['serial_number'].isin(spoofer_hosts)
-        df['is_spoofed'] = (is_tx_spoof | is_rx_spoof).astype(int)
 
     df.to_parquet(str(output_path), index=False)
     return len(events)

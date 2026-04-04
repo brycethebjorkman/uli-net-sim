@@ -26,7 +26,7 @@ TEST_OUT = Path(__file__).parent / "out"
 
 RUN_SH = REPO_ROOT / "scripts" / "run.sh"
 URBANENV = REPO_ROOT / "datagen" / "urbanenv"
-VEC2CSV = REPO_ROOT / "datagen" / "vec2parquet.py"
+VEC2PQ = REPO_ROOT / "datagen" / "vec2parquet.py"
 PYTHON = sys.executable
 
 # Datagen parameters
@@ -190,7 +190,7 @@ def sim_outputs(datagen_outputs):
 
             vec_file = result_dir / f"{config}-#0.vec"
             raw_pq = out / run_name / "raw.parquet"
-            vec2pq_args = [PYTHON, str(VEC2CSV), str(vec_file), "-o", str(raw_pq)]
+            vec2pq_args = [PYTHON, str(VEC2PQ), str(vec_file), "-o", str(raw_pq)]
             if spoofer_host is not None:
                 vec2pq_args.extend(["--spoofer-hosts", spoofer_host])
             _run(vec2pq_args, cwd=out)

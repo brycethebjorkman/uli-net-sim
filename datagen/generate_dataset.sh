@@ -128,9 +128,10 @@ Output Structure:
             ├── trajectories/
             │   └── spd{V}_alt{A}_seed{S}.xml
             └── scenarios/
-                └── bldg_...__traj_...__tx{P}_bint{I}_seed{S}/
+                └── bldg_...__traj_...__seed{S}/
                     ├── omnetpp.ini
-                    └── output.csv
+                    ├── {hash}-o.parquet
+                    └── {hash}-b.parquet
 
 Examples:
     # Simple: one scenario
@@ -504,7 +505,7 @@ run_urbanenv() {
 
     # Export environment variables for run_scenario.sh
     RUN_SCENARIO="$SCRIPT_DIR/run_scenario.sh"
-    export PROJ_DIR VEC2CSV ADD_HOST_TYPE RUN_SCENARIO
+    export PROJ_DIR VEC2PQ VENV_PYTHON RUN_SCENARIO
 
     if [ ! -f "$RUN_SCENARIO" ]; then
         echo "Error: run_scenario.sh not found at $RUN_SCENARIO"
@@ -623,10 +624,19 @@ if ! command -v opp_scavetool &> /dev/null; then
 fi
 
 # Check for vec2parquet
-VEC2CSV="$SCRIPT_DIR/vec2parquet.py"
-if [ ! -f "$VEC2CSV" ]; then
-    echo "Error: vec2parquet.py not found at $VEC2CSV"
+VEC2PQ="$SCRIPT_DIR/vec2parquet.py"
+if [ ! -f "$VEC2PQ" ]; then
+    echo "Error: vec2parquet.py not found at $VEC2PQ"
     exit 1
+fi
+
+# Use project venv Python for scripts needing pyarrow (vec2parquet.py)
+if [ -z "$VENV_PYTHON" ]; then
+    if [ -x "$PROJ_DIR/.venv/bin/python3" ]; then
+        VENV_PYTHON="$PROJ_DIR/.venv/bin/python3"
+    else
+        VENV_PYTHON="python3"
+    fi
 fi
 
 # Parse arguments — accept optional "urbanenv" as first arg for backward compat

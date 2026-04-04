@@ -3,28 +3,28 @@
 generate_dataset_manifest.py
 
 Generate a comprehensive top-level manifest.json for a dataset that traces
-all parameters from generation down to individual CSV files.
+all parameters from generation down to individual scenario parquet files.
 
 This manifest allows anyone to:
-1. Look up any CSV file to find its generation parameters
-2. Regenerate the necessary artifacts (corridors, buildings, trajectories)
-3. Re-run the simulation to reproduce the CSV
+1. Look up any scenario parquet file to find its generation parameters
+2. Regenerate the necessary artifacts (corridors, buildings, trajectories, INI)
+3. Re-run the simulation to reproduce the parquet
 
 USAGE:
     # During generation (called by generate_dataset.sh):
-    python3 generate_dataset_manifest.py init -o manifest.json \
+    python3 generate_dataset_manifest.py init -o manifest.json \\
         --generation-params '{"seed": 42, "grid_size": "500-1000", ...}'
 
-    python3 generate_dataset_manifest.py add-corridor manifest.json \
-        --path "grid535_hosts9_sim504/ew4_ns5_w37_sp100" \
+    python3 generate_dataset_manifest.py add-corridor manifest.json \\
+        --path "grid535_hosts9_sim504/ew4_ns5_w37_sp100" \\
         --corridor-params '{"grid_size": 535, ...}'
 
-    python3 generate_dataset_manifest.py add-scenario manifest.json \
-        --csv "abc123-o.csv" \
+    python3 generate_dataset_manifest.py add-scenario manifest.json \\
+        --scenario "abc123-o.parquet" \\
         --scenario-params '{"corridor": "...", "building_seed": 70042, ...}'
 
     # Retroactive generation from existing dataset:
-    python3 generate_dataset_manifest.py from-existing /path/to/urbanenv \
+    python3 generate_dataset_manifest.py from-existing /path/to/urbanenv \\
         -o manifest.json --generation-params '...'
 """
 
@@ -76,10 +76,10 @@ def add_corridor(manifest_path: Path, corridor_path: str, corridor_params: dict)
     print(f"Added corridor: {corridor_path}")
 
 
-def add_scenario(manifest_path: Path, csv_name: str, scenario_params: dict):
-    """Add a scenario (CSV file) entry to the manifest."""
+def add_scenario(manifest_path: Path, scenario_name: str, scenario_params: dict):
+    """Add a scenario (parquet file) entry to the manifest."""
     manifest = load_manifest(manifest_path)
-    manifest["scenarios"][csv_name] = scenario_params
+    manifest["scenarios"][scenario_name] = scenario_params
     save_manifest(manifest_path, manifest)
 
 
@@ -313,7 +313,7 @@ def generate_from_existing(urbanenv_dir: Path, output: Path, generation_params: 
 
     print(f"Generated manifest: {output}")
     print(f"  Corridors: {corridor_count}")
-    print(f"  Scenarios (CSVs): {scenario_count}")
+    print(f"  Scenarios: {scenario_count}")
 
 
 def main():
@@ -335,7 +335,7 @@ def main():
     # add-scenario command
     scenario_parser = subparsers.add_parser('add-scenario', help='Add scenario to manifest')
     scenario_parser.add_argument('manifest', type=Path)
-    scenario_parser.add_argument('--csv', required=True)
+    scenario_parser.add_argument('--scenario', required=True)
     scenario_parser.add_argument('--params', type=json.loads, required=True)
 
     # from-existing command
@@ -355,7 +355,7 @@ def main():
     elif args.command == 'add-corridor':
         add_corridor(args.manifest, args.path, args.params)
     elif args.command == 'add-scenario':
-        add_scenario(args.manifest, args.csv, args.params)
+        add_scenario(args.manifest, args.scenario, args.params)
     elif args.command == 'from-existing':
         generate_from_existing(
             args.urbanenv_dir,

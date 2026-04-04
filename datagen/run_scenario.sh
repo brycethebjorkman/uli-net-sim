@@ -2,14 +2,14 @@
 #
 # run_scenario.sh
 #
-# Execute a single urbanenv scenario (simulation + CSV conversion + post-processing).
+# Execute a single urbanenv scenario (simulation + parquet conversion).
 # Designed to be called in parallel by generate_dataset.sh.
 #
 # Usage:
 #   ./run_scenario.sh <scenario_path> <spoofer_host>
 #
 # Environment variables required (set by parent script):
-#   PROJ_DIR, VEC2CSV, ADD_HOST_TYPE
+#   PROJ_DIR, VEC2PQ, VENV_PYTHON
 #
 
 set -e
@@ -74,7 +74,7 @@ for CONFIG_NAME in "${CONFIGS_TO_RUN[@]}"; do
         if [ -n "$SPOOFER_HOST" ] && [ "$SPOOFER_HOST" != "-" ]; then
             VEC2PQ_ARGS+=(--spoofer-hosts "$SPOOFER_HOST")
         fi
-        python3 "$VEC2CSV" "${VEC2PQ_ARGS[@]}"
+        "${VENV_PYTHON:-python3}" "$VEC2PQ" "${VEC2PQ_ARGS[@]}"
 
         echo "  [$SCENARIO_NAME] Created: $(basename "$PQ_FILE")"
     else

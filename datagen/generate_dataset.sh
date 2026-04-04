@@ -623,9 +623,9 @@ if ! command -v opp_scavetool &> /dev/null; then
 fi
 
 # Check for vec2csv
-VEC2CSV="$SCRIPT_DIR/vec2csv.py"
+VEC2CSV="$SCRIPT_DIR/vec2parquet.py"
 if [ ! -f "$VEC2CSV" ]; then
-    echo "Error: vec2csv.py not found at $VEC2CSV"
+    echo "Error: vec2parquet.py not found at $VEC2CSV"
     exit 1
 fi
 

@@ -26,7 +26,7 @@ TEST_OUT = Path(__file__).parent / "out"
 
 RUN_SH = REPO_ROOT / "scripts" / "run.sh"
 URBANENV = REPO_ROOT / "datagen" / "urbanenv"
-VEC2CSV = REPO_ROOT / "datagen" / "vec2csv.py"
+VEC2CSV = REPO_ROOT / "datagen" / "vec2parquet.py"
 ADD_HOST_TYPE = REPO_ROOT / "datagen" / "add_host_type.py"
 PYTHON = sys.executable
 
@@ -169,8 +169,8 @@ def sim_outputs(datagen_outputs):
     out = _clean_dir(TEST_OUT / "sim")
     datagen_dir = datagen_outputs["dir"]
 
-    all_csvs = []
-    first_vec = first_raw_csv = None
+    all_pqs = []
+    first_vec = first_raw_pq = None
 
     for ini_name in sorted(datagen_outputs["scenario_inis"]):
         ini_path = datagen_outputs["scenario_inis"][ini_name]
@@ -190,31 +190,31 @@ def sim_outputs(datagen_outputs):
                         "-r", str(result_dir), "-q"], cwd=datagen_dir)
 
             vec_file = result_dir / f"{config}-#0.vec"
-            raw_csv = out / run_name / "raw.csv"
-            _run([PYTHON, str(VEC2CSV), str(vec_file), "-o", str(raw_csv)], cwd=out)
+            raw_pq = out / run_name / "raw.parquet"
+            _run([PYTHON, str(VEC2CSV), str(vec_file), "-o", str(raw_pq)], cwd=out)
 
             if first_vec is None:
                 first_vec = vec_file
-                first_raw_csv = raw_csv
+                first_raw_pq = raw_pq
 
-            final_csv = out / f"{run_name}.csv"
-            shutil.copy(raw_csv, final_csv)
-            add_args = [PYTHON, str(ADD_HOST_TYPE), str(final_csv), "--in-place"]
+            final_pq = out / f"{run_name}.parquet"
+            shutil.copy(raw_pq, final_pq)
+            add_args = [PYTHON, str(ADD_HOST_TYPE), str(final_pq), "--in-place"]
             if spoofer_host is not None:
                 add_args.extend(["--spoofer-hosts", spoofer_host])
             _run(add_args, cwd=out)
-            all_csvs.append(final_csv)
+            all_pqs.append(final_pq)
 
     # Deterministic train/test split
-    sorted_csvs = sorted(all_csvs, key=lambda p: p.name)
+    sorted_pqs = sorted(all_pqs, key=lambda p: p.name)
     train_dir, test_dir = out / "train", out / "test"
     train_dir.mkdir()
     test_dir.mkdir()
-    for i, csv in enumerate(sorted_csvs):
+    for i, pq in enumerate(sorted_pqs):
         dest = train_dir if i < TRAIN_COUNT else test_dir
-        shutil.copy(csv, dest / csv.name)
+        shutil.copy(pq, dest / pq.name)
 
-    return {"scenario.vec": first_vec, "raw.csv": first_raw_csv,
+    return {"scenario.vec": first_vec, "raw.parquet": first_raw_pq,
             "train": train_dir, "test": test_dir}
 
 
@@ -242,7 +242,7 @@ def eval_outputs(sim_outputs):
     analyze_scores(scores_dir=score_out, output_dir=score_out)
 
     return {"thresholds.json": train_out / "thresholds.json",
-            "kf_scores.csv": score_out / "kf_scores.csv",
-            "mlat_scores.csv": score_out / "mlat_scores.csv",
-            "mlp_scores.csv": score_out / "mlp_scores.csv",
+            "kf_scores.parquet": score_out / "kf_scores.parquet",
+            "mlat_scores.parquet": score_out / "mlat_scores.parquet",
+            "mlp_scores.parquet": score_out / "mlp_scores.parquet",
             "unified_results.json": score_out / "unified_results.json"}

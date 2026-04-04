@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from .conftest import hash_file, extract_our_vectors, diff_vector_hashes
+from .test_eval_pipeline import hash_parquet_data
 from datagen.vec2parquet import hash_vector_data
 
 # Expected SHA256 hashes (update these when pipeline changes intentionally)
@@ -22,7 +23,7 @@ EXPECTED = {
     "buildings.xml":     "7cb38f3c58eb84eaa79aade9daa469a4d5c766fd11e8acb7cd0f019a334ca0b5",
     "trajectories.xml":  "81acc917eea2c3b3a616afce5d93aabeaf0cfa9bd6d2d212c0b96bca421d935e",
     "scenario.ini":      "81d093802ddfab2c0b1f9eb9e2e980e24a003f7427198ffd38760dad9b258057",
-    "raw_scenario.csv":  "4dd9f773ca3273c8bb08c3c2c510d2e6d667891f6d2bd5c7606a0aedbe8722a3",
+    "raw_scenario.parquet": "e3082735971b894f0272cc1e700262dc8f6c8ec7e6064906a34eea9d9a72afd6",
 }
 
 EXPECTED_VEC_HASHES_FILE = Path(__file__).parent / "expected_hashes" / "datagen_scenario.json"
@@ -58,5 +59,5 @@ def test_simulation_vec(sim_outputs):
         pytest.fail(f"Scenario .vec vector hashes changed:\n{diff}")
 
 
-def test_simulation_csv(sim_outputs):
-    assert hash_file(sim_outputs["raw.csv"]) == EXPECTED["raw_scenario.csv"]
+def test_simulation_parquet(sim_outputs):
+    assert hash_parquet_data(sim_outputs["raw.parquet"]) == EXPECTED["raw_scenario.parquet"]

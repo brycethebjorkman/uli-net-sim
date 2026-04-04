@@ -68,7 +68,7 @@ def load_scenario(csv_path: Path | str, num_federates: int = 4) -> ScenarioData:
         ScenarioData with RX events only, including transmitter actual positions
     """
     csv_path = Path(csv_path)
-    df = pd.read_csv(csv_path)
+    df = pd.read_parquet(csv_path)
 
     # Identify federate host IDs (first N benign hosts)
     # Use full dataframe to find benign hosts, not just RX events
@@ -135,7 +135,7 @@ def load_dataset(
         List of ScenarioData objects
     """
     data_dir = Path(data_dir)
-    csv_files = sorted(data_dir.glob("*.csv"))
+    csv_files = sorted(data_dir.glob("*.parquet"))
 
     if limit is not None:
         csv_files = csv_files[:limit]

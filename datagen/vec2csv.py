@@ -226,60 +226,21 @@ def generate_events(host_vectors: Dict[int, Dict[str, VectorData]]) -> List[Even
     return events
 
 
-def write_csv(events: List[Event], output_file: str):
-    """Write events to CSV file."""
-    fieldnames = [
-        'time', 'event_type', 'host_id', 'serial_number', 'rid_timestamp',
-        'pos_x', 'pos_y', 'pos_z',
-        'speed_vertical', 'speed_horizontal', 'heading',
-        'rid_pos_x', 'rid_pos_y', 'rid_pos_z',
-        'rid_speed_vertical', 'rid_speed_horizontal', 'rid_heading',
-        'tx_power', 'rssi',
-        'kf_estimate', 'kf_covariance', 'kf_gain',
-        'kf_innovation', 'kf_nis', 'kf_measurement'
-    ]
-
-    with open(output_file, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-
-        for event in events:
-            row = {
-                'time': event.time,
-                'event_type': event.event_type,
-                'host_id': event.host_id,
-                'serial_number': event.serial_number if event.serial_number is not None else '',
-                'rid_timestamp': event.rid_timestamp if event.rid_timestamp is not None else '',
-                'pos_x': event.pos_x if event.pos_x is not None else '',
-                'pos_y': event.pos_y if event.pos_y is not None else '',
-                'pos_z': event.pos_z if event.pos_z is not None else '',
-                'speed_vertical': event.speed_vertical if event.speed_vertical is not None else '',
-                'speed_horizontal': event.speed_horizontal if event.speed_horizontal is not None else '',
-                'heading': event.heading if event.heading is not None else '',
-                'rid_pos_x': event.rid_pos_x if event.rid_pos_x is not None else '',
-                'rid_pos_y': event.rid_pos_y if event.rid_pos_y is not None else '',
-                'rid_pos_z': event.rid_pos_z if event.rid_pos_z is not None else '',
-                'rid_speed_vertical': event.rid_speed_vertical if event.rid_speed_vertical is not None else '',
-                'rid_speed_horizontal': event.rid_speed_horizontal if event.rid_speed_horizontal is not None else '',
-                'rid_heading': event.rid_heading if event.rid_heading is not None else '',
-                'tx_power': event.tx_power if event.tx_power is not None else '',
-                'rssi': event.rssi if event.rssi is not None else '',
-                'kf_estimate': event.kf_estimate if event.kf_estimate is not None else '',
-                'kf_covariance': event.kf_covariance if event.kf_covariance is not None else '',
-                'kf_gain': event.kf_gain if event.kf_gain is not None else '',
-                'kf_innovation': event.kf_innovation if event.kf_innovation is not None else '',
-                'kf_nis': event.kf_nis if event.kf_nis is not None else '',
-                'kf_measurement': event.kf_measurement if event.kf_measurement is not None else '',
-            }
-            writer.writerow(row)
+def write_parquet(events: List[Event], output_file: str):
+    """Write events to Parquet file."""
+    import pandas as pd
+    from dataclasses import asdict
+    rows = [asdict(e) for e in events]
+    df = pd.DataFrame(rows)
+    df.to_parquet(output_file, index=False)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Convert OMNeT++ .vec files to CSV for Remote ID analysis'
+        description='Convert OMNeT++ .vec files to Parquet for Remote ID analysis'
     )
     parser.add_argument('vec_file', help='Input .vec file')
-    parser.add_argument('-o', '--output', required=True, help='Output CSV file')
+    parser.add_argument('-o', '--output', required=True, help='Output Parquet file')
     args = parser.parse_args()
 
     print(f"Exporting vectors from {args.vec_file}...", file=sys.stderr)
@@ -293,7 +254,7 @@ def main():
         events = generate_events(host_vectors)
 
         print(f"Writing {len(events)} events to {args.output}...", file=sys.stderr)
-        write_csv(events, args.output)
+        write_parquet(events, args.output)
 
         print(f"Done!", file=sys.stderr)
     finally:

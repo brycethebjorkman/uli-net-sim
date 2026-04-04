@@ -2,7 +2,7 @@
 Scoring functions for spoofing detection evaluation.
 
 Runs detectors on test scenarios and produces per-sample score CSVs
-(kf_scores.csv, mlat_scores.csv) for downstream analysis.
+(kf_scores.parquet, mlat_scores.parquet) for downstream analysis.
 """
 
 from pathlib import Path
@@ -137,7 +137,7 @@ def train_detectors(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_csvs = sorted(Path(train_dir).glob("*.csv"))
+    train_csvs = sorted(Path(train_dir).glob("*.parquet"))
     if train_limit:
         train_csvs = train_csvs[:train_limit]
     n_train = len(train_csvs)
@@ -179,13 +179,13 @@ def score_test_set(
 
     If train_dir is given (and thresholds not provided), trains thresholds
     first and writes thresholds.json.  Also trains and runs MLPDetector,
-    writing mlp_scores.csv.  If mlp_weights.pth and mlp_scaler.pkl already
+    writing mlp_scores.parquet.  If mlp_weights.pth and mlp_scaler.pkl already
     exist in output_dir the saved model is loaded instead of retraining.
 
     Args:
         test_dir: Directory containing test CSV files
-        output_dir: Where to write kf_scores.csv, mlat_scores.csv,
-                    mlp_scores.csv, thresholds.json
+        output_dir: Where to write kf_scores.parquet, mlat_scores.parquet,
+                    mlp_scores.parquet, thresholds.json
         train_dir: Training data directory (optional, for threshold optimization)
         test_limit: Limit number of test scenarios
         train_limit: Limit number of training scenarios
@@ -214,7 +214,7 @@ def score_test_set(
             kf_threshold, mlat_threshold = train_thresholds(
                 train_dir, train_limit=train_limit
             )
-            n_train_scenarios = len(sorted(Path(train_dir).glob("*.csv")))
+            n_train_scenarios = len(sorted(Path(train_dir).glob("*.parquet")))
             if train_limit:
                 n_train_scenarios = min(n_train_scenarios, train_limit)
         else:
@@ -239,7 +239,7 @@ def score_test_set(
             print(f"\nLoading saved MLP model from {mlp_weights_path} ...")
             mlp_detector.load(mlp_weights_path, mlp_scaler_path)
         elif train_dir is not None:
-            train_csvs = sorted(Path(train_dir).glob("*.csv"))
+            train_csvs = sorted(Path(train_dir).glob("*.parquet"))
             if train_limit:
                 train_csvs = train_csvs[:train_limit]
             mlp_detector.train(train_csvs, seed=seed)
@@ -258,7 +258,7 @@ def score_test_set(
 
     print(f"\nScoring test scenarios from {test_dir}...")
 
-    csv_files = sorted(Path(test_dir).glob("*.csv"))
+    csv_files = sorted(Path(test_dir).glob("*.parquet"))
     if test_limit:
         csv_files = csv_files[:test_limit]
 
@@ -331,8 +331,8 @@ def score_test_set(
         kf_columns = ['scenario_id', 'host_id', 'serial_number', 'rid_timestamp',
                        'kf_score', 'is_spoofed', 'spoofing_dist', 'distance_discrepancy']
         kf_df = pd.DataFrame(kf_rows, columns=kf_columns)
-        kf_path = output_dir / "kf_scores.csv"
-        kf_df.to_csv(kf_path, index=False)
+        kf_path = output_dir / "kf_scores.parquet"
+        kf_df.to_parquet(kf_path, index=False)
         print(f"\n  KF: {len(kf_df)} RX events ({kf_df['is_spoofed'].sum()} spoofed)")
         print(f"  Written to {kf_path}")
 
@@ -340,8 +340,8 @@ def score_test_set(
         mlat_columns = ['scenario_id', 'serial_number', 'rid_timestamp',
                          'mlat_score', 'is_spoofed', 'spoofing_dist', 'distance_discrepancy']
         mlat_df = pd.DataFrame(mlat_rows, columns=mlat_columns)
-        mlat_path = output_dir / "mlat_scores.csv"
-        mlat_df.to_csv(mlat_path, index=False)
+        mlat_path = output_dir / "mlat_scores.parquet"
+        mlat_df.to_parquet(mlat_path, index=False)
         print(f"  MLAT: {len(mlat_df)} transmissions ({mlat_df['is_spoofed'].sum()} spoofed)")
         print(f"  Written to {mlat_path}")
 
@@ -349,8 +349,8 @@ def score_test_set(
         mlp_columns = ['scenario_id', 'serial_number', 'rid_timestamp',
                        'mlp_score', 'is_spoofed', 'spoofing_dist', 'distance_discrepancy']
         mlp_df = pd.concat(mlp_frames, ignore_index=True)[mlp_columns]
-        mlp_path = output_dir / "mlp_scores.csv"
-        mlp_df.to_csv(mlp_path, index=False)
+        mlp_path = output_dir / "mlp_scores.parquet"
+        mlp_df.to_parquet(mlp_path, index=False)
         print(f"  MLP:  {len(mlp_df)} transmissions ({mlp_df['is_spoofed'].sum()} spoofed)")
         print(f"  Written to {mlp_path}")
 

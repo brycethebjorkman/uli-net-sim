@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """
-Extract OMNeT++ .vec vectors to Parquet format with per-vector hashing.
+Convert OMNeT++ .vec files to Parquet format.
 
-Extracts only vectors from our modules (mobility, beacon management, GCS)
-via opp_scavetool, filters by explicit name whitelist, and optionally
-writes to Parquet or prints per-vector SHA256 hashes.
+Default mode: event-per-row Parquet with one row per TX/RX event
+(canonical scenario dataset format consumed by evaluations/).
+
+Raw mode (--raw): one row per vector with list<float64> columns
+(used for regression test hashing).
 
 Usage:
+    # Canonical event-per-row format (for datasets)
     python datagen/vec2parquet.py INPUT.vec -o output.parquet
+
+    # Raw vector archive (for hashing)
+    python datagen/vec2parquet.py INPUT.vec --raw -o vectors.parquet
+
+    # Print per-vector hashes only
     python datagen/vec2parquet.py INPUT.vec --hash
 """
 
@@ -20,8 +28,10 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
+from dataclasses import dataclass, asdict
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Dict, List, Optional
 
 # ---------------------------------------------------------------------------
 # Vector specifications: (module_pattern for opp_scavetool, name_pattern for fnmatch)
@@ -56,6 +66,10 @@ DEFAULT_VECTOR_SPECS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Low-level vector extraction (shared by both modes)
+# ---------------------------------------------------------------------------
+
 def _run_scavetool(vec_path, module_pattern):
     """Run opp_scavetool for a single module pattern, return temp CSV path."""
     tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
@@ -73,7 +87,7 @@ def _run_scavetool(vec_path, module_pattern):
 
 
 def _strip_network_prefix(module_path):
-    """Strip network name prefix: 'BasicUav.host[0].mobility' → 'host[0].mobility'."""
+    """Strip network name prefix: 'BasicUav.host[0].mobility' -> 'host[0].mobility'."""
     dot = module_path.find('.')
     return module_path[dot + 1:] if dot >= 0 else module_path
 
@@ -102,16 +116,11 @@ def _parse_csvr(csv_path, name_patterns):
 def extract_vectors(vec_path, vector_specs=None):
     """Extract vectors from .vec via opp_scavetool with name filtering.
 
-    Groups specs by module_pattern, runs one opp_scavetool call per unique
-    module pattern, parses CSV-R output, filters by name patterns.
-
     Returns {(module_short, name): (times[], values[])}.
-    module_short has network prefix stripped (e.g. "host[0].mobility").
     """
     if vector_specs is None:
         vector_specs = DEFAULT_VECTOR_SPECS
 
-    # Group name patterns by module pattern
     groups = defaultdict(list)
     for mod_pat, name_pat in vector_specs:
         groups[mod_pat].append(name_pat)
@@ -135,6 +144,10 @@ def hash_vector_data(times, values):
     h.update(struct.pack(f'{len(values)}d', *values))
     return h.hexdigest()
 
+
+# ---------------------------------------------------------------------------
+# Raw mode: one row per vector (for hashing/archiving)
+# ---------------------------------------------------------------------------
 
 def vectors_to_parquet(vectors, output_path):
     """Write vectors dict to Parquet (row-per-vector, list<float64> columns)."""
@@ -161,32 +174,193 @@ def vectors_to_parquet(vectors, output_path):
     pq.write_table(table, str(output_path))
 
 
+# ---------------------------------------------------------------------------
+# Canonical mode: one row per TX/RX event (for datasets)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class VectorData:
+    """Stores time-value pairs for a vector."""
+    times: List[float]
+    values: List[float]
+
+    def get_value_at_index(self, idx: int) -> Optional[float]:
+        return self.values[idx] if idx < len(self.values) else None
+
+    def find_closest_value(self, time: float) -> Optional[float]:
+        if not self.times:
+            return None
+        left, right = 0, len(self.times) - 1
+        while left < right:
+            mid = (left + right + 1) // 2
+            if self.times[mid] <= time:
+                left = mid
+            else:
+                right = mid - 1
+        if abs(self.times[left] - time) < 0.01:
+            return self.values[left]
+        return None
+
+
+def _export_mgmt_vectors(vec_file: str) -> str:
+    """Use opp_scavetool to export beacon mgmt vectors to temp CSV."""
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+    tmp.close()
+    cmd = [
+        'opp_scavetool', 'export', '-F', 'CSV-R', '-x', 'columnNames=true',
+        '-f', 'type=~"vector" and module=~"*.host[*].wlan[0].mgmt"',
+        '-o', tmp.name, vec_file,
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"opp_scavetool failed: {r.stderr}")
+    return tmp.name
+
+
+def _parse_host_vectors(csv_file: str) -> Dict[int, Dict[str, VectorData]]:
+    """Parse CSV-R output into {host_id: {vector_name: VectorData}}."""
+    host_vectors = defaultdict(lambda: defaultdict(lambda: VectorData([], [])))
+    with open(csv_file) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            module = row['module']
+            if '.host[' not in module:
+                continue
+            host_id = int(module.split('.host[')[1].split(']')[0])
+            name = row['name']
+            times_str = row.get('vectime', '')
+            values_str = row.get('vecvalue', '')
+            if times_str and values_str:
+                times = [float(t) for t in times_str.split()]
+                values = [float(v) for v in values_str.split()]
+                host_vectors[host_id][name] = VectorData(times, values)
+    return host_vectors
+
+
+def _generate_events(host_vectors):
+    """Generate event dicts from parsed vectors."""
+    events = []
+    empty = VectorData([], [])
+
+    for host_id, vecs in host_vectors.items():
+        # TX events
+        tx_x = vecs.get('Transmission X Coordinate')
+        if tx_x and tx_x.times:
+            for i, time in enumerate(tx_x.times):
+                events.append({
+                    'time': time,
+                    'event_type': 'TX',
+                    'host_id': host_id,
+                    'serial_number': host_id,
+                    'rid_timestamp': int(time * 1000),
+                    'pos_x': vecs.get('Transmission My X Coordinate', empty).get_value_at_index(i),
+                    'pos_y': vecs.get('Transmission My Y Coordinate', empty).get_value_at_index(i),
+                    'pos_z': vecs.get('Transmission My Z Coordinate', empty).get_value_at_index(i),
+                    'speed_vertical': vecs.get('Transmission My Vertical Speed', empty).get_value_at_index(i),
+                    'speed_horizontal': vecs.get('Transmission My Horizontal Speed', empty).get_value_at_index(i),
+                    'heading': vecs.get('Transmission My Heading', empty).get_value_at_index(i),
+                    'rid_pos_x': vecs['Transmission X Coordinate'].get_value_at_index(i),
+                    'rid_pos_y': vecs['Transmission Y Coordinate'].get_value_at_index(i),
+                    'rid_pos_z': vecs['Transmission Z Coordinate'].get_value_at_index(i),
+                    'rid_speed_vertical': vecs.get('Transmission Vertical Speed', empty).get_value_at_index(i),
+                    'rid_speed_horizontal': vecs.get('Transmission Horizontal Speed', empty).get_value_at_index(i),
+                    'rid_heading': vecs.get('Transmission Heading', empty).get_value_at_index(i),
+                    'tx_power': vecs.get('Transmission Power', empty).get_value_at_index(i),
+                    'rssi': None,
+                    'kf_nis': None,
+                })
+
+        # RX events
+        rx_power = vecs.get('Reception Power')
+        if rx_power and rx_power.times:
+            for i, time in enumerate(rx_power.times):
+                sn = vecs.get('Serial Number', empty).get_value_at_index(i)
+                if sn is not None:
+                    sn = int(sn)
+                rid_ts_val = vecs.get('Reception Timestamp', empty).get_value_at_index(i)
+                rid_ts = int(rid_ts_val) if rid_ts_val is not None else None
+
+                kf_nis_vec = vecs.get(f'KF NIS Drone {sn}', empty)
+
+                events.append({
+                    'time': time,
+                    'event_type': 'RX',
+                    'host_id': host_id,
+                    'serial_number': sn,
+                    'rid_timestamp': rid_ts,
+                    'pos_x': vecs.get('Reception My X Coordinate', empty).get_value_at_index(i),
+                    'pos_y': vecs.get('Reception My Y Coordinate', empty).get_value_at_index(i),
+                    'pos_z': vecs.get('Reception My Z Coordinate', empty).get_value_at_index(i),
+                    'speed_vertical': vecs.get('Reception My Vertical Speed', empty).get_value_at_index(i),
+                    'speed_horizontal': vecs.get('Reception My Horizontal Speed', empty).get_value_at_index(i),
+                    'heading': vecs.get('Reception My Heading', empty).get_value_at_index(i),
+                    'rid_pos_x': vecs.get('Reception X Coordinate', empty).get_value_at_index(i),
+                    'rid_pos_y': vecs.get('Reception Y Coordinate', empty).get_value_at_index(i),
+                    'rid_pos_z': vecs.get('Reception Z Coordinate', empty).get_value_at_index(i),
+                    'rid_speed_vertical': vecs.get('Reception Vertical Speed', empty).get_value_at_index(i),
+                    'rid_speed_horizontal': vecs.get('Reception Horizontal Speed', empty).get_value_at_index(i),
+                    'rid_heading': vecs.get('Reception Heading', empty).get_value_at_index(i),
+                    'tx_power': None,
+                    'rssi': rx_power.get_value_at_index(i),
+                    'kf_nis': kf_nis_vec.find_closest_value(time),
+                })
+
+    events.sort(key=lambda e: e['time'])
+    return events
+
+
+def events_to_parquet(vec_file, output_path):
+    """Convert .vec to canonical event-per-row Parquet."""
+    import pandas as pd
+
+    tmp_csv = _export_mgmt_vectors(str(vec_file))
+    try:
+        host_vectors = _parse_host_vectors(tmp_csv)
+    finally:
+        os.unlink(tmp_csv)
+
+    events = _generate_events(host_vectors)
+    df = pd.DataFrame(events)
+    df.to_parquet(str(output_path), index=False)
+    return len(events)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Extract OMNeT++ .vec vectors to Parquet with per-vector hashing')
+        description='Convert OMNeT++ .vec to Parquet (event-per-row or raw vectors)')
     parser.add_argument('vec_file', help='Input .vec file')
     parser.add_argument('-o', '--output', help='Output Parquet file')
+    parser.add_argument('--raw', action='store_true',
+                        help='Raw vector archive (one row per vector with list columns)')
     parser.add_argument('--hash', action='store_true',
-                        help='Print per-vector SHA256 hashes')
+                        help='Print per-vector SHA256 hashes (uses raw vector extraction)')
     args = parser.parse_args()
 
     if not args.output and not args.hash:
         parser.error('Specify -o OUTPUT.parquet and/or --hash')
 
-    vectors = extract_vectors(args.vec_file)
-    print(f"Extracted {len(vectors)} vectors", file=sys.stderr)
+    if args.raw or args.hash:
+        vectors = extract_vectors(args.vec_file)
+        print(f"Extracted {len(vectors)} vectors", file=sys.stderr)
 
-    if args.output:
-        vectors_to_parquet(vectors, args.output)
-        print(f"Written to {args.output}", file=sys.stderr)
+        if args.output and args.raw:
+            vectors_to_parquet(vectors, args.output)
+            print(f"Written to {args.output}", file=sys.stderr)
 
-    if args.hash:
-        import json
-        hashes = {}
-        for (mod, name), (times, values) in sorted(vectors.items()):
-            h = hash_vector_data(times, values)
-            hashes[f"{mod}||{name}"] = h
-        print(json.dumps(hashes, indent=2))
+        if args.hash:
+            import json
+            hashes = {}
+            for (mod, name), (times, values) in sorted(vectors.items()):
+                h = hash_vector_data(times, values)
+                hashes[f"{mod}||{name}"] = h
+            print(json.dumps(hashes, indent=2))
+    else:
+        n = events_to_parquet(args.vec_file, args.output)
+        print(f"Written {n} events to {args.output}", file=sys.stderr)
 
 
 if __name__ == '__main__':

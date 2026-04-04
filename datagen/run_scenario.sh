@@ -60,26 +60,26 @@ for CONFIG_NAME in "${CONFIGS_TO_RUN[@]}"; do
         2>&1 | grep -v "^$" || true
     popd > /dev/null
 
-    # Convert to CSV with hash-based name
+    # Convert to Parquet with hash-based name
     VEC_FILE="$RESULTS_DIR/${CONFIG_NAME}-#0.vec"
     if [ -f "$VEC_FILE" ]; then
         if [ "$CONFIG_NAME" = "ScenarioOpenSpace" ]; then
-            CSV_SUFFIX="-o"
+            PQ_SUFFIX="-o"
         else
-            CSV_SUFFIX="-b"
+            PQ_SUFFIX="-b"
         fi
-        CSV_FILE="$SCENARIO_PATH/${SCENARIO_HASH}${CSV_SUFFIX}.csv"
-        echo "  [$SCENARIO_NAME] Converting to CSV..."
-        python3 "$VEC2CSV" "$VEC_FILE" -o "$CSV_FILE"
+        PQ_FILE="$SCENARIO_PATH/${SCENARIO_HASH}${PQ_SUFFIX}.parquet"
+        echo "  [$SCENARIO_NAME] Converting to Parquet..."
+        python3 "$VEC2CSV" "$VEC_FILE" -o "$PQ_FILE"
 
         # Add host_type column
         if [ -n "$SPOOFER_HOST" ] && [ "$SPOOFER_HOST" != "-" ]; then
-            python3 "$ADD_HOST_TYPE" "$CSV_FILE" --in-place --spoofer-hosts "$SPOOFER_HOST"
+            python3 "$ADD_HOST_TYPE" "$PQ_FILE" --in-place --spoofer-hosts "$SPOOFER_HOST"
         else
-            python3 "$ADD_HOST_TYPE" "$CSV_FILE" --in-place
+            python3 "$ADD_HOST_TYPE" "$PQ_FILE" --in-place
         fi
 
-        echo "  [$SCENARIO_NAME] Created: $(basename "$CSV_FILE")"
+        echo "  [$SCENARIO_NAME] Created: $(basename "$PQ_FILE")"
     else
         echo "  [$SCENARIO_NAME] Warning: Vector file not found: $VEC_FILE"
     fi

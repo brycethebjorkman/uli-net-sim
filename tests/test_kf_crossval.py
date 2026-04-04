@@ -3,10 +3,10 @@ Cross-validation: online KfNisDetector vs offline KF scores.
 
 Re-runs the eval pipeline's test scenarios with a GCS running
 KfNisDetector, then verifies the online per-RX-event NIS values
-match the offline kf_scores.csv produced by the evaluation pipeline.
+match the offline kf_scores.parquet produced by the evaluation pipeline.
 
 Both paths read from the same C++ KalmanFilterDetectMgmt KF:
-- Offline: C++ KF NIS → .vec → vec2csv.py → CSV kf_nis column → kf_scores.csv
+- Offline: C++ KF NIS → .vec → vec2csv.py → CSV kf_nis column → kf_scores.parquet
 - Online:  C++ KF NIS → GcsReport.kfNis → GcsModule → KfNisDetector → kf_nis_host{id}
 """
 
@@ -86,10 +86,10 @@ def kf_crossval_outputs(datagen_outputs, sim_outputs, eval_outputs):
 
     datagen_dir = datagen_outputs["dir"]
     test_dir = sim_outputs["test"]
-    kf_scores = pd.read_csv(eval_outputs["kf_scores.csv"])
+    kf_scores = pd.read_parquet(eval_outputs["kf_scores.parquet"])
 
     results = []
-    for csv_path in sorted(test_dir.glob("*.csv")):
+    for csv_path in sorted(test_dir.glob("*.parquet")):
         csv_stem = csv_path.stem
         m = re.match(r'(scenario_seed\d+)_(Scenario\w+)', csv_stem)
         if not m:
@@ -150,7 +150,7 @@ def kf_crossval_outputs(datagen_outputs, sim_outputs, eval_outputs):
 # ---------------------------------------------------------------------------
 
 def test_kf_online_vs_offline_scores(kf_crossval_outputs):
-    """Per-RX-event KF NIS from online KfNisDetector must match offline kf_scores.csv.
+    """Per-RX-event KF NIS from online KfNisDetector must match offline kf_scores.parquet.
 
     Matches by (host_id, serial_number) to avoid ordering ambiguity when
     multiple transmissions from different serials arrive at the same time.

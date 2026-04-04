@@ -18,7 +18,7 @@ Score (expensive, runs detectors on test set):
         --train-dir datasets/scitech26/train \
         -o evaluations/results/
 
-    Writes kf_scores.csv, mlat_scores.csv, mlp_scores.csv, thresholds.json,
+    Writes kf_scores.parquet, mlat_scores.parquet, mlp_scores.parquet, thresholds.json,
     mlp_weights.pth, and mlp_scaler.pkl to the output directory.
     Loads existing mlp_weights.pth + mlp_scaler.pkl if present (skip MLP retraining).
 
@@ -27,7 +27,7 @@ Analyze (cheap, iterate freely on thresholds/plots):
         --scores-dir evaluations/results/ \
         -o evaluations/results/
 
-    Reads mlp_scores.csv automatically if present in scores-dir.
+    Reads mlp_scores.parquet automatically if present in scores-dir.
 """
 
 import argparse
@@ -95,8 +95,8 @@ def main():
         help="Analyze pre-computed scores: ROC, confusion matrix, plots (cheap)",
     )
     analyze_parser.add_argument("--scores-dir", type=Path, required=True,
-                                help="Directory containing kf_scores.csv, mlat_scores.csv, "
-                                     "mlp_scores.csv (optional), thresholds.json")
+                                help="Directory containing kf_scores.parquet, mlat_scores.parquet, "
+                                     "mlp_scores.parquet (optional), thresholds.json")
     analyze_parser.add_argument("-o", "--output", type=Path,
                                 help="Output directory (defaults to scores-dir)")
     analyze_parser.add_argument("--kf-threshold", type=float,

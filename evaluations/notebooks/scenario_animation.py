@@ -7,15 +7,15 @@ Interactive 3D replay of a single simulation scenario showing:
 - Spoofed RID claimed positions (connected to actual by red lines)
 - Per-transmission KF NIS and MLAT detector scores on spoofed beacons
 
-**Usage:** Set `CSV_PATH` and optionally `SCORES_DIR` in the configuration cell below, then Run All.
+**Usage:** Set `SCENARIO_PATH` and optionally `SCORES_DIR` in the configuration cell below, then Run All.
 '''
 
 # %%
 # Configuration
-CSV_PATH = '../../datasets/snowplow/test/e9897d1b-o.csv'
+SCENARIO_PATH = '../../datasets/snowplow/test/e9897d1b-o.parquet'
 
-# Optional: directory containing kf_scores.csv / mlat_scores.csv from unified_eval score
-# Set to None to use only the raw kf_nis column from the CSV
+# Optional: directory containing kf_scores.parquet / mlat_scores.parquet from unified_eval score
+# Set to None to use only the raw kf_nis column from the scenario data
 SCORES_DIR = '../../evaluations/results/snowplow'
 
 # Animation time step (seconds) — controls frame spacing
@@ -31,8 +31,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from pathlib import Path
 
-df = pd.read_csv(CSV_PATH)
-scenario_id = Path(CSV_PATH).stem
+df = pd.read_parquet(SCENARIO_PATH)
+scenario_id = Path(SCENARIO_PATH).stem
 
 # Separate TX and RX events
 tx = df[df['event_type'] == 'TX'].copy()
@@ -63,15 +63,15 @@ kf_per_tx = (
 # Load MLAT scores if available
 mlat_per_tx = None
 if SCORES_DIR:
-    mlat_path = Path(SCORES_DIR) / 'mlat_scores.csv'
+    mlat_path = Path(SCORES_DIR) / 'mlat_scores.parquet'
     if mlat_path.exists():
-        mlat_all = pd.read_csv(mlat_path)
+        mlat_all = pd.read_parquet(mlat_path)
         mlat_per_tx = mlat_all[mlat_all['scenario_id'] == scenario_id][
             ['serial_number', 'rid_timestamp', 'mlat_score']
         ].copy()
         print(f'Loaded {len(mlat_per_tx)} MLAT scores for {scenario_id}')
     else:
-        print(f'No mlat_scores.csv at {mlat_path}')
+        print(f'No mlat_scores.parquet at {mlat_path}')
 
 # Merge scores onto TX events
 tx = tx.merge(kf_per_tx, on=['serial_number', 'rid_timestamp'], how='left')

@@ -502,7 +502,7 @@ class MLPDetector:
 
         dfs = []
         for i, csv_path in enumerate(sorted(train_csv_paths)):
-            wide = self._preprocess(pd.read_csv(csv_path))
+            wide = self._preprocess(pd.read_parquet(csv_path))
             if len(wide) > 0:
                 dfs.append(wide)
             if (i + 1) % 100 == 0:
@@ -577,7 +577,7 @@ class MLPDetector:
             'mlp_score', 'is_spoofed', 'spoofing_dist', 'distance_discrepancy',
         ])
 
-        df = pd.read_csv(csv_path) if not isinstance(csv_path, pd.DataFrame) else csv_path
+        df = pd.read_parquet(csv_path) if not isinstance(csv_path, pd.DataFrame) else csv_path
         wide = self._preprocess(df)
 
         if len(wide) == 0:

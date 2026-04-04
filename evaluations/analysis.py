@@ -24,11 +24,11 @@ def analyze_scores(
     """
     Analyze pre-computed score CSVs: compute ROC/AUC, confusion matrix, distance stats, plots.
 
-    Reads kf_scores.csv, mlat_scores.csv, and optionally mlp_scores.csv from scores_dir.
+    Reads kf_scores.parquet, mlat_scores.parquet, and optionally mlp_scores.parquet from scores_dir.
 
     Args:
-        scores_dir: Directory containing kf_scores.csv, mlat_scores.csv,
-                    mlp_scores.csv (optional), thresholds.json
+        scores_dir: Directory containing kf_scores.parquet, mlat_scores.parquet,
+                    mlp_scores.parquet (optional), thresholds.json
         output_dir: Where to write results (defaults to scores_dir)
         kf_threshold: Override KF threshold (otherwise read from thresholds.json)
         mlat_threshold: Override MLAT threshold (otherwise read from thresholds.json)
@@ -58,24 +58,24 @@ def analyze_scores(
             mlat_threshold = thresholds_data['mlat_threshold']
 
     # Load MLP scores if available (produced by score stage)
-    mlp_path = scores_dir / "mlp_scores.csv"
+    mlp_path = scores_dir / "mlp_scores.parquet"
     mlp_available = mlp_path.exists()
 
     print("=" * 70)
     if mlp_available:
         print("ANALYSIS - Comparing KF, MLAT, MLP")
     else:
-        print("ANALYSIS - Comparing KF, MLAT (no mlp_scores.csv found)")
+        print("ANALYSIS - Comparing KF, MLAT (no mlp_scores.parquet found)")
     print("=" * 70)
     print(f"\n  KF threshold:   {kf_threshold}")
     print(f"  MLAT threshold: {mlat_threshold}")
 
     # Load score CSVs
-    kf_path = scores_dir / "kf_scores.csv"
-    mlat_path = scores_dir / "mlat_scores.csv"
+    kf_path = scores_dir / "kf_scores.parquet"
+    mlat_path = scores_dir / "mlat_scores.parquet"
 
-    kf_df = pd.read_csv(kf_path)
-    mlat_df = pd.read_csv(mlat_path)
+    kf_df = pd.read_parquet(kf_path)
+    mlat_df = pd.read_parquet(mlat_path)
 
     print(f"\n  KF: {len(kf_df)} RX events ({kf_df['is_spoofed'].sum()} spoofed)")
     print(f"  MLAT: {len(mlat_df)} transmissions ({mlat_df['is_spoofed'].sum()} spoofed)")
@@ -95,7 +95,7 @@ def analyze_scores(
     all_mlp_scores = np.array([])
     all_mlp_labels = np.array([])
     if mlp_available:
-        mlp_df = pd.read_csv(mlp_path)
+        mlp_df = pd.read_parquet(mlp_path)
         all_mlp_scores = mlp_df['mlp_score'].values
         all_mlp_labels = mlp_df['is_spoofed'].values.astype(bool)
         print(f"  MLP: {len(all_mlp_labels)} transmissions ({all_mlp_labels.sum()} spoofed)")

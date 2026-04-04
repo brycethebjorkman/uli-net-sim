@@ -280,16 +280,16 @@ def generate_from_existing(urbanenv_dir: Path, output: Path, generation_params: 
                 spoofer_info = parse_ini_for_spoofer_info(ini_path)
 
                 # Find CSV files
-                for csv_file in scenario_dir.glob("*.csv"):
+                for csv_file in scenario_dir.glob("*.parquet"):
                     # Skip federate variants for the main mapping
                     # (they share the same scenario params)
                     if "-f" in csv_file.name:
                         continue
 
                     # Determine config type from filename suffix
-                    if csv_file.name.endswith("-o.csv"):
+                    if csv_file.name.endswith("-o.parquet"):
                         config = "ScenarioOpenSpace"
-                    elif csv_file.name.endswith("-b.csv"):
+                    elif csv_file.name.endswith("-b.parquet"):
                         config = "ScenarioWithBuildings"
                     else:
                         config = "unknown"

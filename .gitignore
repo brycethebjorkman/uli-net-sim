@@ -21,6 +21,8 @@ src/**/*_m.h
 **/results/
 __pycache__
 .pytest_cache/
+.coverage
 tests/__pycache__/
 tests/out/
+tests/htmlcov/
 *.DS_Store

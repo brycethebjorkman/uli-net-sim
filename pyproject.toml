@@ -1,0 +1,21 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 300
+
+[tool.coverage.run]
+source = ["datagen", "evaluations", "pymodules"]
+omit = [
+    "datagen/urbanenv/*_visualization.py",
+    "evaluations/notebooks/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+exclude_lines = [
+    "if __name__",
+    "pragma: no cover",
+]
+
+[tool.coverage.html]
+directory = "tests/htmlcov"

@@ -3,6 +3,7 @@ attrs==25.4.0
 choreographer==1.2.1
 comm==0.2.3
 contourpy==1.3.2
+coverage==7.13.5
 cycler==0.12.1
 debugpy==1.8.17
 decorator==5.2.1
@@ -38,7 +39,6 @@ orjson==3.11.5
 packaging==25.0
 pandas==2.3.3
 parso==0.8.5
-pyarrow==23.0.1
 pexpect==4.9.0
 pillow==12.0.0
 platformdirs==4.5.1
@@ -48,9 +48,12 @@ prompt_toolkit==3.0.52
 psutil==7.1.3
 ptyprocess==0.7.0
 pure_eval==0.2.3
+pyarrow==23.0.1
+pybind11==3.0.2
 Pygments==2.19.2
 pyparsing==3.2.5
 pytest==9.0.2
+pytest-cov==7.1.0
 pytest-timeout==2.4.0
 python-dateutil==2.9.0.post0
 pytz==2025.2

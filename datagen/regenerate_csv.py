@@ -87,8 +87,7 @@ def run_scenario(scenario_path: Path, spoofer_host: int, dry_run: bool = False) 
     proj_dir = script_dir.parent
 
     env.setdefault("PROJ_DIR", str(proj_dir))
-    env.setdefault("VEC2CSV", str(script_dir / "vec2csv.py"))
-    env.setdefault("ADD_HOST_TYPE", str(script_dir / "add_host_type.py"))
+    env.setdefault("VEC2CSV", str(script_dir / "vec2parquet.py"))
 
     # Format spoofer_host (use "-" for None)
     spoofer_arg = str(spoofer_host) if spoofer_host is not None else "-"

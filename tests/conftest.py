@@ -27,7 +27,6 @@ TEST_OUT = Path(__file__).parent / "out"
 RUN_SH = REPO_ROOT / "scripts" / "run.sh"
 URBANENV = REPO_ROOT / "datagen" / "urbanenv"
 VEC2CSV = REPO_ROOT / "datagen" / "vec2parquet.py"
-ADD_HOST_TYPE = REPO_ROOT / "datagen" / "add_host_type.py"
 PYTHON = sys.executable
 
 # Datagen parameters

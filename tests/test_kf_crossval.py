@@ -6,7 +6,7 @@ KfNisDetector, then verifies the online per-RX-event NIS values
 match the offline kf_scores.parquet produced by the evaluation pipeline.
 
 Both paths read from the same C++ KalmanFilterDetectMgmt KF:
-- Offline: C++ KF NIS → .vec → vec2csv.py → CSV kf_nis column → kf_scores.parquet
+- Offline: C++ KF NIS → .vec → vec2parquet.py → Parquet kf_nis column → kf_scores.parquet
 - Online:  C++ KF NIS → GcsReport.kfNis → GcsModule → KfNisDetector → kf_nis_host{id}
 """
 

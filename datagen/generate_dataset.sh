@@ -622,17 +622,10 @@ if ! command -v opp_scavetool &> /dev/null; then
     exit 1
 fi
 
-# Check for vec2csv
+# Check for vec2parquet
 VEC2CSV="$SCRIPT_DIR/vec2parquet.py"
 if [ ! -f "$VEC2CSV" ]; then
     echo "Error: vec2parquet.py not found at $VEC2CSV"
-    exit 1
-fi
-
-# Check for add_host_type
-ADD_HOST_TYPE="$SCRIPT_DIR/add_host_type.py"
-if [ ! -f "$ADD_HOST_TYPE" ]; then
-    echo "Error: add_host_type.py not found at $ADD_HOST_TYPE"
     exit 1
 fi
 

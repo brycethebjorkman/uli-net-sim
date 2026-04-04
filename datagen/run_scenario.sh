@@ -70,14 +70,11 @@ for CONFIG_NAME in "${CONFIGS_TO_RUN[@]}"; do
         fi
         PQ_FILE="$SCENARIO_PATH/${SCENARIO_HASH}${PQ_SUFFIX}.parquet"
         echo "  [$SCENARIO_NAME] Converting to Parquet..."
-        python3 "$VEC2CSV" "$VEC_FILE" -o "$PQ_FILE"
-
-        # Add host_type column
+        VEC2PQ_ARGS=("$VEC_FILE" -o "$PQ_FILE")
         if [ -n "$SPOOFER_HOST" ] && [ "$SPOOFER_HOST" != "-" ]; then
-            python3 "$ADD_HOST_TYPE" "$PQ_FILE" --in-place --spoofer-hosts "$SPOOFER_HOST"
-        else
-            python3 "$ADD_HOST_TYPE" "$PQ_FILE" --in-place
+            VEC2PQ_ARGS+=(--spoofer-hosts "$SPOOFER_HOST")
         fi
+        python3 "$VEC2CSV" "${VEC2PQ_ARGS[@]}"
 
         echo "  [$SCENARIO_NAME] Created: $(basename "$PQ_FILE")"
     else

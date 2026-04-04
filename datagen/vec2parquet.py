@@ -309,8 +309,15 @@ def _generate_events(host_vectors):
     return events
 
 
-def events_to_parquet(vec_file, output_path):
-    """Convert .vec to canonical event-per-row Parquet."""
+def events_to_parquet(vec_file, output_path, spoofer_hosts=None):
+    """Convert .vec to canonical event-per-row Parquet.
+
+    Args:
+        vec_file: Path to .vec file
+        output_path: Path to output .parquet file
+        spoofer_hosts: Set of host IDs that are spoofers (for host_type/is_spoofed).
+                       If None, host_type and is_spoofed columns are omitted.
+    """
     import pandas as pd
 
     tmp_csv = _export_mgmt_vectors(str(vec_file))
@@ -321,6 +328,15 @@ def events_to_parquet(vec_file, output_path):
 
     events = _generate_events(host_vectors)
     df = pd.DataFrame(events)
+
+    if spoofer_hosts is not None:
+        spoofer_hosts = set(int(h) for h in spoofer_hosts)
+        df['host_type'] = df['host_id'].apply(
+            lambda h: 'spoofer' if int(h) in spoofer_hosts else 'benign')
+        is_tx_spoof = (df['event_type'] == 'TX') & df['host_id'].isin(spoofer_hosts)
+        is_rx_spoof = (df['event_type'] == 'RX') & df['serial_number'].isin(spoofer_hosts)
+        df['is_spoofed'] = (is_tx_spoof | is_rx_spoof).astype(int)
+
     df.to_parquet(str(output_path), index=False)
     return len(events)
 
@@ -336,6 +352,8 @@ def main():
     parser.add_argument('-o', '--output', help='Output Parquet file')
     parser.add_argument('--raw', action='store_true',
                         help='Raw vector archive (one row per vector with list columns)')
+    parser.add_argument('--spoofer-hosts', default='',
+                        help='Comma-separated spoofer host indices (adds host_type/is_spoofed columns)')
     parser.add_argument('--hash', action='store_true',
                         help='Print per-vector SHA256 hashes (uses raw vector extraction)')
     args = parser.parse_args()
@@ -359,7 +377,11 @@ def main():
                 hashes[f"{mod}||{name}"] = h
             print(json.dumps(hashes, indent=2))
     else:
-        n = events_to_parquet(args.vec_file, args.output)
+        spoofer_hosts = None
+        if args.spoofer_hosts:
+            spoofer_hosts = set(
+                int(h.strip()) for h in args.spoofer_hosts.split(',') if h.strip())
+        n = events_to_parquet(args.vec_file, args.output, spoofer_hosts=spoofer_hosts)
         print(f"Written {n} events to {args.output}", file=sys.stderr)
 
 

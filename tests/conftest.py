@@ -191,7 +191,10 @@ def sim_outputs(datagen_outputs):
 
             vec_file = result_dir / f"{config}-#0.vec"
             raw_pq = out / run_name / "raw.parquet"
-            _run([PYTHON, str(VEC2CSV), str(vec_file), "-o", str(raw_pq)], cwd=out)
+            vec2pq_args = [PYTHON, str(VEC2CSV), str(vec_file), "-o", str(raw_pq)]
+            if spoofer_host is not None:
+                vec2pq_args.extend(["--spoofer-hosts", spoofer_host])
+            _run(vec2pq_args, cwd=out)
 
             if first_vec is None:
                 first_vec = vec_file
@@ -199,10 +202,6 @@ def sim_outputs(datagen_outputs):
 
             final_pq = out / f"{run_name}.parquet"
             shutil.copy(raw_pq, final_pq)
-            add_args = [PYTHON, str(ADD_HOST_TYPE), str(final_pq), "--in-place"]
-            if spoofer_host is not None:
-                add_args.extend(["--spoofer-hosts", spoofer_host])
-            _run(add_args, cwd=out)
             all_pqs.append(final_pq)
 
     # Deterministic train/test split

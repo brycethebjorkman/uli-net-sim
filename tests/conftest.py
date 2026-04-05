@@ -44,7 +44,7 @@ DATAGEN_PARAMS = dict(
 )
 
 NUM_SCENARIO_VARIANTS = 4   # 4 INIs × 2 configs = 8 CSVs
-TRAIN_COUNT = 6
+TRAIN_RATIO = 0.75
 EVAL_SEED = 42
 
 
@@ -204,13 +204,9 @@ def sim_outputs(datagen_outputs):
             all_pqs.append(final_pq)
 
     # Deterministic train/test split
-    sorted_pqs = sorted(all_pqs, key=lambda p: p.name)
-    train_dir, test_dir = out / "train", out / "test"
-    train_dir.mkdir()
-    test_dir.mkdir()
-    for i, pq in enumerate(sorted_pqs):
-        dest = train_dir if i < TRAIN_COUNT else test_dir
-        shutil.copy(pq, dest / pq.name)
+    from datagen.split_dataset import split_dataset
+    train_dir, test_dir = split_dataset(out, train_ratio=TRAIN_RATIO, seed=EVAL_SEED,
+                                        parquets=all_pqs)
 
     return {"scenario.vec": first_vec, "raw.parquet": first_raw_pq,
             "train": train_dir, "test": test_dir}

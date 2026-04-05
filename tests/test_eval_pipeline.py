@@ -35,11 +35,11 @@ def hash_parquet_data(path) -> str:
 
 
 EXPECTED = {
-    "thresholds.json":      "3260381fe4ac81502261bb0e8922293f5fdedc5cb8147740a5851ffffed03745",
-    "kf_scores.parquet":    "588eee06422e82274549d6587202a5f1a28d8668da992efed8aa895d81dc629b",
-    "mlat_scores.parquet":  "c08d79f75a10847cb781b1ac2f504ed25e7b1afc9ef304e1f208bccd7ec7f17c",
-    "mlp_scores.parquet":   "94b696664b958f5a2a24e85fe54fc2137839153ff39b7238b5d36d867d91c3b1",
-    "unified_results.json": "6a1a7cfc987ae3f7c38e6a5ab01e8a9127ee95f6de9902b5acdc202030e55db3",
+    "thresholds.json":      "c21e01cb305487ac5c84c91f943519b85d7a48c448dc87d94f6c899d7b0b4c3f",
+    "kf_scores.parquet":    "f6eecaf9f02d2b2144db9cc16936b8fb9cbb0870d0c02e4ce6f5d881f6f5a509",
+    "mlat_scores.parquet":  "485c6ee1909e5e6ade99c7f009fccf779c4f36ba60b1326ad6c11ad68d786911",
+    "mlp_scores.parquet":   "6aeefd9682a2304d647d60ed8aaffb0a4f44f284fc68f3f82c4a4fecf4ab2135",
+    "unified_results.json": "c2f7ee188bb6bb41b6098a2139382347c4294d6c472fd065719066c0c80b090b",
 }
 
 

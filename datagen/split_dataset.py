@@ -20,17 +20,24 @@ from pathlib import Path
 
 
 def split_dataset(dataset_dir: Path, train_ratio: float = 0.75,
-                  seed: int = 42) -> tuple[Path, Path]:
+                  seed: int = 42,
+                  parquets: list[Path] | None = None) -> tuple[Path, Path]:
     """Split dataset parquets into train/ and test/ directories.
+
+    If *parquets* is given, uses that list directly.
+    Otherwise searches ``<dataset_dir>/urbanenv/`` recursively.
 
     Returns (train_dir, test_dir).
     """
     dataset_dir = Path(dataset_dir)
-    urbanenv_dir = dataset_dir / "urbanenv"
 
-    parquets = sorted(urbanenv_dir.rglob("*.parquet"))
-    if not parquets:
-        raise FileNotFoundError(f"No parquet files found under {urbanenv_dir}")
+    if parquets is None:
+        urbanenv_dir = dataset_dir / "urbanenv"
+        parquets = sorted(urbanenv_dir.rglob("*.parquet"))
+        if not parquets:
+            raise FileNotFoundError(f"No parquet files found under {urbanenv_dir}")
+    else:
+        parquets = sorted(parquets, key=lambda p: p.name)
 
     # Deterministic shuffle
     rng = random.Random(seed)

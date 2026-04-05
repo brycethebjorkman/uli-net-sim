@@ -8,7 +8,6 @@ for deterministic reproduction.
 Pipeline: generate_dataset.py → pick parquet → delete → regenerate → compare
 """
 
-import subprocess
 import sys
 from pathlib import Path
 
@@ -16,9 +15,6 @@ import pytest
 
 from .conftest import REPO_ROOT, TEST_OUT, _clean_dir
 from .test_eval_pipeline import hash_parquet_data
-
-REGENERATE = REPO_ROOT / "datagen" / "regenerate_scenario.py"
-PYTHON = sys.executable
 
 
 @pytest.fixture(scope="session")
@@ -70,16 +66,9 @@ def test_regeneration_round_trip(regen_dataset):
     parquet_path.unlink()
     assert not parquet_path.exists()
 
-    # Run regenerate_scenario.py
-    result = subprocess.run(
-        [str(PYTHON), str(REGENERATE), str(manifest_path), parquet_path.name],
-        capture_output=True, text=True,
-    )
-    assert result.returncode == 0, (
-        f"regenerate_scenario.py failed (exit {result.returncode}):\n"
-        f"stdout: {result.stdout[-3000:]}\n"
-        f"stderr: {result.stderr[-3000:]}"
-    )
+    # Run regenerate_scenario.py in-process (for coverage)
+    from datagen.regenerate_scenario import main as regen_main
+    regen_main([str(manifest_path), parquet_path.name])
 
     # Verify the regenerated parquet exists and matches
     assert parquet_path.exists(), f"Regenerated parquet not found: {parquet_path}"

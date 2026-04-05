@@ -61,3 +61,39 @@ def test_simulation_vec(sim_outputs):
 
 def test_simulation_parquet(sim_outputs):
     assert hash_parquet_data(sim_outputs["raw.parquet"]) == EXPECTED["raw_scenario.parquet"]
+
+
+def test_vec2parquet_raw_mode(sim_outputs, tmp_path):
+    """Exercise vec2parquet --raw CLI mode."""
+    from datagen.vec2parquet import main as v2p_main
+    out = tmp_path / "raw.parquet"
+    v2p_main([str(sim_outputs["scenario.vec"]), "--raw", "-o", str(out)])
+    assert out.exists()
+    import pyarrow.parquet as pq
+    table = pq.read_table(out)
+    assert set(table.column_names) == {"module", "name", "times", "values"}
+    assert len(table) > 0
+
+
+def test_vec2parquet_hash_mode(sim_outputs, capsys):
+    """Exercise vec2parquet --hash CLI mode."""
+    from datagen.vec2parquet import main as v2p_main
+    v2p_main([str(sim_outputs["scenario.vec"]), "--hash"])
+    captured = capsys.readouterr()
+    hashes = json.loads(captured.out)
+    assert len(hashes) > 0
+    assert all(len(v) == 64 for v in hashes.values())  # SHA256 hex
+
+
+def test_vec2parquet_default_mode(sim_outputs, tmp_path):
+    """Exercise vec2parquet default (event-per-row) CLI mode."""
+    from datagen.vec2parquet import main as v2p_main
+    out = tmp_path / "events.parquet"
+    v2p_main([str(sim_outputs["scenario.vec"]), "-o", str(out),
+              "--spoofer-hosts", "1"])
+    assert out.exists()
+    import pandas as pd
+    df = pd.read_parquet(out)
+    assert "host_type" in df.columns
+    assert "is_spoofed" in df.columns
+    assert len(df) > 0

@@ -367,7 +367,7 @@ def events_to_parquet(vec_file, output_path, spoofer_hosts=None):
 # CLI
 # ---------------------------------------------------------------------------
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description='Convert OMNeT++ .vec to Parquet (event-per-row or raw vectors)')
     parser.add_argument('vec_file', help='Input .vec file')
@@ -378,7 +378,7 @@ def main():
                         help='Comma-separated spoofer host indices (adds host_type/is_spoofed columns)')
     parser.add_argument('--hash', action='store_true',
                         help='Print per-vector SHA256 hashes (uses raw vector extraction)')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.output and not args.hash:
         parser.error('Specify -o OUTPUT.parquet and/or --hash')

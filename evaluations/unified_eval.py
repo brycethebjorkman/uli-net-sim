@@ -37,7 +37,7 @@ from .scoring import score_test_set, train_detectors
 from .analysis import analyze_scores
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Unified evaluation comparing KF, MLAT, and MLP detectors"
     )
@@ -104,7 +104,7 @@ def main():
     analyze_parser.add_argument("--mlat-threshold", type=float,
                                 help="Override MLAT threshold from thresholds.json")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.command == "train":
         train_detectors(

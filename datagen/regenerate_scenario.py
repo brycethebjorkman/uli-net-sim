@@ -269,7 +269,7 @@ def regenerate_one(manifest: dict, manifest_path: Path, parquet_name: str,
     return True
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description='Regenerate scenario simulations from a dataset manifest',
         epilog="""
@@ -292,7 +292,7 @@ Examples:
     parser.add_argument('--skip-artifacts', action='store_true',
                         help='Skip artifact regeneration (assume they exist)')
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Load manifest
     if not args.manifest.exists():

@@ -3,7 +3,7 @@ testpaths = ["tests"]
 timeout = 300
 
 [tool.coverage.run]
-source = ["datagen", "evaluations", "pymodules"]
+source = ["datagen", "evaluations"]
 omit = [
     "datagen/urbanenv/*_visualization.py",
     "evaluations/notebooks/*",

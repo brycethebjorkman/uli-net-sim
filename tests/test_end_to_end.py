@@ -8,15 +8,12 @@ values from unified_results.json. All seeds are fixed for determinism.
 """
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from .conftest import REPO_ROOT, TEST_OUT, _clean_dir
-
-PYTHON = sys.executable
 
 # Expected metrics (bootstrapped from first deterministic run)
 EXPECTED = {
@@ -53,35 +50,23 @@ def e2e_results():
     from datagen.split_dataset import split_dataset
     train_dir, test_dir = split_dataset(base, train_ratio=0.75, seed=42)
 
-    # 3. Train
-    result = subprocess.run(
-        [PYTHON, "-m", "evaluations.unified_eval", "train",
-         "--train-dir", str(train_dir),
-         "-o", str(results_dir),
-         "--seed", "42"],
-        capture_output=True, text=True, cwd=str(REPO_ROOT),
-    )
-    assert result.returncode == 0, f"train failed:\n{result.stderr[-3000:]}"
+    # 3. Train → Score → Analyze (in-process for coverage)
+    from evaluations.unified_eval import main as eval_main
 
-    # 4. Score
-    result = subprocess.run(
-        [PYTHON, "-m", "evaluations.unified_eval", "score",
-         "--train-dir", str(train_dir),
-         "--test-dir", str(test_dir),
-         "-o", str(results_dir),
-         "--seed", "42"],
-        capture_output=True, text=True, cwd=str(REPO_ROOT),
-    )
-    assert result.returncode == 0, f"score failed:\n{result.stderr[-3000:]}"
+    eval_main(["train",
+               "--train-dir", str(train_dir),
+               "-o", str(results_dir),
+               "--seed", "42"])
 
-    # 5. Analyze
-    result = subprocess.run(
-        [PYTHON, "-m", "evaluations.unified_eval", "analyze",
-         "--scores-dir", str(results_dir),
-         "-o", str(results_dir)],
-        capture_output=True, text=True, cwd=str(REPO_ROOT),
-    )
-    assert result.returncode == 0, f"analyze failed:\n{result.stderr[-3000:]}"
+    eval_main(["score",
+               "--train-dir", str(train_dir),
+               "--test-dir", str(test_dir),
+               "-o", str(results_dir),
+               "--seed", "42"])
+
+    eval_main(["analyze",
+               "--scores-dir", str(results_dir),
+               "-o", str(results_dir)])
 
     # Load results
     with open(results_dir / "unified_results.json") as f:

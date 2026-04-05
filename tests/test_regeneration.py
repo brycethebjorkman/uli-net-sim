@@ -5,7 +5,7 @@ Verifies that regenerate_scenario.py can reproduce a scenario parquet
 from a manifest — proving the manifest contains all parameters needed
 for deterministic reproduction.
 
-Pipeline: generate_dataset.sh → pick parquet → delete → regenerate → compare
+Pipeline: generate_dataset.py → pick parquet → delete → regenerate → compare
 """
 
 import subprocess
@@ -14,41 +14,35 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import REPO_ROOT, TEST_OUT, PYTHON, _clean_dir
+from .conftest import REPO_ROOT, TEST_OUT, _clean_dir
 from .test_eval_pipeline import hash_parquet_data
 
-GENERATE_DATASET = REPO_ROOT / "datagen" / "generate_dataset.sh"
 REGENERATE = REPO_ROOT / "datagen" / "regenerate_scenario.py"
+PYTHON = sys.executable
 
 
 @pytest.fixture(scope="session")
 def regen_dataset():
-    """Run generate_dataset.sh to produce a small dataset with manifest."""
+    """Run generate_dataset.py to produce a small dataset with manifest."""
     out = _clean_dir(TEST_OUT / "regen")
 
-    result = subprocess.run(
-        [str(GENERATE_DATASET),
-         "--grid-size", "300",
-         "--num-hosts", "4",
-         "--sim-time", "20",
-         "--num-ew", "2",
-         "--num-ns", "2",
-         "--num-buildings", "5",
-         "--building-height", "50-100",
-         "--speed", "8-12",
-         "--altitude", "40-80",
-         "--scenario-variants", "1",
-         "--enable-spoofer",
-         "--seed", "99",
-         "-o", str(out)],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"generate_dataset.sh failed (exit {result.returncode}):\n"
-            f"stdout: {result.stdout[-3000:]}\n"
-            f"stderr: {result.stderr[-3000:]}"
-        )
+    sys.path.insert(0, str(REPO_ROOT))
+    from datagen.generate_dataset import main as generate_main
+    generate_main([
+        "--grid-size", "300",
+        "--num-hosts", "4",
+        "--sim-time", "20",
+        "--num-ew", "2",
+        "--num-ns", "2",
+        "--num-buildings", "5",
+        "--building-height", "50-100",
+        "--speed", "8-12",
+        "--altitude", "40-80",
+        "--scenario-variants", "1",
+        "--enable-spoofer",
+        "--seed", "99",
+        "-o", str(out),
+    ])
 
     manifest_path = out / "manifest.json"
     assert manifest_path.exists(), f"Manifest not found: {manifest_path}"

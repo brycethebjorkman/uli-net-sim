@@ -33,13 +33,21 @@ VEC2PQ = SCRIPT_DIR / "vec2parquet.py"
 
 
 def scenario_hash(scenario_path: Path) -> str:
-    """Compute 8-char MD5 hash of the scenario's relative path structure."""
-    scenario_name = scenario_path.name
-    corridor_path = scenario_path.parent.parent  # past 'scenarios'
-    corridor_dir = corridor_path.name
-    param_dir = corridor_path.parent.name
+    """Compute 8-char MD5 hash of the scenario path.
 
-    rel_path = f"{param_dir}/{corridor_dir}/scenarios/{scenario_name}"
+    For urbanenv scenarios (…/param/corridor/scenarios/name/) uses the
+    canonical relative structure.  For other layouts, hashes the directory
+    name directly.
+    """
+    scenario_name = scenario_path.name
+    if scenario_path.parent.name == "scenarios":
+        # Urbanenv layout: param_dir/corridor_dir/scenarios/scenario_name
+        corridor_path = scenario_path.parent.parent
+        corridor_dir = corridor_path.name
+        param_dir = corridor_path.parent.name
+        rel_path = f"{param_dir}/{corridor_dir}/scenarios/{scenario_name}"
+    else:
+        rel_path = scenario_name
     return hashlib.md5(rel_path.encode()).hexdigest()[:8]
 
 

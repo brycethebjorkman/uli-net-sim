@@ -187,7 +187,7 @@ def train_thresholds(
         mlat_scores.append(s)
         mlat_labels.append(scenario.is_spoofed[mask])
 
-        if (i + 1) % max(1, n_train // 10) == 0:
+        if (i + 1) % max(1, min(100, n_train // 10)) == 0:
             print(f"  Scored {i + 1}/{n_train} scenarios...")
 
     # Optimize KF threshold

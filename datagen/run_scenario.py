@@ -122,6 +122,13 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
     produced = []
 
     for config in configs:
+        suffix = _config_suffix(config)
+        pq_file = scenario_path / f"{hash_prefix}{suffix}.parquet"
+
+        if pq_file.exists():
+            produced.append(pq_file)
+            continue
+
         print(f"  [{scenario_name}] Running {config}...")
 
         results_dir.mkdir(parents=True, exist_ok=True)
@@ -142,9 +149,6 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
         if not vec_file.exists():
             print(f"  [{scenario_name}] Warning: Vector file not found: {vec_file}")
             continue
-
-        suffix = _config_suffix(config)
-        pq_file = scenario_path / f"{hash_prefix}{suffix}.parquet"
 
         print(f"  [{scenario_name}] Converting to Parquet...")
         cmd = [python, str(VEC2PQ), str(vec_file), "-o", str(pq_file)]

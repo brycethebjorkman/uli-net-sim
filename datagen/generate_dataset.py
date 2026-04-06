@@ -258,11 +258,13 @@ def generate_configs(args) -> list[tuple[Path, str | None]]:
 # Phase 2: Run simulations
 # ---------------------------------------------------------------------------
 
-def _run_one_scenario(item: tuple[str, str | None, str | None]) -> None:
+def _run_one_scenario(item: tuple[str, str | None, str | None,
+                                   list[str] | None]) -> None:
     """Worker function for parallel scenario execution."""
     from datagen.run_scenario import run_scenario
-    scenario_path, spoofer_host, venv_python = item
-    run_scenario(Path(scenario_path), spoofer_host, venv_python)
+    scenario_path, spoofer_host, venv_python, configs = item
+    run_scenario(Path(scenario_path), spoofer_host, venv_python,
+                 configs=configs)
 
 
 def run_simulations(scenarios: list[tuple[Path, str | None]], parallel: int,
@@ -271,12 +273,20 @@ def run_simulations(scenarios: list[tuple[Path, str | None]], parallel: int,
     total = len(scenarios)
     print(f"\nPHASE 2: Running {total} simulations (parallel={parallel})\n")
 
-    items = [(str(sp), sh, venv_python) for sp, sh in scenarios]
+    # Determine which configs each scenario has (OpenSpace always;
+    # WithBuildings only if present in INI).
+    items = []
+    for sp, sh in scenarios:
+        ini_text = (sp / "omnetpp.ini").read_text()
+        configs = ["ScenarioOpenSpace"]
+        if "ScenarioWithBuildings" in ini_text:
+            configs.append("ScenarioWithBuildings")
+        items.append((str(sp), sh, venv_python, configs))
 
     if parallel <= 1:
-        for i, (sp, sh, vp) in enumerate(items):
-            print(f"[{i + 1}/{total}] Running {Path(sp).name}...")
-            _run_one_scenario((sp, sh, vp))
+        for i, item in enumerate(items):
+            print(f"[{i + 1}/{total}] Running {Path(item[0]).name}...")
+            _run_one_scenario(item)
     else:
         print(f"Running {total} scenarios with {parallel} parallel jobs...\n")
         with ProcessPoolExecutor(max_workers=parallel) as pool:

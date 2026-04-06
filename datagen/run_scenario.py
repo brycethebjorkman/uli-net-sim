@@ -2,14 +2,25 @@
 """
 run_scenario.py
 
-Execute a single urbanenv scenario (simulation + parquet conversion).
-Designed to be called by generate_dataset.py or directly.
+Execute a single scenario directory or INI file (simulation + parquet conversion).
+Designed to be called by generate_dataset.py, run_batch.py, or directly.
 
 Usage:
-    python3 run_scenario.py <scenario_path> [spoofer_host]
+    # Run all leaf configs in a scenario directory (auto-detect)
+    python3 run_scenario.py <scenario_path>
+
+    # Run specific configs
+    python3 run_scenario.py <scenario_path> --configs ScenarioOpenSpace ScenarioWithBuildings
+
+    # Keep .vec/.sca files after conversion
+    python3 run_scenario.py <scenario_path> --keep-vec
+
+    # Legacy: pass spoofer host explicitly (auto-detected from .vec by default)
+    python3 run_scenario.py <scenario_path> --spoofer-host 2
 """
 
 import hashlib
+import re
 import shutil
 import subprocess
 import sys
@@ -32,9 +43,55 @@ def scenario_hash(scenario_path: Path) -> str:
     return hashlib.md5(rel_path.encode()).hexdigest()[:8]
 
 
+def find_leaf_configs(ini_path: Path) -> list[str]:
+    """Find runnable (leaf) configs in an INI file.
+
+    A leaf config is one that is never extended by another config.
+    The [General] section is excluded.
+    """
+    ini_text = ini_path.read_text()
+    all_configs: list[str] = []
+    base_configs: set[str] = set()
+
+    for line in ini_text.splitlines():
+        m = re.match(r'^\[Config\s+(\S+)\]', line)
+        if m:
+            all_configs.append(m.group(1))
+            continue
+        m = re.match(r'^extends\s*=\s*(.+)', line)
+        if m:
+            for base in m.group(1).split(','):
+                base_configs.add(base.strip())
+
+    leaves = [c for c in all_configs if c not in base_configs]
+    return leaves
+
+
+# Short suffixes for well-known urbanenv config names (preserves existing
+# dataset filename convention expected by manifest/regeneration tools).
+_CONFIG_SUFFIX_MAP = {
+    'ScenarioOpenSpace': '-o',
+    'ScenarioWithBuildings': '-b',
+}
+
+
+def _config_suffix(config_name: str) -> str:
+    """Return the parquet filename suffix for a config name."""
+    return _CONFIG_SUFFIX_MAP.get(config_name, f'-{config_name}')
+
+
 def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
-                 venv_python: str | None = None) -> list[Path]:
+                 venv_python: str | None = None,
+                 configs: list[str] | None = None,
+                 keep_vec: bool = False) -> list[Path]:
     """Run simulation configs and convert results to parquet.
+
+    Args:
+        scenario_path: Directory containing omnetpp.ini
+        spoofer_host: Explicit spoofer host index (auto-detected from .vec if None)
+        venv_python: Python interpreter for vec2parquet (default: sys.executable)
+        configs: Config names to run (default: auto-detect leaf configs)
+        keep_vec: Keep .vec/.sca files after parquet conversion
 
     Returns list of produced parquet file paths.
     """
@@ -46,11 +103,11 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
     if not ini_file.exists():
         raise FileNotFoundError(f"INI file not found: {ini_file}")
 
-    # Determine configs to run
-    ini_text = ini_file.read_text()
-    configs = ["ScenarioOpenSpace"]
-    if "ScenarioWithBuildings" in ini_text:
-        configs.append("ScenarioWithBuildings")
+    if configs is None:
+        configs = find_leaf_configs(ini_file)
+        if not configs:
+            print(f"  [{scenario_name}] No leaf configs found in {ini_file}")
+            return []
 
     hash_prefix = scenario_hash(scenario_path)
     python = venv_python or sys.executable
@@ -78,7 +135,7 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
             print(f"  [{scenario_name}] Warning: Vector file not found: {vec_file}")
             continue
 
-        suffix = "-o" if config == "ScenarioOpenSpace" else "-b"
+        suffix = _config_suffix(config)
         pq_file = scenario_path / f"{hash_prefix}{suffix}.parquet"
 
         print(f"  [{scenario_name}] Converting to Parquet...")
@@ -94,8 +151,8 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
         print(f"  [{scenario_name}] Created: {pq_file.name}")
         produced.append(pq_file)
 
-    # Clean up intermediate results
-    if results_dir.exists():
+    # Clean up intermediate results (unless keep_vec)
+    if not keep_vec and results_dir.exists():
         shutil.rmtree(results_dir)
         print(f"  [{scenario_name}] Cleaned up intermediate results")
 
@@ -104,14 +161,22 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: run_scenario.py <scenario_path> [spoofer_host]")
-        sys.exit(1)
+    import argparse
 
-    scenario_path = Path(sys.argv[1])
-    spoofer_host = sys.argv[2] if len(sys.argv) > 2 else None
+    parser = argparse.ArgumentParser(
+        description="Run a single scenario (simulation + parquet conversion)")
+    parser.add_argument("scenario_path", type=Path,
+                        help="Directory containing omnetpp.ini")
+    parser.add_argument("--spoofer-host", default=None,
+                        help="Spoofer host index (auto-detected from .vec if omitted)")
+    parser.add_argument("--configs", nargs="+", default=None,
+                        help="Config names to run (default: auto-detect leaf configs)")
+    parser.add_argument("--keep-vec", action="store_true",
+                        help="Keep .vec/.sca files after parquet conversion")
+    args = parser.parse_args()
 
-    run_scenario(scenario_path, spoofer_host)
+    run_scenario(args.scenario_path, args.spoofer_host,
+                 configs=args.configs, keep_vec=args.keep_vec)
 
 
 if __name__ == "__main__":

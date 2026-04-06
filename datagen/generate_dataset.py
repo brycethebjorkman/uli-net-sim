@@ -17,7 +17,6 @@ import argparse
 import json
 import os
 import random
-import re
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -95,15 +94,15 @@ def source_omnetpp_env():
 # Phase 1: Generate configurations
 # ---------------------------------------------------------------------------
 
-def generate_configs(args) -> list[tuple[Path, str | None]]:
+def generate_configs(args) -> list[Path]:
     """Generate all corridor/building/trajectory/ini configurations.
 
-    Returns list of (scenario_path, spoofer_host) tuples for simulation.
+    Returns list of scenario directory paths for simulation.
     """
     urbanenv_dir = Path(args.output) / "urbanenv"
     urbanenv_dir.mkdir(parents=True, exist_ok=True)
 
-    scenarios = []  # (path, spoofer_host)
+    scenarios: list[Path] = []
     scenario_seed_counter = args.seed
 
     for p in range(args.param_variants):
@@ -215,7 +214,6 @@ def generate_configs(args) -> list[tuple[Path, str | None]]:
                         scenario_path.mkdir(parents=True, exist_ok=True)
 
                         ini_file = scenario_path / "omnetpp.ini"
-                        spoofer_host = None
 
                         if not ini_file.exists():
                             print(f"      [{len(scenarios) + 1}] Generating {scenario_name}")
@@ -238,18 +236,9 @@ def generate_configs(args) -> list[tuple[Path, str | None]]:
                             if args.enable_spoofer:
                                 cmd.extend(["--enable-spoofer", "--spoofer-type", args.spoofer_type])
 
-                            result = run_tool(cmd)
-                            # Extract spoofer host from output
-                            m = re.search(r"SPOOFER_HOST=(\d+)", result.stdout)
-                            if m:
-                                spoofer_host = m.group(1)
-                        else:
-                            # INI exists, extract spoofer host from it
-                            m = re.search(r'spoofer_host": (\d+)', ini_file.read_text())
-                            if m:
-                                spoofer_host = m.group(1)
+                            run_tool(cmd)
 
-                        scenarios.append((scenario_path, spoofer_host))
+                        scenarios.append(scenario_path)
 
     return scenarios
 
@@ -258,16 +247,15 @@ def generate_configs(args) -> list[tuple[Path, str | None]]:
 # Phase 2: Run simulations
 # ---------------------------------------------------------------------------
 
-def _run_one_scenario(item: tuple[str, str | None, str | None,
-                                   list[str] | None]) -> None:
+def _run_one_scenario(item: tuple[str, str | None, list[str]]) -> None:
     """Worker function for parallel scenario execution."""
     from datagen.run_scenario import run_scenario
-    scenario_path, spoofer_host, venv_python, configs = item
-    run_scenario(Path(scenario_path), spoofer_host, venv_python,
+    scenario_path, venv_python, configs = item
+    run_scenario(Path(scenario_path), venv_python=venv_python,
                  configs=configs)
 
 
-def run_simulations(scenarios: list[tuple[Path, str | None]], parallel: int,
+def run_simulations(scenarios: list[Path], parallel: int,
                     venv_python: str | None = None):
     """Run all scenario simulations, optionally in parallel."""
     total = len(scenarios)
@@ -276,12 +264,12 @@ def run_simulations(scenarios: list[tuple[Path, str | None]], parallel: int,
     # Determine which configs each scenario has (OpenSpace always;
     # WithBuildings only if present in INI).
     items = []
-    for sp, sh in scenarios:
+    for sp in scenarios:
         ini_text = (sp / "omnetpp.ini").read_text()
         configs = ["ScenarioOpenSpace"]
         if "ScenarioWithBuildings" in ini_text:
             configs.append("ScenarioWithBuildings")
-        items.append((str(sp), sh, venv_python, configs))
+        items.append((str(sp), venv_python, configs))
 
     if parallel <= 1:
         for i, item in enumerate(items):

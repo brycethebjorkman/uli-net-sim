@@ -1,7 +1,7 @@
 """
 End-to-end pipeline test exercising the full researcher workflow:
 
-    generate_dataset.py → split_dataset.py → unified_eval train → score → analyze
+    generate_manifest → generate_scenario → run_batch → split → train → score → analyze
 
 Validates that all three detectors (KF, MLAT, MLP) produce expected metric
 values from unified_results.json. All seeds are fixed for determinism.
@@ -17,40 +17,54 @@ from .conftest import REPO_ROOT, TEST_OUT, _clean_dir
 
 # Expected metrics (bootstrapped from first deterministic run)
 EXPECTED = {
-    "kf": {"auc": 0.7594352792648433, "tpr": 0.7581120943952803, "fpr": 0.37037037037037035,
-           "tp": 257, "tn": 1224, "fp": 720, "fn": 82},
-    "mlat": {"auc": 0.7860023041474654, "tpr": 1.0, "fpr": 1.0,
-             "tp": 56, "tn": 0, "fp": 124, "fn": 0},
-    "mlp": {"auc": 0.8204664254121432, "tpr": 0.3333333333333333, "fpr": 0.018094089264173704,
-            "tp": 38, "tn": 814, "fp": 15, "fn": 76},
+    "kf": {"auc": 0.765826520855559, "tpr": 0.7523219814241486, "fpr": 0.35302879841112217,
+           "tp": 243, "tn": 1303, "fp": 711, "fn": 80},
+    "mlat": {"auc": 0.7871888281724349, "tpr": 0.8518518518518519, "fpr": 0.819672131147541,
+             "tp": 46, "tn": 22, "fp": 100, "fn": 8},
+    "mlp": {"auc": 0.8080728482619735, "tpr": 0.25925925925925924, "fpr": 0.02009456264775414,
+            "tp": 28, "tn": 829, "fp": 17, "fn": 80},
 }
 
 
 @pytest.fixture(scope="session")
 def e2e_results():
-    """Run the full pipeline: generate → split → train → score → analyze."""
+    """Run the full pipeline: manifest → scenarios → batch → split → eval."""
     base = _clean_dir(TEST_OUT / "e2e")
     results_dir = base / "results"
     results_dir.mkdir()
 
-    # 1. Generate dataset
     sys.path.insert(0, str(REPO_ROOT))
-    from datagen.generate_dataset import main as generate_main
-    generate_main([
+
+    # 1. Generate manifest
+    from datagen.generate_manifest import main as manifest_main
+    manifest_path = base / "manifest.json"
+    manifest_main([
         "--grid-size", "300",
         "--num-hosts", "8",
         "--sim-time", "30",
         "--scenario-variants", "4",
         "--enable-spoofer",
         "--seed", "77",
-        "-o", str(base),
+        "-o", str(manifest_path),
     ])
 
-    # 2. Split into train/test
+    # 2. Materialize artifacts + INIs
+    from datagen.generate_scenario import main as scenario_main
+    scenario_main([str(manifest_path)])
+
+    # 3. Run simulations
+    from datagen.run_batch import discover_scenarios, run_batch
+    urbanenv_dir = base / "urbanenv"
+    venv_python = str(REPO_ROOT / ".venv" / "bin" / "python3")
+    scenarios = discover_scenarios(
+        urbanenv_dir, configs=["ScenarioOpenSpace", "ScenarioWithBuildings"])
+    run_batch(scenarios, parallel=1, venv_python=venv_python)
+
+    # 4. Split into train/test
     from datagen.split_dataset import split_dataset
     train_dir, test_dir = split_dataset(base, train_ratio=0.75, seed=42)
 
-    # 3. Train → Score → Analyze (in-process for coverage)
+    # 5. Train → Score → Analyze (in-process for coverage)
     from evaluations.unified_eval import main as eval_main
 
     eval_main(["train",
@@ -83,12 +97,6 @@ def test_all_detectors_present(e2e_results):
 
 def test_kf_metrics(e2e_results):
     kf = e2e_results["results"]["kf"]
-    if EXPECTED is None:
-        pytest.fail(
-            f"Bootstrap EXPECTED with:\n"
-            f'"kf": {{"auc": {kf["auc"]}, "tpr": {kf["tpr"]}, "fpr": {kf["fpr"]}, '
-            f'"tp": {kf["tp"]}, "tn": {kf["tn"]}, "fp": {kf["fp"]}, "fn": {kf["fn"]}}}'
-        )
     e = EXPECTED["kf"]
     assert kf["auc"] == pytest.approx(e["auc"], abs=1e-6)
     assert kf["tpr"] == pytest.approx(e["tpr"], abs=1e-6)
@@ -98,12 +106,6 @@ def test_kf_metrics(e2e_results):
 
 def test_mlat_metrics(e2e_results):
     mlat = e2e_results["results"]["mlat"]
-    if EXPECTED is None:
-        pytest.fail(
-            f"Bootstrap EXPECTED with:\n"
-            f'"mlat": {{"auc": {mlat["auc"]}, "tpr": {mlat["tpr"]}, "fpr": {mlat["fpr"]}, '
-            f'"tp": {mlat["tp"]}, "tn": {mlat["tn"]}, "fp": {mlat["fp"]}, "fn": {mlat["fn"]}}}'
-        )
     e = EXPECTED["mlat"]
     assert mlat["auc"] == pytest.approx(e["auc"], abs=1e-6)
     assert mlat["tpr"] == pytest.approx(e["tpr"], abs=1e-6)
@@ -113,12 +115,6 @@ def test_mlat_metrics(e2e_results):
 
 def test_mlp_metrics(e2e_results):
     mlp = e2e_results["results"]["mlp"]
-    if EXPECTED is None:
-        pytest.fail(
-            f"Bootstrap EXPECTED with:\n"
-            f'"mlp": {{"auc": {mlp["auc"]}, "tpr": {mlp["tpr"]}, "fpr": {mlp["fpr"]}, '
-            f'"tp": {mlp["tp"]}, "tn": {mlp["tn"]}, "fp": {mlp["fp"]}, "fn": {mlp["fn"]}}}'
-        )
     e = EXPECTED["mlp"]
     assert mlp["auc"] == pytest.approx(e["auc"], abs=1e-6)
     assert mlp["tpr"] == pytest.approx(e["tpr"], abs=1e-6)

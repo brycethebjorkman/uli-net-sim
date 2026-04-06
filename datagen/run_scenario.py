@@ -3,7 +3,7 @@
 run_scenario.py
 
 Execute a single scenario directory or INI file (simulation + parquet conversion).
-Designed to be called by generate_dataset.py, run_batch.py, or directly.
+Designed to be called by run_batch.py or directly.
 
 Usage:
     # Run all leaf configs in a scenario directory (auto-detect)

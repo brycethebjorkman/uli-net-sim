@@ -1,11 +1,12 @@
 """
 Regression tests for scenario regeneration round-trip.
 
-Verifies that regenerate_scenario.py can reproduce a scenario parquet
-from a manifest — proving the manifest contains all parameters needed
-for deterministic reproduction.
+Verifies that generate_scenario.py can reproduce a scenario's INI and
+parquet from a manifest — proving the manifest contains all parameters
+needed for deterministic reproduction.
 
-Pipeline: generate_dataset.py → pick parquet → delete → regenerate → compare
+Pipeline: generate_manifest → generate_scenario → run_batch → pick parquet
+          → delete INI + parquet → generate_scenario (regen) → run_batch → compare
 """
 
 import sys
@@ -19,12 +20,15 @@ from .test_eval_pipeline import hash_parquet_data
 
 @pytest.fixture(scope="session")
 def regen_dataset():
-    """Run generate_dataset.py to produce a small dataset with manifest."""
+    """Generate a small dataset via the manifest-driven pipeline."""
     out = _clean_dir(TEST_OUT / "regen")
 
     sys.path.insert(0, str(REPO_ROOT))
-    from datagen.generate_dataset import main as generate_main
-    generate_main([
+
+    # 1. Create manifest
+    from datagen.generate_manifest import main as manifest_main
+    manifest_path = out / "manifest.json"
+    manifest_main([
         "--grid-size", "300",
         "--num-hosts", "4",
         "--sim-time", "20",
@@ -37,15 +41,25 @@ def regen_dataset():
         "--scenario-variants", "1",
         "--enable-spoofer",
         "--seed", "99",
-        "-o", str(out),
+        "-o", str(manifest_path),
     ])
+    assert manifest_path.exists()
 
-    manifest_path = out / "manifest.json"
-    assert manifest_path.exists(), f"Manifest not found: {manifest_path}"
+    # 2. Materialize artifacts + INIs
+    from datagen.generate_scenario import main as scenario_main
+    scenario_main([str(manifest_path)])
+
+    # 3. Run simulations
+    from datagen.run_batch import discover_scenarios, run_batch
+    urbanenv_dir = out / "urbanenv"
+    scenarios = discover_scenarios(
+        urbanenv_dir, configs=["ScenarioOpenSpace", "ScenarioWithBuildings"])
+    run_batch(scenarios, parallel=1,
+              venv_python=str(REPO_ROOT / ".venv" / "bin" / "python3"))
 
     # Find all parquet files in the dataset
-    parquets = sorted((out / "urbanenv").rglob("*.parquet"))
-    assert len(parquets) > 0, "No parquet files produced by generate_dataset.sh"
+    parquets = sorted(urbanenv_dir.rglob("*.parquet"))
+    assert len(parquets) > 0, "No parquet files produced"
 
     return {
         "manifest": manifest_path,
@@ -55,20 +69,42 @@ def regen_dataset():
 
 
 def test_regeneration_round_trip(regen_dataset):
-    """Delete a parquet and regenerate it, verify content hash matches."""
+    """Delete INI + parquet, regenerate from manifest, verify hash matches."""
     manifest_path = regen_dataset["manifest"]
     parquet_path = regen_dataset["parquets"][0]
 
     # Record initial content hash
     initial_hash = hash_parquet_data(parquet_path)
 
-    # Delete the parquet to force regeneration
+    # Delete the parquet AND its INI to force full regeneration
+    scenario_dir = parquet_path.parent
+    ini_path = scenario_dir / "omnetpp.ini"
     parquet_path.unlink()
-    assert not parquet_path.exists()
+    if ini_path.exists():
+        ini_path.unlink()
 
-    # Run regenerate_scenario.py in-process (for coverage)
-    from datagen.regenerate_scenario import main as regen_main
-    regen_main([str(manifest_path), parquet_path.name])
+    assert not parquet_path.exists()
+    assert not ini_path.exists()
+
+    # Regenerate INI from manifest (selective)
+    from datagen.generate_scenario import main as scenario_main
+    scenario_main([str(manifest_path), "--scenarios", parquet_path.name])
+
+    assert ini_path.exists(), f"Regenerated INI not found: {ini_path}"
+
+    # Re-run simulation for this scenario
+    from datagen.run_scenario import run_scenario
+    venv_python = str(REPO_ROOT / ".venv" / "bin" / "python3")
+
+    # Determine which config to run from the parquet filename suffix
+    if parquet_path.name.endswith("-o.parquet"):
+        configs = ["ScenarioOpenSpace"]
+    elif parquet_path.name.endswith("-b.parquet"):
+        configs = ["ScenarioWithBuildings"]
+    else:
+        configs = None  # auto-detect
+
+    run_scenario(scenario_dir, venv_python=venv_python, configs=configs)
 
     # Verify the regenerated parquet exists and matches
     assert parquet_path.exists(), f"Regenerated parquet not found: {parquet_path}"

@@ -79,7 +79,7 @@ def regenerate_ini(scenario_path: Path, corridor_path: Path, corridor_info: dict
                    dry_run: bool = False) -> bool:
     """Regenerate the scenario omnetpp.ini from manifest parameters."""
     script_dir = find_script_dir()
-    gen_scenario = script_dir / "urbanenv" / "generate_scenario.py"
+    gen_scenario = script_dir / "urbanenv" / "generate_conf.py"
 
     ini_path = scenario_path / "omnetpp.ini"
     if ini_path.exists():

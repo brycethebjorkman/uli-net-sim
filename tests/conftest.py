@@ -150,7 +150,7 @@ def datagen_outputs():
     for i in range(NUM_SCENARIO_VARIANTS):
         seed = str(i + 1)
         name = f"scenario_seed{seed}.ini"
-        _run([PYTHON, URBANENV / "generate_scenario.py",
+        _run([PYTHON, URBANENV / "generate_conf.py",
               "-t", "trajectories.xml", "-b", "buildings.xml",
               *DATAGEN_PARAMS["scenario"], "--seed", seed, "-o", name], cwd=out)
         scenario_inis[name] = out / name

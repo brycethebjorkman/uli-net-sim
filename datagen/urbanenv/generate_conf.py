@@ -208,7 +208,7 @@ Examples:
 
     # Build generation parameters for embedding
     gen_params = {
-        "_generator": "generate_scenario.py",
+        "_generator": "generate_conf.py",
         "_params": {
             "trajectories": str(trajectories_path),
             "buildings": args.buildings,

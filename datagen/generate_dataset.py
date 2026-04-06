@@ -34,7 +34,7 @@ if str(PROJ_DIR) not in sys.path:
 GEN_CORRIDORS = SCRIPT_DIR / "urbanenv" / "generate_corridors.py"
 GEN_BUILDINGS = SCRIPT_DIR / "urbanenv" / "generate_buildings.py"
 GEN_TRAJECTORIES = SCRIPT_DIR / "urbanenv" / "generate_trajectories.py"
-GEN_SCENARIO = SCRIPT_DIR / "urbanenv" / "generate_scenario.py"
+GEN_SCENARIO = SCRIPT_DIR / "urbanenv" / "generate_conf.py"
 GEN_MANIFEST = SCRIPT_DIR / "urbanenv" / "generate_dataset_manifest.py"
 
 

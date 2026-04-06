@@ -22,7 +22,7 @@ EXPECTED = {
     "corridors.ndjson":  "400414d7074120791ab04ffc7b5f00473d348dd3aa13c16dc49d64d932ba520a",
     "buildings.xml":     "7cb38f3c58eb84eaa79aade9daa469a4d5c766fd11e8acb7cd0f019a334ca0b5",
     "trajectories.xml":  "81acc917eea2c3b3a616afce5d93aabeaf0cfa9bd6d2d212c0b96bca421d935e",
-    "scenario.ini":      "81d093802ddfab2c0b1f9eb9e2e980e24a003f7427198ffd38760dad9b258057",
+    "scenario.ini":      "29405c20f27a02f4fd1a6d4f9e1acbbe116c45b3762ce2498009ed79d3992ff6",
     "raw_scenario.parquet": "f4bba8113b0c76265024ba7b8d9c4594fda572c3fd6ce0f947a6db8569b2a681",
 }
 

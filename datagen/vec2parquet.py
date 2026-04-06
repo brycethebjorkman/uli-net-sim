@@ -23,6 +23,7 @@ import argparse
 import csv
 import hashlib
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -172,6 +173,83 @@ def vectors_to_parquet(vectors, output_path):
         'values': pa.array(values_col, type=pa.list_(pa.float64())),
     })
     pq.write_table(table, str(output_path))
+
+
+# ---------------------------------------------------------------------------
+# Auto-detect host types from .vec config header
+# ---------------------------------------------------------------------------
+
+SPOOFER_TYPENAMES = {
+    'DynamicTrajectorySpooferHost',
+    'PyTxHookSpooferHost',
+    'StaticLocationSpooferHost',
+}
+
+GHOST_TYPENAMES = {
+    'GhostHost',
+}
+
+# Matches per-host key: *.host[N].<suffix>
+_RE_HOST_IDX = re.compile(r'^\*\.host\[(\d+)\]\.')
+
+
+def detect_host_types(vec_path) -> dict[int, str]:
+    """Use opp_scavetool to read .vec config entries and classify hosts.
+
+    Returns {host_id: host_type} for every host.
+    Hosts with spoofer-family typenames → 'spoofer'.
+    Hosts with GhostHost typename → 'ghost'.
+    Hosts with pyTxClass set (but no spoofer typename) → 'spoofer' (fallback).
+    All other hosts → 'benign'.
+    """
+    r = subprocess.run(
+        ['opp_scavetool', 'query', '-j', '--tabs', '-b', str(vec_path)],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return {}
+
+    per_host_typename: dict[int, str] = {}
+    wildcard_typename: str | None = None
+    py_tx_hosts: set[int] = set()
+    num_hosts: int | None = None
+
+    for line in r.stdout.splitlines():
+        parts = line.split('\t', 1)
+        if len(parts) != 2:
+            continue
+        key, value = parts
+
+        if key == '*.numHosts':
+            num_hosts = int(value)
+        elif key == '*.host[*].typename':
+            wildcard_typename = value
+        else:
+            m = _RE_HOST_IDX.match(key)
+            if m:
+                host_id = int(m.group(1))
+                if key.endswith('.typename'):
+                    per_host_typename[host_id] = value
+                elif key.endswith('.wlan[0].mgmt.pyTxClass'):
+                    py_tx_hosts.add(host_id)
+
+    if num_hosts is None:
+        return {}
+
+    host_types: dict[int, str] = {}
+    for host_id in range(num_hosts):
+        typename = per_host_typename.get(host_id, wildcard_typename or '')
+        if typename in SPOOFER_TYPENAMES:
+            host_types[host_id] = 'spoofer'
+        elif typename in GHOST_TYPENAMES:
+            host_types[host_id] = 'ghost'
+        elif host_id in py_tx_hosts:
+            # Fallback: pyTxClass set without explicit spoofer typename
+            host_types[host_id] = 'spoofer'
+        else:
+            host_types[host_id] = 'benign'
+
+    return host_types
 
 
 # ---------------------------------------------------------------------------
@@ -329,10 +407,18 @@ def events_to_parquet(vec_file, output_path, spoofer_hosts=None):
     Args:
         vec_file: Path to .vec file
         output_path: Path to output .parquet file
-        spoofer_hosts: Set of host IDs that are spoofers (for host_type/is_spoofed).
-                       If None, host_type and is_spoofed columns are omitted.
+        spoofer_hosts: Set of host IDs that are spoofers (for host_type column).
+                       If None, auto-detects from .vec config header.
     """
     import pandas as pd
+
+    vec_file = Path(vec_file)
+
+    # Auto-detect host types from .vec config if not explicitly provided
+    if spoofer_hosts is None:
+        host_types = detect_host_types(vec_file)
+        if host_types:
+            spoofer_hosts = {h for h, t in host_types.items() if t == 'spoofer'}
 
     tmp_csv = _export_mgmt_vectors(str(vec_file))
     try:

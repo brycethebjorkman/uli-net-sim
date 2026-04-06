@@ -25,6 +25,11 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJ_DIR = SCRIPT_DIR.parent
 
+# Ensure project root is on sys.path so datagen.* imports work when
+# invoked as a standalone script.
+if str(PROJ_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJ_DIR))
+
 # Paths to urbanenv generation tools
 GEN_CORRIDORS = SCRIPT_DIR / "urbanenv" / "generate_corridors.py"
 GEN_BUILDINGS = SCRIPT_DIR / "urbanenv" / "generate_buildings.py"

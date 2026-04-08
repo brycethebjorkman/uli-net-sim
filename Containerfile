@@ -95,7 +95,8 @@ RUN python3 -m venv /opt/uli-venv \
     && /opt/uli-venv/bin/pip install -r /tmp/requirements-docker.txt
 
 ENV ULI_PYTHON=/opt/uli-venv/bin/python3
-ENV PATH="/opt/uli-venv/bin:${PATH}"
+# opp_scavetool (vec2parquet) must be on PATH — non-login shells do not source profile.d
+ENV PATH="/usr/uli-net-sim/omnetpp-${VERSION}/bin:/opt/uli-venv/bin:${PATH}"
 ENV PYTHONPATH="/usr/uli-net-sim/uav_rid"
 
 # build uli-net-sim (repository root -> /usr/uli-net-sim/uav_rid)

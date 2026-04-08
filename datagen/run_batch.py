@@ -24,7 +24,7 @@ USAGE:
 import argparse
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -35,7 +35,11 @@ PROJ_DIR = SCRIPT_DIR.parent
 if str(PROJ_DIR) not in sys.path:
     sys.path.insert(0, str(PROJ_DIR))
 
-from datagen.run_scenario import find_leaf_configs, run_scenario
+from datagen.run_scenario import (
+    find_leaf_configs,
+    pick_vec2parquet_python,
+    run_scenario,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -96,23 +100,44 @@ def run_batch(scenarios: list[tuple[Path, list[str]]],
     Returns list of all produced parquet file paths.
     """
     total_configs = sum(len(cfgs) for _, cfgs in scenarios)
-    print(f"Running {len(scenarios)} scenario(s), "
-          f"{total_configs} config(s), parallel={parallel}\n")
+    n_scen = len(scenarios)
+    print(
+        f"Running {n_scen} scenario(s), {total_configs} config(s), "
+        f"parallel={parallel}\n"
+        f"(Each scenario = one INI directory; progress prints when that "
+        f"directory finishes.)\n",
+        flush=True,
+    )
 
     items = [(str(d), cfgs, venv_python, keep_vec) for d, cfgs in scenarios]
 
     all_produced: list[Path] = []
     if parallel <= 1:
         for i, item in enumerate(items):
-            print(f"[{i + 1}/{len(items)}] {Path(item[0]).name}")
+            name = Path(item[0]).name
+            print(f"[{i + 1}/{n_scen}] {name} ...", flush=True)
             paths = _worker(item)
             all_produced.extend(Path(p) for p in paths)
+            print(f"[{i + 1}/{n_scen}] {name} done ({len(paths)} parquet)", flush=True)
     else:
         with ProcessPoolExecutor(max_workers=parallel) as pool:
-            for paths in pool.map(_worker, items):
+            futures = {
+                pool.submit(_worker, item): Path(item[0]).name
+                for item in items
+            }
+            done = 0
+            for fut in as_completed(futures):
+                name = futures[fut]
+                done += 1
+                paths = fut.result()
                 all_produced.extend(Path(p) for p in paths)
+                print(
+                    f"[{done}/{n_scen}] finished {name} "
+                    f"({len(paths)} parquet)",
+                    flush=True,
+                )
 
-    print(f"\nDone — {len(all_produced)} parquet file(s) produced.")
+    print(f"\nDone — {len(all_produced)} parquet file(s) produced.", flush=True)
     return all_produced
 
 
@@ -164,10 +189,8 @@ def main(argv=None):
                 print(f"  {d.name}  →  {c}")
         return
 
-    # Determine venv python for vec2parquet (needs pyarrow)
-    venv_python = str(PROJ_DIR / ".venv" / "bin" / "python3")
-    if not Path(venv_python).exists():
-        venv_python = None
+    # vec2parquet needs pyarrow; skip broken/synced .venv (wrong arch)
+    venv_python = pick_vec2parquet_python(PROJ_DIR)
 
     run_batch(scenarios, parallel=args.parallel,
               venv_python=venv_python, keep_vec=args.keep_vec)

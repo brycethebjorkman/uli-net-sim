@@ -29,9 +29,39 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BASE_DIR="$(cd "$PROJ_DIR/.." && pwd)"
 
-# Source environment if not already sourced
-if [ -z "$INET_ROOT" ]; then
+# OMNeT++ on PATH; INET_ROOT for -l / -n (must not be empty — empty becomes /out/...).
+if [ -f "$PROJ_DIR/scripts/omnetpp-env.sh" ]; then
+    # shellcheck source=omnetpp-env.sh
     . "$PROJ_DIR/scripts/omnetpp-env.sh"
+fi
+
+if [ -z "${INET_ROOT:-}" ]; then
+    if [ -n "${INET4_5_PROJ:-}" ]; then
+        INET_ROOT="$INET4_5_PROJ"
+    elif [ -n "${OMNETPP_ROOT:-}" ] && [ -d "$OMNETPP_ROOT/samples/inet4.5" ]; then
+        INET_ROOT="$OMNETPP_ROOT/samples/inet4.5"
+    elif [ -d "/Applications/omnetpp-6.3.0/samples/inet4.5" ]; then
+        INET_ROOT="/Applications/omnetpp-6.3.0/samples/inet4.5"
+    elif [ -d "$BASE_DIR/inet4.5" ]; then
+        INET_ROOT="$BASE_DIR/inet4.5"
+    else
+        echo "Error: INET_ROOT is not set and inet4.5 was not found." >&2
+        echo "Set INET_ROOT or INET4_5_PROJ to your inet4.5 source tree (same as build.sh)." >&2
+        exit 1
+    fi
+    export INET_ROOT
+fi
+
+INET_RELEASE_DIR="$INET_ROOT/out/clang-release/src"
+INET_LIB=""
+if [ -f "$INET_RELEASE_DIR/libINET.dylib" ]; then
+    INET_LIB="$INET_RELEASE_DIR/libINET.dylib"
+elif [ -f "$INET_RELEASE_DIR/libINET.so" ]; then
+    INET_LIB="$INET_RELEASE_DIR/libINET.so"
+else
+    echo "Error: INET library not found under $INET_RELEASE_DIR" >&2
+    echo "Build INET (release) in the IDE or: cd \"\$INET_ROOT\" && make MODE=release" >&2
+    exit 1
 fi
 
 UAV_RID_BIN="$BASE_DIR/container-build/out/clang-release/uav_rid"
@@ -73,7 +103,7 @@ args=(
     -u Cmdenv
     -c "$config"
     -f "$ini_file"
-    -l "$INET_ROOT/out/clang-release/src/libINET.so"
+    -l "$INET_LIB"
     -n "$INET_ROOT/src"
     -n "$INET_ROOT/src/inet/visualizer/common"
     -n "$INET_ROOT/examples"

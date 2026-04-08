@@ -24,6 +24,7 @@ import csv
 import hashlib
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -33,6 +34,39 @@ from dataclasses import dataclass, asdict
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Dict, List, Optional
+
+_OPP_SCAVETOOL: str | None = None
+
+
+def opp_scavetool_path() -> str:
+    """Resolve OMNeT++ ``opp_scavetool`` (PATH, ``OMNETPP_ROOT``, common installs)."""
+    global _OPP_SCAVETOOL
+    if _OPP_SCAVETOOL is not None:
+        return _OPP_SCAVETOOL
+    w = shutil.which('opp_scavetool')
+    if w:
+        _OPP_SCAVETOOL = w
+        return w
+    roots: list[str] = []
+    root = os.environ.get('OMNETPP_ROOT', '').strip()
+    if root:
+        roots.append(root)
+    roots.extend([
+        '/usr/uli-net-sim/omnetpp-6.3.0',
+        '/usr/uli-net-sim/omnetpp-6.2.0',
+        '/Applications/omnetpp-6.3.0',
+        '/Applications/omnetpp-6.2.0',
+    ])
+    for r in roots:
+        p = os.path.join(r, 'bin', 'opp_scavetool')
+        if os.path.isfile(p):
+            _OPP_SCAVETOOL = p
+            return p
+    raise FileNotFoundError(
+        'opp_scavetool not found. Add OMNeT++ bin to PATH, set OMNETPP_ROOT, or '
+        '(Docker) rebuild the image so PATH includes omnetpp-6.3.0/bin.',
+    )
+
 
 # ---------------------------------------------------------------------------
 # Vector specifications: (module_pattern for opp_scavetool, name_pattern for fnmatch)
@@ -76,7 +110,7 @@ def _run_scavetool(vec_path, module_pattern):
     tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
     tmp.close()
     cmd = [
-        'opp_scavetool', 'export', '-F', 'CSV-R', '-x', 'columnNames=true',
+        opp_scavetool_path(), 'export', '-F', 'CSV-R', '-x', 'columnNames=true',
         '-f', f'type=~"vector" and module=~"{module_pattern}"',
         '-o', tmp.name, str(vec_path),
     ]
@@ -203,7 +237,7 @@ def detect_host_types(vec_path) -> dict[int, str]:
     All other hosts → 'benign'.
     """
     r = subprocess.run(
-        ['opp_scavetool', 'query', '-j', '--tabs', '-b', str(vec_path)],
+        [opp_scavetool_path(), 'query', '-j', '--tabs', '-b', str(vec_path)],
         capture_output=True, text=True,
     )
     if r.returncode != 0:
@@ -285,7 +319,7 @@ def _export_mgmt_vectors(vec_file: str) -> str:
     tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
     tmp.close()
     cmd = [
-        'opp_scavetool', 'export', '-F', 'CSV-R', '-x', 'columnNames=true',
+        opp_scavetool_path(), 'export', '-F', 'CSV-R', '-x', 'columnNames=true',
         '-f', 'type=~"vector" and module=~"*.host[*].wlan[0].mgmt"',
         '-o', tmp.name, vec_file,
     ]

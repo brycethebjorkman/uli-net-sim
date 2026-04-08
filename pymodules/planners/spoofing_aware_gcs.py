@@ -24,10 +24,13 @@ Two-phase pipeline per the paper (AIAA SciTech '26, Sec. V-B):
   GcsModule when present — true mobility from OMNeT++ — else RID positions):
     - Proximity: any pair of benign agents with 3D separation < 10 m (new
       entry into that condition per pair counts once until they separate).
+    - Benign-vs-spoofer proximity: any benign agent within 10 m of the true
+      spoofer host (edge-counted per benign agent).
     - Spoofer unsafe: benign agent inside the chance-constraint ellipsoid
       (same is_safe test as the MDP hard constraint); entry events per serial.
   End-of-run: ``on_gcs_finish`` records scalars ``nmac_proximity_final`` and
-  ``nmac_spoofer_unsafe_final`` (cumulative totals) to the .sca file for
+  ``nmac_benign_spoofer_final`` / ``nmac_spoofer_unsafe_final`` (cumulative totals)
+  to the .sca file for
   cross-run bar charts; tick ``log`` vectors remain for time series.
 
 INI usage:
@@ -110,11 +113,16 @@ class SpoofingAwareGcs:
 
         # NMAC: edge-detection state (see module docstring)
         self._nmac_proximity_pairs_active: set[tuple[int, int]] = set()
+        self._nmac_benign_spoofer_active: set[int] = set()
         self._nmac_serial_inside_unsafe: set[int] = set()
         self.nmac_proximity_count = 0
+        self.nmac_benign_spoofer_count = 0
         self.nmac_spoofer_unsafe_count = 0
+        self.min_benign_spoofer_distance_now_m = -1.0
+        self.min_benign_spoofer_distance_m = float("inf")
         self._spoofer_containment_total = 0
         self._spoofer_containment_hits = 0
+        self._spoofer_host: int | None = None
 
     # ------------------------------------------------------------------
     # Per-transmission callback
@@ -307,6 +315,10 @@ class SpoofingAwareGcs:
             benign: dict[int, np.ndarray] = {}
             for k, v in ground_truth.items():
                 hid = int(k)
+                # Exclude true spoofer host from benign metrics even before
+                # spoofing detection declares the serial.
+                if self._spoofer_host is not None and hid == self._spoofer_host:
+                    continue
                 if hid in self.spoofers:
                     continue
                 benign[hid] = np.asarray(v, dtype=float).ravel()[:3]
@@ -314,6 +326,7 @@ class SpoofingAwareGcs:
         return {
             int(s): np.array(p, dtype=float)
             for s, p in self.rid_positions.items()
+            if (self._spoofer_host is None or int(s) != self._spoofer_host)
             if s not in self.spoofers
         }
 
@@ -322,6 +335,7 @@ class SpoofingAwareGcs:
         sim_time: float,
         unsafe_regions: list[dict],
         ground_truth: dict | None,
+        spoofer_hid: int | None,
     ) -> None:
         """Proximity NMAC (< NMAC_PROXIMITY_M) and spoofer-unsafe ellipsoid NMAC."""
         benign = self._benign_positions_for_nmac(ground_truth)
@@ -344,6 +358,44 @@ class SpoofingAwareGcs:
                             flush=True,
                         )
         self._nmac_proximity_pairs_active = active_pairs
+
+        spoofer_pos: np.ndarray | None = None
+        if spoofer_hid is not None:
+            if ground_truth is not None and len(ground_truth) > 0:
+                gt_pos = ground_truth.get(spoofer_hid)
+                if gt_pos is None:
+                    gt_pos = ground_truth.get(str(spoofer_hid))
+                if gt_pos is not None:
+                    spoofer_pos = np.asarray(gt_pos, dtype=float).ravel()[:3]
+            if spoofer_pos is None:
+                rid_pos = self.rid_positions.get(int(spoofer_hid))
+                if rid_pos is not None:
+                    spoofer_pos = np.asarray(rid_pos, dtype=float).ravel()[:3]
+
+        active_benign_spoofer: set[int] = set()
+        min_dist_now: float | None = None
+        if spoofer_pos is not None:
+            for s, pos in benign.items():
+                d = float(np.linalg.norm(pos - spoofer_pos))
+                if min_dist_now is None or d < min_dist_now:
+                    min_dist_now = d
+                if d < NMAC_PROXIMITY_M:
+                    active_benign_spoofer.add(s)
+                    if s not in self._nmac_benign_spoofer_active:
+                        self.nmac_benign_spoofer_count += 1
+                        print(
+                            f"[NMAC] benign_spoofer serial={s} spoofer={spoofer_hid} "
+                            f"dist_m={d:.2f} t={sim_time:.3f}s "
+                            f"total_benign_spoofer_nmac={self.nmac_benign_spoofer_count}",
+                            flush=True,
+                        )
+        self._nmac_benign_spoofer_active = active_benign_spoofer
+        if min_dist_now is not None:
+            self.min_benign_spoofer_distance_now_m = float(min_dist_now)
+            if min_dist_now < self.min_benign_spoofer_distance_m:
+                self.min_benign_spoofer_distance_m = float(min_dist_now)
+        else:
+            self.min_benign_spoofer_distance_now_m = -1.0
 
         inside_now: set[int] = set()
         for s, pos in benign.items():
@@ -465,6 +517,9 @@ class SpoofingAwareGcs:
     def on_gcs_tick(self, data: dict) -> dict:
         host_ids = list(data.get("host_ids", []))
         sim_time = float(data.get("time", 0.0))
+        if self._spoofer_host is None and host_ids:
+            # Sweep layouts convention: spoofer is last host index.
+            self._spoofer_host = max(int(h) for h in host_ids)
 
         unsafe_regions = []
         for serial in self.spoofers:
@@ -522,6 +577,7 @@ class SpoofingAwareGcs:
             sim_time,
             unsafe_regions,
             data.get("ground_truth_positions"),
+            self._spoofer_host,
         )
 
         commands = {}
@@ -572,7 +628,13 @@ class SpoofingAwareGcs:
                     if self._spoofer_containment_total > 0 else 0.0
                 ),
                 "nmac_proximity_total": float(self.nmac_proximity_count),
+                "nmac_benign_spoofer_total": float(self.nmac_benign_spoofer_count),
                 "nmac_spoofer_unsafe_total": float(self.nmac_spoofer_unsafe_count),
+                "min_benign_spoofer_distance_now_m": float(self.min_benign_spoofer_distance_now_m),
+                "min_benign_spoofer_distance_running_min_m": (
+                    float(self.min_benign_spoofer_distance_m)
+                    if np.isfinite(self.min_benign_spoofer_distance_m) else -1.0
+                ),
             },
         }
 
@@ -581,11 +643,16 @@ class SpoofingAwareGcs:
         return {
             "scalars": {
                 "nmac_proximity_final": float(self.nmac_proximity_count),
+                "nmac_benign_spoofer_final": float(self.nmac_benign_spoofer_count),
                 "nmac_spoofer_unsafe_final": float(self.nmac_spoofer_unsafe_count),
                 "num_spoofers_final": float(len(self.spoofers)),
                 "spoofer_containment_rate_final": (
                     float(self._spoofer_containment_hits) / float(self._spoofer_containment_total)
                     if self._spoofer_containment_total > 0 else 0.0
+                ),
+                "min_benign_spoofer_distance_final_m": (
+                    float(self.min_benign_spoofer_distance_m)
+                    if np.isfinite(self.min_benign_spoofer_distance_m) else -1.0
                 ),
             },
         }

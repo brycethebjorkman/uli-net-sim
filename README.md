@@ -67,6 +67,8 @@ docker compose run --rm uli-net-sim
 
 ### Batch: spoofing sweep + simulations
 
+Use **`./scripts/docker-run.sh …`** so **`pandas`**, **`pyarrow`**, and OMNeT-related paths match the image. If you run **`python3 datagen/run_batch.py` directly on the host**, install **`pip install pandas pyarrow`** first (and use a working OMNeT env for **`scripts/run.sh`**).
+
 ```bash
 # 1) Generate seeded INI bundles (writes under simulations/.../sweeps/generated/)
 ./scripts/docker-run.sh python3 datagen/generate_spoofing_sweep.py \

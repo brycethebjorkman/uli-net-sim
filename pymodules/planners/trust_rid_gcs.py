@@ -5,7 +5,9 @@ is unchanged; unsafe regions are always empty.
 
 NMAC proximity uses ground truth when provided and excludes the spoofer host as
 ``max(host_ids)`` (or optional ``spoofer_host=``), matching typical circle layouts
-where the spoofer is the last host. ``nmac_spoofer_unsafe_*`` stays zero.
+where the spoofer is the last host. ``nmac_spoofer_unsafe_*`` stays zero because
+TrustRid does not publish unsafe regions, but ``nmac_benign_spoofer_*`` still
+captures benign-vs-spoofer proximity events.
 
 INI:
     *.gcs[0].pyClass = "pymodules.planners.trust_rid_gcs.TrustRidGcs"
@@ -38,9 +40,13 @@ class TrustRidGcs:
         self.federate_ids: set[int] = set()
 
         self._nmac_proximity_pairs_active: set[tuple[int, int]] = set()
+        self._nmac_benign_spoofer_active: set[int] = set()
         self._nmac_serial_inside_unsafe: set[int] = set()
         self.nmac_proximity_count = 0
+        self.nmac_benign_spoofer_count = 0
         self.nmac_spoofer_unsafe_count = 0
+        self.min_benign_spoofer_distance_now_m = -1.0
+        self.min_benign_spoofer_distance_m = float("inf")
 
     def on_gcs_reports(self, data: dict) -> dict | None:
         serial = data["serial_number"]
@@ -117,6 +123,44 @@ class TrustRidGcs:
                         )
         self._nmac_proximity_pairs_active = active_pairs
 
+        spoofer_pos: np.ndarray | None = None
+        if spoofer_hid is not None:
+            if ground_truth is not None and len(ground_truth) > 0:
+                gt_pos = ground_truth.get(spoofer_hid)
+                if gt_pos is None:
+                    gt_pos = ground_truth.get(str(spoofer_hid))
+                if gt_pos is not None:
+                    spoofer_pos = np.asarray(gt_pos, dtype=float).ravel()[:3]
+            if spoofer_pos is None:
+                rid_pos = self.rid_positions.get(int(spoofer_hid))
+                if rid_pos is not None:
+                    spoofer_pos = np.asarray(rid_pos, dtype=float).ravel()[:3]
+
+        active_benign_spoofer: set[int] = set()
+        min_dist_now: float | None = None
+        if spoofer_pos is not None:
+            for s, pos in benign.items():
+                d = float(np.linalg.norm(pos - spoofer_pos))
+                if min_dist_now is None or d < min_dist_now:
+                    min_dist_now = d
+                if d < NMAC_PROXIMITY_M:
+                    active_benign_spoofer.add(s)
+                    if s not in self._nmac_benign_spoofer_active:
+                        self.nmac_benign_spoofer_count += 1
+                        print(
+                            f"[NMAC] benign_spoofer serial={s} spoofer={spoofer_hid} "
+                            f"dist_m={d:.2f} t={sim_time:.3f}s "
+                            f"total_benign_spoofer_nmac={self.nmac_benign_spoofer_count}",
+                            flush=True,
+                        )
+        self._nmac_benign_spoofer_active = active_benign_spoofer
+        if min_dist_now is not None:
+            self.min_benign_spoofer_distance_now_m = float(min_dist_now)
+            if min_dist_now < self.min_benign_spoofer_distance_m:
+                self.min_benign_spoofer_distance_m = float(min_dist_now)
+        else:
+            self.min_benign_spoofer_distance_now_m = -1.0
+
         inside_now: set[int] = set()
         for s, pos in benign.items():
             inside = False
@@ -189,7 +233,13 @@ class TrustRidGcs:
                 "has_unsafe_region": 0.0,
                 "num_spoofers": 0.0,
                 "nmac_proximity_total": float(self.nmac_proximity_count),
+                "nmac_benign_spoofer_total": float(self.nmac_benign_spoofer_count),
                 "nmac_spoofer_unsafe_total": float(self.nmac_spoofer_unsafe_count),
+                "min_benign_spoofer_distance_now_m": float(self.min_benign_spoofer_distance_now_m),
+                "min_benign_spoofer_distance_running_min_m": (
+                    float(self.min_benign_spoofer_distance_m)
+                    if np.isfinite(self.min_benign_spoofer_distance_m) else -1.0
+                ),
             },
         }
 
@@ -197,6 +247,11 @@ class TrustRidGcs:
         return {
             "scalars": {
                 "nmac_proximity_final": float(self.nmac_proximity_count),
+                "nmac_benign_spoofer_final": float(self.nmac_benign_spoofer_count),
                 "nmac_spoofer_unsafe_final": float(self.nmac_spoofer_unsafe_count),
+                "min_benign_spoofer_distance_final_m": (
+                    float(self.min_benign_spoofer_distance_m)
+                    if np.isfinite(self.min_benign_spoofer_distance_m) else -1.0
+                ),
             },
         }

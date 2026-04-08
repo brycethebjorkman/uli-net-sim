@@ -20,6 +20,7 @@ Usage:
 """
 
 import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -30,6 +31,45 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJ_DIR = SCRIPT_DIR.parent
 RUN_SH = PROJ_DIR / "scripts" / "run.sh"
 VEC2PQ = SCRIPT_DIR / "vec2parquet.py"
+
+# vec2parquet events_to_parquet needs both (see vec2parquet.events_to_parquet)
+_VEC2PQ_DEPS_CHECK = "import pyarrow, pandas"
+
+
+def pick_vec2parquet_python(proj_dir: Path | None = None) -> str:
+    """Interpreter for vec2parquet: ULI_PYTHON, else usable .venv, else sys.executable.
+
+    Skips broken .venv (wrong OS/arch — 'Exec format error' / 'cannot execute').
+    """
+    proj_dir = proj_dir or PROJ_DIR
+    candidates: list[str] = []
+    uli = os.environ.get("ULI_PYTHON", "").strip()
+    if uli:
+        candidates.append(uli)
+    vpy = proj_dir / ".venv" / "bin" / "python3"
+    if vpy.is_file():
+        candidates.append(str(vpy))
+    candidates.append(sys.executable)
+    seen: set[str] = set()
+    for exe in candidates:
+        if exe in seen:
+            continue
+        seen.add(exe)
+        try:
+            r = subprocess.run(
+                [exe, "-c", _VEC2PQ_DEPS_CHECK],
+                capture_output=True,
+                timeout=60,
+            )
+            if r.returncode == 0:
+                return exe
+        except OSError:
+            continue
+    raise RuntimeError(
+        "No Python interpreter has pyarrow + pandas (required for datagen/vec2parquet). "
+        "On the host:  python3 -m pip install pandas pyarrow\n"
+        "In Docker:     ./scripts/docker-run.sh python3 datagen/run_batch.py …"
+    )
 
 
 def scenario_hash(scenario_path: Path) -> str:
@@ -118,7 +158,7 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
             return []
 
     hash_prefix = scenario_hash(scenario_path)
-    python = venv_python or sys.executable
+    python = venv_python if venv_python else pick_vec2parquet_python(PROJ_DIR)
     produced = []
 
     for config in configs:

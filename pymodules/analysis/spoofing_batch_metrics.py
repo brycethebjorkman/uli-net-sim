@@ -53,8 +53,13 @@ def summarize_sweep_directory(
     """
     Pair ``*_Aware.sca`` / ``*_TrustRid.sca`` by (hash, tag prefix) and emit rows.
 
-    Columns: hash, tag, nmac_proximity_aware, nmac_proximity_trust_rid,
-    nmac_spoofer_unsafe_aware, nmac_spoofer_unsafe_trust_rid, aware_sca, trust_sca
+    Columns include:
+      - nmac_proximity_*: benign-vs-benign proximity NMAC edge counts
+      - nmac_benign_spoofer_*: benign-vs-spoofer proximity NMAC edge counts
+      - nmac_spoofer_unsafe_*: benign entries into published unsafe region
+      - min_benign_spoofer_distance_*: minimum benign-to-spoofer distance (m)
+      - spoofer_containment_rate_*: fraction of ticks where unsafe region
+        contains true spoofer (available in Aware runs)
     """
     root = root.resolve()
     pairs: dict[tuple[str, str], dict[str, Path]] = {}
@@ -82,8 +87,14 @@ def summarize_sweep_directory(
             "tag": tag_base,
             "nmac_proximity_aware": sa.get("nmac_proximity_final"),
             "nmac_proximity_trust_rid": st.get("nmac_proximity_final"),
+            "nmac_benign_spoofer_aware": sa.get("nmac_benign_spoofer_final"),
+            "nmac_benign_spoofer_trust_rid": st.get("nmac_benign_spoofer_final"),
             "nmac_spoofer_unsafe_aware": sa.get("nmac_spoofer_unsafe_final"),
             "nmac_spoofer_unsafe_trust_rid": st.get("nmac_spoofer_unsafe_final"),
+            "min_benign_spoofer_distance_aware_m": sa.get("min_benign_spoofer_distance_final_m"),
+            "min_benign_spoofer_distance_trust_rid_m": st.get("min_benign_spoofer_distance_final_m"),
+            "spoofer_containment_rate_aware": sa.get("spoofer_containment_rate_final"),
+            "spoofer_containment_rate_trust_rid": st.get("spoofer_containment_rate_final"),
             "aware_sca": str(pa) if pa else None,
             "trust_rid_sca": str(pt) if pt else None,
         })

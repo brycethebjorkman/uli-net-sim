@@ -161,11 +161,23 @@ GCS_VEC_DIR="$RUN_ROOT/gcs_vectors"
 RUNTIME_CSV="$RUN_ROOT/run_timing.csv"
 OVERALL_START_EPOCH="$(date +%s)"
 
+if [[ "$PARALLEL" == "0" ]]; then
+  if command -v nproc >/dev/null 2>&1; then
+    PARALLEL="$(nproc)"
+  else
+    PARALLEL="4"
+  fi
+fi
+if ! [[ "$PARALLEL" =~ ^[0-9]+$ ]] || (( PARALLEL < 1 )); then
+  echo "Invalid --parallel value: $PARALLEL" >&2
+  exit 2
+fi
+
 echo "== Config =="
 echo "Scenarios:     ${SCENARIOS[*]}"
 echo "Seeds:         ${SEEDS[*]}"
 echo "Run root:      $RUN_ROOT"
-echo "Parallel:      $PARALLEL"
+echo "Parallel jobs: $PARALLEL"
 
 if [[ "$SKIP_BUILD" == "0" ]]; then
   echo "== Building Docker image: $IMAGE =="
@@ -185,6 +197,29 @@ if [[ "$DO_CLEAN" == "1" ]]; then
   rm -f "$SUMMARY_CSV" || true
   rm -f "$GCS_VEC_DIR"/*.csv || true
 fi
+
+run_one() {
+  local scenario="$1"
+  local seed="$2"
+  local scen_tag="$3"
+  local scen_dir="$4"
+  local aware_cfg="$5"
+  local trust_cfg="$6"
+  local run_start_epoch
+  local run_elapsed
+  local RUN_CMD
+
+  echo "== Running $scen_tag comparison =="
+  run_start_epoch="$(date +%s)"
+  RUN_CMD=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$aware_cfg" "$trust_cfg" --parallel 1)
+  if [[ "$KEEP_VEC" == "1" ]]; then
+    RUN_CMD+=(--keep-vec)
+  fi
+  "${RUN_CMD[@]}"
+  run_elapsed=$(( $(date +%s) - run_start_epoch ))
+  echo "$scenario,$seed,$scen_tag,$run_elapsed" >> "$RUNTIME_CSV"
+  echo "== Completed $scen_tag in ${run_elapsed}s =="
+}
 
 for scenario in "${SCENARIOS[@]}"; do
   scen_slug="$(printf '%s' "$scenario" | sed 's/^Scenario_//' | tr '[:upper:]' '[:lower:]')"
@@ -234,18 +269,14 @@ PY
       rm -rf "$scen_dir"/results || true
     fi
 
-    echo "== Running $scen_tag comparison =="
-    run_start_epoch="$(date +%s)"
-    RUN_CMD=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$aware_cfg" "$trust_cfg" --parallel "$PARALLEL")
-    if [[ "$KEEP_VEC" == "1" ]]; then
-      RUN_CMD+=(--keep-vec)
-    fi
-    "${RUN_CMD[@]}"
-    run_elapsed=$(( $(date +%s) - run_start_epoch ))
-    echo "$scenario,$seed,$scen_tag,$run_elapsed" >> "$RUNTIME_CSV"
-    echo "== Completed $scen_tag in ${run_elapsed}s =="
+    run_one "$scenario" "$seed" "$scen_tag" "$scen_dir" "$aware_cfg" "$trust_cfg" &
+    while (( $(jobs -pr | wc -l) >= PARALLEL )); do
+      wait -n
+    done
   done
 done
+
+wait
 
 echo "== Writing combined scalar summary CSV =="
 ./scripts/docker-run.sh python3 -m pymodules.analysis.spoofing_batch_metrics \

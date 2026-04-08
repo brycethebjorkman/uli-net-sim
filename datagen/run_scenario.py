@@ -202,7 +202,7 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
 
         # Run simulation from scenario directory (relative paths in ini)
         result = _run_with_heartbeat(
-            [str(RUN_SH), "-f", "omnetpp.ini", "-c", config,
+            [str(RUN_SH), "-f", str(ini_file), "-c", config,
              "-r", str(results_dir), "-q"],
             cwd=str(scenario_path),
             heartbeat_label=f"{scenario_name}:{config}:sim",

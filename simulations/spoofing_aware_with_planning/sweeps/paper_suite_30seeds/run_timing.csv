@@ -1,0 +1,17 @@
+scenario,seed,scenario_tag,elapsed_seconds
+Scenario_Corners_4x1,2,Scenario_Corners_4x1_s00002,157
+Scenario_Corners_4x1,3,Scenario_Corners_4x1_s00003,174
+Scenario_Corners_4x1,1,Scenario_Corners_4x1_s00001,174
+Scenario_Corners_4x1,0,Scenario_Corners_4x1_s00000,174
+Scenario_Hub_4x1,0,Scenario_Hub_4x1_s00000,137
+Scenario_Hub_4x1,2,Scenario_Hub_4x1_s00002,133
+Scenario_Hub_4x1,3,Scenario_Hub_4x1_s00003,138
+Scenario_Hub_4x1,1,Scenario_Hub_4x1_s00001,138
+Scenario_Circle_8x1,0,Scenario_Circle_8x1_s00000,283
+Scenario_Circle_8x1,3,Scenario_Circle_8x1_s00003,279
+Scenario_Circle_8x1,2,Scenario_Circle_8x1_s00002,282
+Scenario_Circle_8x1,1,Scenario_Circle_8x1_s00001,289
+Scenario_Hub_8x1,0,Scenario_Hub_8x1_s00000,285
+Scenario_Hub_8x1,2,Scenario_Hub_8x1_s00002,283
+Scenario_Hub_8x1,3,Scenario_Hub_8x1_s00003,284
+Scenario_Hub_8x1,1,Scenario_Hub_8x1_s00001,296

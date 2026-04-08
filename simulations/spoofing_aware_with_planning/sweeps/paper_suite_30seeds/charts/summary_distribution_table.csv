@@ -1,0 +1,77 @@
+scenario,variant,metric_key,metric_label,n,median,q1,q3,iqr,median_ci95_lo,median_ci95_hi
+Scenario_Circle_8x1,SpoofingAware,total_nmac_real,Total NMACs (real-position),4,25.0,24.75,25.25,0.5,24.0,26.0
+Scenario_Circle_8x1,TrustRID,total_nmac_real,Total NMACs (real-position),4,32.0,31.75,32.0,0.25,31.0,32.0
+Scenario_Circle_8x1,SpoofingAware,benign_benign_nmac,Benign-Benign NMACs,4,22.0,22.0,22.25,0.25,22.0,23.0
+Scenario_Circle_8x1,TrustRID,benign_benign_nmac,Benign-Benign NMACs,4,28.0,28.0,28.0,0.0,28.0,28.0
+Scenario_Circle_8x1,SpoofingAware,benign_spoofer_nmac,Benign-Spoofer NMACs,4,3.0,2.75,3.0,0.25,2.0,3.0
+Scenario_Circle_8x1,TrustRID,benign_spoofer_nmac,Benign-Spoofer NMACs,4,4.0,3.75,4.0,0.25,3.0,4.0
+Scenario_Circle_8x1,SpoofingAware,min_distance_true_spoofer_m,Min distance to true spoofer (m),4,31.144836213391,30.871610619117998,32.715170741847,1.8435601227289986,30.159238159387,37.318870004127
+Scenario_Circle_8x1,TrustRID,min_distance_true_spoofer_m,Min distance to true spoofer (m),4,3.8976771051164003,3.7777426448284004,4.0203553716257,0.24261272679729995,3.7776960545152,4.0286333806028
+Scenario_Circle_8x1,SpoofingAware,gcs_reports_mean_ms,GCS report callback mean time (ms),4,13.057596777087,12.59064385401425,13.570719780752,0.9800759267377508,12.501089165936,13.798784710607
+Scenario_Circle_8x1,TrustRID,gcs_reports_mean_ms,GCS report callback mean time (ms),4,0.0094534698340678,0.009335755133132876,0.009531865989231225,0.00019611085609834954,0.0090751814368729,0.0096744840481767
+Scenario_Circle_8x1,SpoofingAware,gcs_tick_mean_ms,GCS tick callback mean time (ms),4,1.84190070955085,1.837865030393025,1.850061386358,0.012196355964974925,1.8296773638576,1.8706240458414
+Scenario_Circle_8x1,TrustRID,gcs_tick_mean_ms,GCS tick callback mean time (ms),4,0.19117387244478,0.1882045815000325,0.19390199042391,0.005697408923877489,0.18726377747953,0.19411927554756
+Scenario_Circle_8x1,SpoofingAware,gcs_compute_total_s,Total GCS compute time (s),4,2.1307800770737,2.090037984075,2.1744619105011003,0.08442392642610042,2.0623983182013,2.2109207976609
+Scenario_Circle_8x1,TrustRID,gcs_compute_total_s,Total GCS compute time (s),4,0.07750000804662699,0.0762878253590315,0.0786044641863555,0.002316638827323997,0.075876555405557,0.078692554496229
+Scenario_Circle_8x1,SpoofingAware,chance_constraint_violations,SpoofingAware: chance-constraint violations,4,3.5,2.25,4.0,1.75,0.0,4.0
+Scenario_Circle_8x1,SpoofingAware,spoofer_containment_percent,SpoofingAware: spoofer containment percent,4,0.64871794871795,0.605128205128205,0.6673076923076949,0.062179487179489956,0.4974358974359,0.7
+Scenario_Circle_8x1,SpoofingAware,detection_latency_s,SpoofingAware: detection latency (s),4,1.999999973131,1.999999973131,1.99999997313125,2.5002222514558525e-13,1.999999973131,1.999999973132
+Scenario_Circle_8x1,SpoofingAware,localization_mae_m,SpoofingAware: localization MAE (m),4,60.943869806121,57.2597616894005,64.837498586567,7.577736897166496,55.514679379601,67.211142887543
+Scenario_Circle_8x1,SpoofingAware,localization_rmse_m,SpoofingAware: localization RMSE (m),4,86.613871067038,82.85553940155076,88.60306620356926,5.747526802018498,75.06165659691,91.089539421342
+Scenario_Corners_4x1,SpoofingAware,total_nmac_real,Total NMACs (real-position),4,5.0,5.0,5.0,0.0,5.0,5.0
+Scenario_Corners_4x1,TrustRID,total_nmac_real,Total NMACs (real-position),4,8.0,7.75,8.0,0.25,7.0,8.0
+Scenario_Corners_4x1,SpoofingAware,benign_benign_nmac,Benign-Benign NMACs,4,5.0,4.75,5.0,0.25,4.0,5.0
+Scenario_Corners_4x1,TrustRID,benign_benign_nmac,Benign-Benign NMACs,4,6.0,6.0,6.0,0.0,6.0,6.0
+Scenario_Corners_4x1,SpoofingAware,benign_spoofer_nmac,Benign-Spoofer NMACs,4,0.0,0.0,0.25,0.25,0.0,1.0
+Scenario_Corners_4x1,TrustRID,benign_spoofer_nmac,Benign-Spoofer NMACs,4,2.0,1.75,2.0,0.25,1.0,2.0
+Scenario_Corners_4x1,SpoofingAware,min_distance_true_spoofer_m,Min distance to true spoofer (m),4,58.96149470089949,47.47430387496825,58.96187647493825,11.487572599970001,13.013810094774,58.961943099455
+Scenario_Corners_4x1,TrustRID,min_distance_true_spoofer_m,Min distance to true spoofer (m),4,12.1932151580355,12.193023454896501,12.19337275493425,0.000349300037749245,12.192560212976,12.193733678134
+Scenario_Corners_4x1,SpoofingAware,gcs_reports_mean_ms,GCS report callback mean time (ms),4,11.440331926748499,11.39201327280825,11.6334942911435,0.24148101833525004,11.302788061305,12.157250634011
+Scenario_Corners_4x1,TrustRID,gcs_reports_mean_ms,GCS report callback mean time (ms),4,0.00872012262917915,0.00863695807460325,0.00887531743226745,0.0002383593576641991,0.0086128532599944,0.0091155129924135
+Scenario_Corners_4x1,SpoofingAware,gcs_tick_mean_ms,GCS tick callback mean time (ms),4,1.273815582972,1.26817875250705,1.2812852335628,0.013106481055749963,1.2681384128518,1.2868240335956
+Scenario_Corners_4x1,TrustRID,gcs_tick_mean_ms,GCS tick callback mean time (ms),4,0.074108794797212,0.0727207137970255,0.076327133574523,0.0036064197774975104,0.070405623409897,0.081132997293025
+Scenario_Corners_4x1,SpoofingAware,gcs_compute_total_s,Total GCS compute time (s),4,1.703047120478,1.697630431735875,1.7144556909334,0.016825259197524867,1.6827453235164,1.7473164442927
+Scenario_Corners_4x1,TrustRID,gcs_compute_total_s,Total GCS compute time (s),4,0.0305678509175775,0.02999949664808775,0.031471637077629504,0.0014721404295417531,0.029057986102998,0.033419443294406
+Scenario_Corners_4x1,SpoofingAware,chance_constraint_violations,SpoofingAware: chance-constraint violations,4,4.0,3.5,4.0,0.5,2.0,4.0
+Scenario_Corners_4x1,SpoofingAware,spoofer_containment_percent,SpoofingAware: spoofer containment percent,4,0.76025641025641,0.7070512820512851,0.7756410256410226,0.06858974358973746,0.58974358974359,0.77948717948718
+Scenario_Corners_4x1,SpoofingAware,detection_latency_s,SpoofingAware: detection latency (s),4,1.9999999631205,1.99999996312,1.999999963121,9.99866855977416e-13,1.99999996312,1.999999963121
+Scenario_Corners_4x1,SpoofingAware,localization_mae_m,SpoofingAware: localization MAE (m),4,47.760741800645,47.302203826212,52.90491964004825,5.602715813836248,47.254218381945,67.009824679226
+Scenario_Corners_4x1,SpoofingAware,localization_rmse_m,SpoofingAware: localization RMSE (m),4,63.6732785283865,62.883120773384,70.68733238529025,7.804211611906247,62.698230774596,89.543910689782
+Scenario_Hub_4x1,SpoofingAware,total_nmac_real,Total NMACs (real-position),4,2.0,2.0,2.0,0.0,2.0,2.0
+Scenario_Hub_4x1,TrustRID,total_nmac_real,Total NMACs (real-position),4,4.0,4.0,4.0,0.0,4.0,4.0
+Scenario_Hub_4x1,SpoofingAware,benign_benign_nmac,Benign-Benign NMACs,4,1.0,1.0,1.0,0.0,1.0,1.0
+Scenario_Hub_4x1,TrustRID,benign_benign_nmac,Benign-Benign NMACs,4,2.0,2.0,2.0,0.0,2.0,2.0
+Scenario_Hub_4x1,SpoofingAware,benign_spoofer_nmac,Benign-Spoofer NMACs,4,1.0,1.0,1.0,0.0,1.0,1.0
+Scenario_Hub_4x1,TrustRID,benign_spoofer_nmac,Benign-Spoofer NMACs,4,2.0,2.0,2.0,0.0,2.0,2.0
+Scenario_Hub_4x1,SpoofingAware,min_distance_true_spoofer_m,Min distance to true spoofer (m),4,35.9579891906125,35.43843443924725,35.9582220616225,0.5197876223752473,33.880428269278,35.958262590526
+Scenario_Hub_4x1,TrustRID,min_distance_true_spoofer_m,Min distance to true spoofer (m),4,18.524324110817,18.5242388887755,18.52439344022,0.00015455144449916247,18.524031709713,18.524552941367
+Scenario_Hub_4x1,SpoofingAware,gcs_reports_mean_ms,GCS report callback mean time (ms),4,13.1315467278325,13.0310482326745,13.1661241633945,0.13507593071999935,12.822563639812,13.176845577469
+Scenario_Hub_4x1,TrustRID,gcs_reports_mean_ms,GCS report callback mean time (ms),4,0.008545560582030199,0.008484085935346724,0.0086243399569104,0.00014025402156367557,0.0084666916947873,0.00869364838206
+Scenario_Hub_4x1,SpoofingAware,gcs_tick_mean_ms,GCS tick callback mean time (ms),4,1.30046897296175,1.2926030525705001,1.3039228714964,0.011319818925899838,1.2774962000549,1.3057936584422
+Scenario_Hub_4x1,TrustRID,gcs_tick_mean_ms,GCS tick callback mean time (ms),4,0.072601674279819,0.071729172971876,0.07311529382908075,0.0013861208572047423,0.070314349917074,0.073453471607839
+Scenario_Hub_4x1,SpoofingAware,gcs_compute_total_s,Total GCS compute time (s),4,2.2422035564668503,2.2265661042183753,2.2512939488515,0.024727844633124718,2.203196067363,2.2550228061154
+Scenario_Hub_4x1,TrustRID,gcs_compute_total_s,Total GCS compute time (s),4,0.035914182662964006,0.03547779633663625,0.036170488689094754,0.0006926923524585016,0.03478382434696,0.03632421977818
+Scenario_Hub_4x1,SpoofingAware,chance_constraint_violations,SpoofingAware: chance-constraint violations,4,11.0,9.0,11.75,2.75,3.0,14.0
+Scenario_Hub_4x1,SpoofingAware,spoofer_containment_percent,SpoofingAware: spoofer containment percent,4,0.404255319148935,0.37340425531915,0.4090425531914875,0.03563829787233752,0.2936170212766,0.41063829787234
+Scenario_Hub_4x1,SpoofingAware,detection_latency_s,SpoofingAware: detection latency (s),4,1.99999998261,1.99999998261,1.9999999826565,4.6500137074190206e-11,1.99999998261,1.999999982796
+Scenario_Hub_4x1,SpoofingAware,localization_mae_m,SpoofingAware: localization MAE (m),4,67.19257944662601,67.190851960716,67.958596373762,0.7677444130460032,67.186682984679,70.255633673477
+Scenario_Hub_4x1,SpoofingAware,localization_rmse_m,SpoofingAware: localization RMSE (m),4,84.9279137303685,84.68824259890874,84.92945162131625,0.24120902240750297,83.973531302883,84.929763195806
+Scenario_Hub_8x1,SpoofingAware,total_nmac_real,Total NMACs (real-position),4,8.5,8.0,9.25,1.25,8.0,10.0
+Scenario_Hub_8x1,TrustRID,total_nmac_real,Total NMACs (real-position),4,15.0,15.0,15.0,0.0,15.0,15.0
+Scenario_Hub_8x1,SpoofingAware,benign_benign_nmac,Benign-Benign NMACs,4,8.5,8.0,9.25,1.25,8.0,10.0
+Scenario_Hub_8x1,TrustRID,benign_benign_nmac,Benign-Benign NMACs,4,12.0,12.0,12.0,0.0,12.0,12.0
+Scenario_Hub_8x1,SpoofingAware,benign_spoofer_nmac,Benign-Spoofer NMACs,4,0.0,0.0,0.0,0.0,0.0,0.0
+Scenario_Hub_8x1,TrustRID,benign_spoofer_nmac,Benign-Spoofer NMACs,4,3.0,3.0,3.0,0.0,3.0,3.0
+Scenario_Hub_8x1,SpoofingAware,min_distance_true_spoofer_m,Min distance to true spoofer (m),4,59.969933169276,59.266233023600996,60.56043005379975,1.2941970301987524,58.28346131514,61.203591978807
+Scenario_Hub_8x1,TrustRID,min_distance_true_spoofer_m,Min distance to true spoofer (m),4,18.524801736991,18.5200591497665,18.524877094641248,0.004817944874748292,18.506053595495,18.52488096019
+Scenario_Hub_8x1,SpoofingAware,gcs_reports_mean_ms,GCS report callback mean time (ms),4,11.2037250658015,11.0743195668515,11.307902236738,0.23358266988650023,10.844320310132,11.462216509417
+Scenario_Hub_8x1,TrustRID,gcs_reports_mean_ms,GCS report callback mean time (ms),4,0.0094744184660533,0.009365790295608651,0.009580790656544824,0.00021500036093617322,0.0092814952949993,0.0096583177172948
+Scenario_Hub_8x1,SpoofingAware,gcs_tick_mean_ms,GCS tick callback mean time (ms),4,1.84794403030535,1.8394716341087252,1.857957105191075,0.01848547108234988,1.8178966109796,1.8841541643875
+Scenario_Hub_8x1,TrustRID,gcs_tick_mean_ms,GCS tick callback mean time (ms),4,0.18701001827139502,0.1843268949111625,0.18907062136956249,0.004743726458399988,0.18232607205088,0.18920388344365
+Scenario_Hub_8x1,SpoofingAware,gcs_compute_total_s,Total GCS compute time (s),4,2.3041261378675504,2.2717140156310003,2.3342836035881,0.06256958795709977,2.2540122400969,2.3452214095742
+Scenario_Hub_8x1,TrustRID,gcs_compute_total_s,Total GCS compute time (s),4,0.0909752445295455,0.0896757596638055,0.09196361713111399,0.002287857467308488,0.088700144551694,0.092005895450711
+Scenario_Hub_8x1,SpoofingAware,chance_constraint_violations,SpoofingAware: chance-constraint violations,4,8.5,7.75,9.5,1.75,7.0,11.0
+Scenario_Hub_8x1,SpoofingAware,spoofer_containment_percent,SpoofingAware: spoofer containment percent,4,0.58404255319149,0.485106382978725,0.675531914893615,0.19042553191488998,0.39574468085106,0.74255319148936
+Scenario_Hub_8x1,SpoofingAware,detection_latency_s,SpoofingAware: detection latency (s),4,1.999999969172,1.999999969172,1.999999969236,6.399991647754177e-11,1.999999969172,1.999999969428
+Scenario_Hub_8x1,SpoofingAware,localization_mae_m,SpoofingAware: localization MAE (m),4,65.3776422218275,59.63744545985575,72.24587584989774,12.608430390041995,45.02009482693,90.247337081119
+Scenario_Hub_8x1,SpoofingAware,localization_rmse_m,SpoofingAware: localization RMSE (m),4,86.112202369965,75.35908143027825,94.47515355346326,19.116072123185006,50.947395256806,111.71633045837

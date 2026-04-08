@@ -1,16 +1,16 @@
 version 3
-run Scenario_Hub_4x1_s00002_Aware-0-20260408-08:44:07-29
+run Scenario_Hub_4x1_s00002_Aware-0-20260408-09:53:56-72
 attr configname Scenario_Hub_4x1_s00002_Aware
-attr datetime 20260408-08:44:07
-attr datetimef 20260408-084407
+attr datetime 20260408-09:53:56
+attr datetimef 20260408-095356
 attr experiment Scenario_Hub_4x1_s00002_Aware
-attr inifile omnetpp.ini
+attr inifile /usr/uli-net-sim/uav_rid/simulations/spoofing_aware_with_planning/sweeps/paper_suite_30seeds/generated/hub_4x1_s00002/omnetpp.ini
 attr iterationvars ""
 attr iterationvarsd ""
 attr iterationvarsf ""
 attr measurement ""
 attr network uav_rid.rid_network.BasicUav
-attr processid 29
+attr processid 72
 attr repetition 0
 attr replication #0
 attr resultdir /usr/uli-net-sim/uav_rid/simulations/spoofing_aware_with_planning/sweeps/paper_suite_30seeds/generated/hub_4x1_s00002/results
@@ -101,10 +101,19 @@ par BasicUav.gcs[0] tickInterval 0.25s
 attr unit s
 scalar BasicUav.gcs[0] nmac_proximity_final 1
 scalar BasicUav.gcs[0] nmac_benign_spoofer_final 1
-scalar BasicUav.gcs[0] nmac_spoofer_unsafe_final 14
+scalar BasicUav.gcs[0] nmac_spoofer_unsafe_final 3
 scalar BasicUav.gcs[0] num_spoofers_final 1
-scalar BasicUav.gcs[0] spoofer_containment_rate_final 0.4936170212766
+scalar BasicUav.gcs[0] spoofer_containment_rate_final 0.2936170212766
 scalar BasicUav.gcs[0] min_benign_spoofer_distance_final_m 33.880428269278
+scalar BasicUav.gcs[0] gcs_reports_mean_ms_final 13.176845577469
+scalar BasicUav.gcs[0] gcs_tick_mean_ms_final 1.3057936584422
+scalar BasicUav.gcs[0] gcs_compute_total_s_final 2.2343561165035
+scalar BasicUav.gcs[0] num_hosts_observed_final 5
+scalar BasicUav.gcs[0] first_detection_time_s_final 2.51004669529
+scalar BasicUav.gcs[0] detection_latency_s_final 1.999999982796
+scalar BasicUav.gcs[0] localization_mae_m_final 70.255633673477
+scalar BasicUav.gcs[0] localization_rmse_m_final 83.973531302883
+scalar BasicUav.gcs[0] localization_samples_final 470
 par BasicUav.host[0].radioIn[0].channel typename "\"ned.IdealChannel\""
 par BasicUav.host[0].mobility typename "\"uav_rid.mobility.MultirotorMobility\""
 par BasicUav.host[0].mobility subjectModule "\"^\""
@@ -391,7 +400,7 @@ bin	384	121
 bin	385	0
 statistic BasicUav.host[0].wlan[0].mac.dcf.channelAccess.pendingQueue flowQueueingTime:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -1101,12 +1110,12 @@ attr source transmissionStateChanged
 attr title "Radio transmission state, count"
 statistic BasicUav.host[0].wlan[0].radio minSnir:histogram
 field count 122
-field mean 1734.1152882263
-field stddev 1388.9340376441
+field mean 1734.1152882274
+field stddev 1388.9340376434
 field min 311.30585897428
 field max 5280.2194943767
-field sum 211562.0651636
-field sqrsum 600298680.68101
+field sum 211562.06516374
+field sqrsum 600298680.68127
 attr recordingmode histogram
 attr source minimumSnir(packetSentToUpper)
 attr title "Min SNIR"
@@ -1243,7 +1252,7 @@ bin	0.48	0
 bin	0.5	0
 statistic BasicUav.host[0].wlan[0].radio bitErrorRate:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -1257,7 +1266,7 @@ bin	0	0
 bin	1	0
 statistic BasicUav.host[0].wlan[0].radio symbolErrorRate:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -1880,7 +1889,7 @@ bin	384	121
 bin	385	0
 statistic BasicUav.host[1].wlan[0].mac.dcf.channelAccess.pendingQueue flowQueueingTime:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -2590,12 +2599,12 @@ attr source transmissionStateChanged
 attr title "Radio transmission state, count"
 statistic BasicUav.host[1].wlan[0].radio minSnir:histogram
 field count 122
-field mean 5612.4472402848
-field stddev 2702.8055792436
+field mean 5949.9433095443
+field stddev 2304.6027462044
 field min 2.2029761709216
 field max 12557.200197867
-field sum 684718.56331475
-field sqrsum 4726870928.9497
+field sum 725893.0837644
+field sqrsum 4961677149.1438
 attr recordingmode histogram
 attr source minimumSnir(packetSentToUpper)
 attr title "Min SNIR"
@@ -2607,46 +2616,46 @@ bin	600	0
 bin	800	0
 bin	1000	0
 bin	1200	0
-bin	1400	1
-bin	1600	2
-bin	1800	5
-bin	2000	5
-bin	2200	3
-bin	2400	3
-bin	2600	3
-bin	2800	4
-bin	3000	3
-bin	3200	5
-bin	3400	2
+bin	1400	0
+bin	1600	0
+bin	1800	3
+bin	2000	2
+bin	2200	1
+bin	2400	1
+bin	2600	1
+bin	2800	1
+bin	3000	2
+bin	3200	3
+bin	3400	3
 bin	3600	3
-bin	3800	1
-bin	4000	2
+bin	3800	5
+bin	4000	1
 bin	4200	2
-bin	4400	2
-bin	4600	3
-bin	4800	3
-bin	5000	3
-bin	5200	1
-bin	5400	3
-bin	5600	4
-bin	5800	2
-bin	6000	0
-bin	6200	1
-bin	6400	2
+bin	4400	1
+bin	4600	2
+bin	4800	4
+bin	5000	6
+bin	5200	4
+bin	5400	5
+bin	5600	8
+bin	5800	6
+bin	6000	8
+bin	6200	5
+bin	6400	5
 bin	6600	4
-bin	6800	6
-bin	7000	9
-bin	7200	5
-bin	7400	6
-bin	7600	2
-bin	7800	2
+bin	6800	5
+bin	7000	3
+bin	7200	4
+bin	7400	3
+bin	7600	1
+bin	7800	0
 bin	8000	4
 bin	8200	0
 bin	8400	1
 bin	8600	0
-bin	8800	3
-bin	9000	0
-bin	9200	2
+bin	8800	1
+bin	9000	1
+bin	9200	3
 bin	9400	1
 bin	9600	1
 bin	9800	0
@@ -2697,7 +2706,7 @@ bin	1	1
 bin	2	0
 statistic BasicUav.host[1].wlan[0].radio bitErrorRate:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -2711,7 +2720,7 @@ bin	0	0
 bin	1	0
 statistic BasicUav.host[1].wlan[0].radio symbolErrorRate:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -3322,7 +3331,7 @@ bin	384	121
 bin	385	0
 statistic BasicUav.host[2].wlan[0].mac.dcf.channelAccess.pendingQueue flowQueueingTime:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -4033,11 +4042,11 @@ attr title "Radio transmission state, count"
 statistic BasicUav.host[2].wlan[0].radio minSnir:histogram
 field count 122
 field mean 2460.0480551722
-field stddev 1330.7431191622
+field stddev 1330.7431191623
 field min 469.84924771297
 field max 5666.3900560064
-field sum 300125.86273101
-field sqrsum 952600192.07123
+field sum 300125.862731
+field sqrsum 952600192.07119
 attr recordingmode histogram
 attr source minimumSnir(packetSentToUpper)
 attr title "Min SNIR"
@@ -4178,7 +4187,7 @@ bin	0.48	0
 bin	0.5	0
 statistic BasicUav.host[2].wlan[0].radio bitErrorRate:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -4192,7 +4201,7 @@ bin	0	0
 bin	1	0
 statistic BasicUav.host[2].wlan[0].radio symbolErrorRate:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -4810,7 +4819,7 @@ bin	384	121
 bin	385	0
 statistic BasicUav.host[3].wlan[0].mac.dcf.channelAccess.pendingQueue flowQueueingTime:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -5634,7 +5643,7 @@ bin	1	1
 bin	2	0
 statistic BasicUav.host[3].wlan[0].radio bitErrorRate:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -5648,7 +5657,7 @@ bin	0	0
 bin	1	0
 statistic BasicUav.host[3].wlan[0].radio symbolErrorRate:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -6263,7 +6272,7 @@ bin	384	120
 bin	385	0
 statistic BasicUav.host[4].wlan[0].mac.dcf.channelAccess.pendingQueue flowQueueingTime:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -6973,12 +6982,12 @@ attr source transmissionStateChanged
 attr title "Radio transmission state, count"
 statistic BasicUav.host[4].wlan[0].radio minSnir:histogram
 field count 122
-field mean 50.002114932255
-field stddev 452.3288874839
-field min 0.17105151790094
+field mean 50.085855391455
+field stddev 452.31968505904
+field min 0.18410417085777
 field max 4884.583107915
-field sum 6100.2580217352
-field sqrsum 25061797.919463
+field sum 6110.4743577575
+field sqrsum 25061813.131577
 attr recordingmode histogram
 attr source minimumSnir(packetSentToUpper)
 attr title "Min SNIR"
@@ -7063,7 +7072,7 @@ bin	1	120
 bin	2	0
 statistic BasicUav.host[4].wlan[0].radio bitErrorRate:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan
@@ -7077,7 +7086,7 @@ bin	0	0
 bin	1	0
 statistic BasicUav.host[4].wlan[0].radio symbolErrorRate:histogram
 field count 0
-field mean nan
+field mean -nan
 field stddev nan
 field min nan
 field max nan

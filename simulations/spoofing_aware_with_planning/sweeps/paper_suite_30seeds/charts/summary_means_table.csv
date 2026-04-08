@@ -1,0 +1,7 @@
+metric,spoofing_aware_median,spoofing_aware_q1,spoofing_aware_q3,trust_rid_median,trust_rid_q1,trust_rid_q3
+Total NMACs (real-position),6.5,4.25,13.5,11.5,6.25,19.0
+Benign-Benign NMACs,6.5,3.25,13.0,9.0,5.0,16.0
+Benign-Spoofer NMACs,1.0,0.0,1.25,2.5,2.0,3.0
+Min distance to true spoofer (m),36.6385662973265,33.20547228223025,58.96187647493825,15.3498936368145,10.1515785048827,18.52439344022
+SpoofingAware: chance-constraint violations,4.0,3.75,9.5,,,
+SpoofingAware: spoofer containment percent,0.615384615384615,0.4101063829787225,0.71063829787234,,,

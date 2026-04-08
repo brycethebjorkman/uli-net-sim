@@ -29,6 +29,12 @@ def _scenario_group_from_tag(tag: str) -> str:
     return _SEED_SUFFIX_RE.sub("", str(tag))
 
 
+def _scenario_group_from_source_file(name: str) -> str:
+    # e.g. "hub_8x1_s00000-Scenario_Hub_8x1_s00000_Aware-#0-gcs.csv"
+    prefix = str(name).split("-", 1)[0]
+    return _SEED_SUFFIX_RE.sub("", prefix)
+
+
 def _bootstrap_ci_median(values: np.ndarray, n_boot: int = 1000, alpha: float = 0.05) -> tuple[float, float]:
     if values.size == 0:
         return float("nan"), float("nan")
@@ -306,6 +312,7 @@ def _load_gcs_vector_long(gcs_vectors_dir: Path) -> pd.DataFrame:
                     rows.append(
                         {
                             "source_file": p.name,
+                            "scenario": _scenario_group_from_source_file(p.name),
                             "variant": _variant_from_name(p.name),
                             "name": name,
                             "time": t,
@@ -327,52 +334,138 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
     long_df.to_csv(out_dir / "gcs_timeseries_long.csv", index=False)
     out_paths.append(out_dir / "gcs_timeseries_long.csv")
 
-    # Median trajectory overlay for min benign-spoofer distance.
-    dist_df = long_df[long_df["name"].str.contains("min_benign_spoofer_distance_now_m", na=False)]
-    if not dist_df.empty:
-        fig, ax = plt.subplots(figsize=(10, 5))
-        for variant in ["SpoofingAware", "TrustRID"]:
-            g = dist_df[dist_df["variant"] == variant]
-            if g.empty:
-                continue
-            med = g.groupby("time", as_index=False)["value"].median()
-            ax.plot(med["time"], med["value"], label=variant)
-        nmac_threshold_m = 50.0
-        ax.axhline(
-            y=nmac_threshold_m,
-            color="crimson",
-            linestyle="--",
-            linewidth=1.2,
-            label="NMAC threshold (50 m)",
-        )
-        ax.set_title("Min Benign-Spoofer Distance Through Time (Median Across Runs)")
-        ax.set_xlabel("time (s)")
-        ax.set_ylabel("distance (m)")
-        ax.legend()
+    def _plot_by_scenario(
+        df: pd.DataFrame,
+        metric_pattern: str,
+        title: str,
+        ylabel: str,
+        out_name: str,
+        variants: list[str],
+        hline: float | None = None,
+        hline_label: str | None = None,
+    ) -> Path | None:
+        sub = df[df["name"].str.contains(metric_pattern, na=False)]
+        if sub.empty:
+            return None
+        scenarios = sorted(sub["scenario"].dropna().unique().tolist())
+        if not scenarios:
+            return None
+        n = len(scenarios)
+        fig, axes = plt.subplots(1, n, figsize=(5.0 * n, 4.2), squeeze=False)
+        for i, scen in enumerate(scenarios):
+            ax = axes[0][i]
+            ss = sub[sub["scenario"] == scen]
+            for variant in variants:
+                g = ss[ss["variant"] == variant]
+                if g.empty:
+                    continue
+                med = g.groupby("time", as_index=False)["value"].median()
+                ax.plot(med["time"], med["value"], label=variant)
+            if hline is not None:
+                ax.axhline(
+                    y=hline,
+                    color="crimson",
+                    linestyle="--",
+                    linewidth=1.1,
+                    label=hline_label if hline_label else None,
+                )
+            ax.set_title(str(scen))
+            ax.set_xlabel("time (s)")
+            ax.set_ylabel(ylabel)
+            ax.grid(alpha=0.2)
+            ax.legend(fontsize=8)
+        fig.suptitle(title)
         fig.tight_layout()
-        p = out_dir / "timeseries_min_distance_median.png"
+        p = out_dir / out_name
         fig.savefig(p, dpi=220)
         plt.close(fig)
+        return p
+
+    p = _plot_by_scenario(
+        long_df,
+        metric_pattern="min_benign_spoofer_distance_now_m",
+        title="Min Benign-Spoofer Distance Through Time (Median, by Scenario)",
+        ylabel="distance (m)",
+        out_name="timeseries_min_distance_median.png",
+        variants=["SpoofingAware", "TrustRID"],
+        hline=10.0,
+        hline_label="NMAC threshold (10 m)",
+    )
+    if p is not None:
         out_paths.append(p)
 
-    # Containment rate trajectory (Aware should dominate here).
-    cont_df = long_df[long_df["name"].str.contains("spoofer_containment_rate", na=False)]
-    if not cont_df.empty:
-        fig, ax = plt.subplots(figsize=(10, 5))
-        g = cont_df[cont_df["variant"] == "SpoofingAware"]
-        if not g.empty:
-            med = g.groupby("time", as_index=False)["value"].median()
-            ax.plot(med["time"], med["value"], label="SpoofingAware")
-        ax.set_title("SpoofingAware Spoofer Containment Through Time (Median)")
-        ax.set_xlabel("time (s)")
-        ax.set_ylabel("containment percent")
-        if not g.empty:
-            ax.legend()
-        fig.tight_layout()
-        p = out_dir / "timeseries_containment_rate_median.png"
-        fig.savefig(p, dpi=220)
-        plt.close(fig)
+    p = _plot_by_scenario(
+        long_df,
+        metric_pattern="spoofer_containment_rate",
+        title="SpoofingAware Spoofer Containment Through Time (Median, by Scenario)",
+        ylabel="containment percent",
+        out_name="timeseries_containment_rate_median.png",
+        variants=["SpoofingAware"],
+    )
+    if p is not None:
         out_paths.append(p)
+
+    p = _plot_by_scenario(
+        long_df,
+        metric_pattern="mlat_raw_error",
+        title="Localization Raw Error Through Time (Median, by Scenario)",
+        ylabel="error (m)",
+        out_name="timeseries_localization_error_median.png",
+        variants=["SpoofingAware", "TrustRID"],
+    )
+    if p is not None:
+        out_paths.append(p)
+
+    p = _plot_by_scenario(
+        long_df,
+        metric_pattern="unsafe_radius_max_m",
+        title="Chance-Constraint Bubble Radius Through Time (Median, by Scenario)",
+        ylabel="radius (m)",
+        out_name="timeseries_unsafe_bubble_radius_median.png",
+        variants=["SpoofingAware"],
+    )
+    if p is not None:
+        out_paths.append(p)
+
+    # Runtime scalability chart for Hub 4x1 / 8x1 / 12x1 from run_timing.csv.
+    rt_csv = out_dir.parent / "run_timing.csv"
+    if rt_csv.is_file():
+        try:
+            rt = pd.read_csv(rt_csv)
+            rt["scenario_group"] = rt["scenario"].apply(_scenario_group_from_tag)
+            hub = rt[rt["scenario_group"].isin(["Scenario_Hub_4x1", "Scenario_Hub_8x1", "Scenario_Hub_12x1"])].copy()
+            if not hub.empty:
+                fig, ax = plt.subplots(figsize=(7, 4.5))
+                labels = []
+                meds = []
+                err_lo = []
+                err_hi = []
+                for scen in ["Scenario_Hub_4x1", "Scenario_Hub_8x1", "Scenario_Hub_12x1"]:
+                    s = pd.to_numeric(hub.loc[hub["scenario_group"] == scen, "elapsed_seconds"], errors="coerce").dropna().to_numpy(dtype=float)
+                    if s.size == 0:
+                        continue
+                    q1 = float(np.quantile(s, 0.25))
+                    med = float(np.quantile(s, 0.5))
+                    q3 = float(np.quantile(s, 0.75))
+                    labels.append(scen.replace("Scenario_", "").replace("_", " "))
+                    meds.append(med)
+                    err_lo.append(med - q1)
+                    err_hi.append(q3 - med)
+                if labels:
+                    x = np.arange(len(labels))
+                    ax.bar(x, meds, yerr=[err_lo, err_hi], capsize=3, color="#4c78a8")
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(labels)
+                    ax.set_ylabel("runtime per seed (s)")
+                    ax.set_title("Scalability: Hub Scenario Runtime (median with IQR)")
+                    ax.grid(axis="y", alpha=0.2)
+                    fig.tight_layout()
+                    p = out_dir / "runtime_scalability_hub.png"
+                    fig.savefig(p, dpi=220)
+                    plt.close(fig)
+                    out_paths.append(p)
+        except Exception:
+            pass
 
     return out_paths
 

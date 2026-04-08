@@ -11,8 +11,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 IMAGE="${ULI_NET_SIM_IMAGE:-uli-net-sim:latest}"
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
 
 exec docker run --rm \
+  --user "${HOST_UID}:${HOST_GID}" \
+  -e HOME=/tmp \
   -v "$ROOT:/usr/uli-net-sim/uav_rid" \
   -w /usr/uli-net-sim/uav_rid \
   "$IMAGE" \

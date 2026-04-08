@@ -568,6 +568,19 @@ class SpoofingAwareGcs:
         if primary_unsafe is not None:
             self._last_primary_unsafe = primary_unsafe
 
+        # Approximate unsafe-bubble "radius" for charting/scalability diagnostics:
+        # max principal-axis radius of the 3D ellipsoid at the chosen alpha level.
+        unsafe_radius_max_now = 0.0
+        if primary_unsafe is not None:
+            sigma = np.asarray(primary_unsafe.get("sigma"), dtype=float)
+            try:
+                lam_max = float(np.max(np.linalg.eigvalsh(sigma)))
+                lam_max = max(lam_max, 0.0)
+                boundary = float(ellipsoid_threshold(float(primary_unsafe.get("alpha", self.alpha)), ndim=3))
+                unsafe_radius_max_now = float(np.sqrt(boundary * lam_max))
+            except Exception:
+                unsafe_radius_max_now = 0.0
+
         # Simulation-only diagnostic: does unsafe ellipsoid contain true spoofer?
         # ground_truth_positions is provided by GcsModule from mobility state.
         gt = data.get("ground_truth_positions") or {}
@@ -656,6 +669,7 @@ class SpoofingAwareGcs:
                     float(self._spoofer_containment_hits) / float(self._spoofer_containment_total)
                     if self._spoofer_containment_total > 0 else 0.0
                 ),
+                "unsafe_radius_max_m": float(unsafe_radius_max_now),
                 "nmac_proximity_total": float(self.nmac_proximity_count),
                 "nmac_benign_spoofer_total": float(self.nmac_benign_spoofer_count),
                 "nmac_spoofer_unsafe_total": float(self.nmac_spoofer_unsafe_count),

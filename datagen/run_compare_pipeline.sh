@@ -19,7 +19,9 @@ Scenario selection (choose one):
   --scenario-configs CSV           Comma-separated list of configs
   --paper-scenarios                Use paper default set:
                                    Scenario_Corners_4x1,Scenario_Hub_4x1,
-                                   Scenario_Circle_8x1,Scenario_Hub_8x1
+                                   Scenario_Circle_8x1,Scenario_Hub_8x1,
+                                   Scenario_Hub_12x1
+  --include-steepz                 Add Scenario_SteepZ_8x1 to selected set
 
 Options:
   --seeds SPEC                     Seed spec: "0:29" or "0,1,2" (default: 0)
@@ -52,6 +54,7 @@ DO_PLOT="1"
 SINGLE_SCENARIO=""
 SCENARIOS_CSV=""
 PAPER_SCENARIOS="0"
+INCLUDE_STEEPZ="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -61,6 +64,8 @@ while [[ $# -gt 0 ]]; do
       SCENARIOS_CSV="${2:-}"; shift 2 ;;
     --paper-scenarios)
       PAPER_SCENARIOS="1"; shift ;;
+    --include-steepz)
+      INCLUDE_STEEPZ="1"; shift ;;
     --seeds)
       SEEDS_SPEC="${2:-}"; shift 2 ;;
     --base-ini)
@@ -104,6 +109,7 @@ if [[ "$PAPER_SCENARIOS" == "1" ]]; then
     "Scenario_Hub_4x1"
     "Scenario_Circle_8x1"
     "Scenario_Hub_8x1"
+    "Scenario_Hub_12x1"
   )
 elif [[ -n "$SCENARIOS_CSV" ]]; then
   IFS=',' read -r -a SCENARIOS <<<"$SCENARIOS_CSV"
@@ -113,6 +119,10 @@ else
   echo "Choose one scenario selection: --scenario-config, --scenario-configs, or --paper-scenarios" >&2
   usage
   exit 2
+fi
+
+if [[ "$INCLUDE_STEEPZ" == "1" ]]; then
+  SCENARIOS+=("Scenario_SteepZ_8x1")
 fi
 
 declare -a SEEDS=()
@@ -295,7 +305,7 @@ if [[ "$EXPORT_VECTORS" == "1" && "$KEEP_VEC" == "1" ]]; then
       runbase="$(basename "$vec" .vec)"
       out="$GCS_VEC_DIR/${scenedir}-${runbase}-gcs.csv"
       ./scripts/docker-run.sh opp_scavetool export -F CSV-R -x columnNames=true \
-        -f 'type=~"vector" and module=~"*.gcs[*]" and (name=~"*min_benign_spoofer_distance_now_m*" or name=~"*min_benign_spoofer_distance_running_min_m*" or name=~"*spoofer_containment_rate*" or name=~"*nmac_proximity_total*" or name=~"*nmac_benign_spoofer_total*" or name=~"*nmac_spoofer_unsafe_total*")' \
+        -f 'type=~"vector" and module=~"*.gcs[*]" and (name=~"*min_benign_spoofer_distance_now_m*" or name=~"*min_benign_spoofer_distance_running_min_m*" or name=~"*spoofer_containment_rate*" or name=~"*nmac_proximity_total*" or name=~"*nmac_benign_spoofer_total*" or name=~"*nmac_spoofer_unsafe_total*" or name=~"*mlat_raw_error*" or name=~"*unsafe_radius_max_m*")' \
         -o "$out" "$vec"
       echo "Wrote $out"
     done

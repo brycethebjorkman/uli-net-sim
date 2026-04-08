@@ -159,6 +159,14 @@ Common options:
   --run-name paper_suite_30seeds \
   --parallel 0
 
+# Paper suite + altitude-diverse scenario (Scenario_SteepZ_8x1)
+./datagen/run_compare_pipeline.sh \
+  --paper-scenarios \
+  --include-steepz \
+  --seeds 0:29 \
+  --run-name paper_suite_30seeds_plus_steepz \
+  --parallel 0
+
 # Skip docker build, auto-parallel, keep old artifacts
 ./datagen/run_compare_pipeline.sh \
   --scenario-config Scenario_Corners_4x1 \
@@ -172,6 +180,11 @@ Distribution-first outputs (for paper tables) are written under `.../charts/`:
 
 - `summary_distribution_table.csv` (median, IQR, bootstrap 95% CI by scenario + variant + metric)
 - `summary_means_table.csv` (legacy file name; now stores median/q1/q3 columns)
+
+Altitude-diverse stress test:
+
+- The base INI already includes `Scenario_SteepZ_8x1` (large vertical spread and direct 3D legs).
+- Use `--include-steepz` to include it in sweep runs.
 - `<run-root>/run_timing.csv` (wall-clock runtime per scenario-seed pair)
 - `<run-root>/total_runtime_seconds.txt` (total pipeline runtime)
 

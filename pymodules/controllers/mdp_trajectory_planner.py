@@ -29,7 +29,11 @@ import json
 import math
 import numpy as np
 
-from pymodules.gcs.chance_constraint import is_safe
+from pymodules.gcs.chance_constraint import (
+    is_safe,
+    mahalanobis_squared,
+    ellipsoid_threshold,
+)
 
 GRAVITY = 9.81
 
@@ -56,6 +60,7 @@ AGENT_LIMIT = 60.0       # negative peak radius (meters)
 SPOOFER_REWARD = 5000.0
 SPOOFER_DISCOUNT = 0.99
 SPOOFER_LIMIT = 120.0    # repulsion radius around unsafe region center (meters)
+ELLIPSOID_MARGIN = 1.0   # Mahalanobis-radius margin outside boundary for soft penalty
 
 MIN_CYCLE = 2
 
@@ -221,14 +226,38 @@ class MdpTrajectoryPlanner:
             if d_agent < self.agent_radius:
                 v_neg += self._agent_peak * (AGENT_DISCOUNT ** d_agent)
 
-        # ── Negative value: spoofer unsafe region ──
-        # Distance-based repulsion from the unsafe region center, active within
-        # SPOOFER_LIMIT. No Mahalanobis gate — the agent sees danger coming.
-        if self.unsafe_region is not None:
-            mu = np.asarray(self.unsafe_region["mu"], dtype=float)
+        # ── Negative value: chance-constraint boundary-aware spoofing risk ──
+        # Penalize being inside the ellipsoid and softly penalize trajectories
+        # near its boundary to treat the edge as plausible spoofer location.
+        regions = self._regions_for_unsafe_test()
+        for reg in regions:
+            mu = np.asarray(reg["mu"], dtype=float)
+            sigma = np.asarray(reg["sigma"], dtype=float)
+            alpha = float(reg.get("alpha", 0.05))
+
+            # Keep center-based look-ahead repulsion for long-range behavior.
             d_spoof = np.linalg.norm(pos - mu)
             if d_spoof < SPOOFER_LIMIT:
-                v_neg += self._spoofer_peak * (SPOOFER_DISCOUNT ** d_spoof)
+                v_neg += 0.35 * self._spoofer_peak * (SPOOFER_DISCOUNT ** d_spoof)
+
+            m2 = mahalanobis_squared(pos, mu, sigma)
+            boundary = ellipsoid_threshold(alpha, ndim=3)
+            if boundary <= 1e-9:
+                continue
+
+            r = math.sqrt(max(m2, 0.0))
+            rb = math.sqrt(boundary)
+
+            if r <= rb:
+                # Inside unsafe set: strong violation penalty.
+                violation = 1.0 + (rb - r) / max(rb, 1e-6)
+                v_neg += self._spoofer_peak * violation
+            else:
+                # Outside but near boundary: smoothly decaying penalty.
+                dr = r - rb
+                if dr <= ELLIPSOID_MARGIN:
+                    near_scale = math.exp(-2.5 * dr / max(ELLIPSOID_MARGIN, 1e-6))
+                    v_neg += 0.75 * self._spoofer_peak * near_scale
 
         return v_pos - v_neg
 

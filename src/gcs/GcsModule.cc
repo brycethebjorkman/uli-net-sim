@@ -98,8 +98,12 @@ void GcsModule::updateVisualization(const std::vector<double>& mu,
             ellipsoidTransform = nullptr;
         }
 
-        // Build transform: scale unit sphere then rotate by eigenvectors
-        auto *transform = new ::osg::MatrixTransform();
+        // Build transform hierarchy:
+        //   rootTranslate: world placement at mu
+        //   localShape:    local rotation+scale of unit sphere
+        // Using two nodes avoids matrix order ambiguity across conventions.
+        auto *rootTranslate = new ::osg::MatrixTransform();
+        auto *localShape = new ::osg::MatrixTransform();
 
         ::osg::Matrixd scaleMat = ::osg::Matrixd::scale(sx, sy, sz);
 
@@ -111,7 +115,8 @@ void GcsModule::updateVisualization(const std::vector<double>& mu,
                 rotMat(r, c) = eigenvecs(r, c);
 
         ::osg::Matrixd transMat = ::osg::Matrixd::translate(mu[0], mu[1], mu[2]);
-        transform->setMatrix(scaleMat * rotMat * transMat);
+        rootTranslate->setMatrix(transMat);
+        localShape->setMatrix(rotMat * scaleMat);
 
         // Semi-transparent red ellipsoid (unit sphere scaled by transform)
         auto *sphere = new ::osg::ShapeDrawable(
@@ -168,9 +173,10 @@ void GcsModule::updateVisualization(const std::vector<double>& mu,
         wireStateSet->setMode(GL_LIGHTING, ::osg::StateAttribute::OFF);
         geode->addDrawable(wireGeom);
 
-        transform->addChild(geode);
-        scene->addChild(transform);
-        ellipsoidTransform = static_cast<void*>(transform);
+        localShape->addChild(geode);
+        rootTranslate->addChild(localShape);
+        scene->addChild(rootTranslate);
+        ellipsoidTransform = static_cast<void*>(rootTranslate);
 #endif
     }
 }
@@ -471,6 +477,20 @@ void GcsModule::pyOnReport(const BeaconKey& key,
     txData["claimed_vel"] = py::make_tuple(first->getClaimedSpeedVertical(),
                                            first->getClaimedSpeedHorizontal(),
                                            first->getClaimedHeading());
+
+    // Optional true transmitter position for debugging/analysis.
+    // Assumes sender serial maps to host index (default RID config).
+    {
+        int senderId = key.first;
+        cModule *network = getSimulation()->getSystemModule();
+        std::string path = "host[" + std::to_string(senderId) + "].mobility";
+        cModule *mobilityMod = network->getModuleByPath(path.c_str());
+        if (mobilityMod) {
+            auto *mobility = check_and_cast<IMobility *>(mobilityMod);
+            Coord pos = mobility->getCurrentPosition();
+            txData["tx_true_pos"] = py::make_tuple(pos.getX(), pos.getY(), pos.getZ());
+        }
+    }
 
     // Per-receiver reports
     py::list reportList;

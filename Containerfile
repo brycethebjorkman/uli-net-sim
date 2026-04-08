@@ -48,19 +48,20 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
 
 WORKDIR /usr/uli-net-sim
 
-# download OMNeT++
-ARG VERSION=6.2.0
+# download OMNeT++ (must match opp_msgtool / *_m.h MSGC_VERSION in the repo — 6.3.x)
+ARG VERSION=6.3.0
 ARG O_NAME=omnetpp-$VERSION
 RUN wget https://github.com/omnetpp/omnetpp/releases/download/$O_NAME/$O_NAME-linux-x86_64.tgz -O $O_NAME.tgz \
     && tar xf $O_NAME.tgz \
     && rm $O_NAME.tgz
 
-# download INET Framework
-ARG VERSION=4.5.4
-ARG I_NAME=inet-$VERSION
-RUN wget https://github.com/inet-framework/inet/releases/download/v$VERSION/$I_NAME-src.tgz -O $I_NAME.tgz \
-    && tar xf $I_NAME.tgz \
-    && rm $I_NAME.tgz
+# download INET Framework (extracted folder must be inet4.5 for build scripts)
+ARG INET_VERSION=4.5.4
+RUN wget https://github.com/inet-framework/inet/releases/download/v${INET_VERSION}/inet-${INET_VERSION}-src.tgz -O inet-src.tgz \
+    && tar xf inet-src.tgz \
+    && rm inet-src.tgz \
+    && if [ ! -d inet4.5 ] && [ -d inet-${INET_VERSION} ]; then mv inet-${INET_VERSION} inet4.5; fi \
+    && test -d inet4.5
 
 # build OMNeT++
 WORKDIR /usr/uli-net-sim/$O_NAME
@@ -71,7 +72,7 @@ RUN ./install.sh -y --no-gui
 # build INET Framework
 WORKDIR /usr/uli-net-sim/inet4.5
 SHELL ["/bin/bash","-c"]
-RUN . ../omnetpp-6.2.0/setenv \
+RUN . ../omnetpp-6.3.0/setenv \
     && . setenv \
     && opp_featuretool enable VisualizationOsg \
     && make makefiles \
@@ -86,6 +87,25 @@ RUN tar xf eigen-5.0.0.tar \
 # Make OMNeT++/INET env available globally in every login shell
 COPY scripts/omnetpp-env.sh /etc/profile.d/omnetpp-env.sh
 
-# build uli-net-sim
+# Python venv outside project tree so bind-mounting the repo for batch runs
+# still uses pyarrow/pytest (see README Docker section).
+COPY requirements-docker.txt /tmp/requirements-docker.txt
+RUN python3 -m venv /opt/uli-venv \
+    && /opt/uli-venv/bin/pip install --upgrade pip \
+    && /opt/uli-venv/bin/pip install -r /tmp/requirements-docker.txt
+
+ENV ULI_PYTHON=/opt/uli-venv/bin/python3
+ENV PATH="/opt/uli-venv/bin:${PATH}"
+ENV PYTHONPATH="/usr/uli-net-sim/uav_rid"
+
+# build uli-net-sim (repository root -> /usr/uli-net-sim/uav_rid)
 WORKDIR /usr/uli-net-sim/uav_rid
 COPY . .
+
+RUN chmod +x scripts/*.sh scripts/run.sh datagen/*.py 2>/dev/null || true
+
+ENV INET_ROOT=/usr/uli-net-sim/inet4.5
+RUN ./scripts/build.sh
+
+WORKDIR /usr/uli-net-sim/uav_rid
+CMD ["/bin/bash"]

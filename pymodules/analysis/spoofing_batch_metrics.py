@@ -1,0 +1,132 @@
+"""
+Load OMNeT++ ``.sca`` scalars and summarize paired Aware / TrustRid sweep outputs.
+
+Expects filenames produced by ``datagen/run_scenario.py``::
+    {scenario_hash}-{ConfigName}.sca
+
+Example::
+
+    python3 -m pymodules.analysis.spoofing_batch_metrics \\
+        simulations/spoofing_aware_with_planning/sweeps/generated/ -o summary.csv
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import re
+import sys
+from pathlib import Path
+
+
+def load_sca_scalars(sca_path: Path) -> dict[str, float]:
+    """Parse scalar lines from an OMNeT++ ``.sca`` file."""
+    text = sca_path.read_text(errors="replace")
+    out: dict[str, float] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("scalar"):
+            continue
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        try:
+            val = float(parts[-1])
+            name = parts[-2]
+            out[name] = val
+        except ValueError:
+            continue
+    return out
+
+
+# {hash}-{tag}_{Aware|TrustRid}.sca  e.g. a1b2c3d4-circle8_s00001_Aware.sca
+_SCA_PAIR_RE = re.compile(
+    r"^([0-9a-f]{8})-(.+)_(Aware|TrustRid)\.sca$",
+    re.IGNORECASE,
+)
+
+
+def summarize_sweep_directory(
+    root: Path,
+    csv_path: Path | None = None,
+) -> list[dict[str, str | float | None]]:
+    """
+    Pair ``*_Aware.sca`` / ``*_TrustRid.sca`` by (hash, tag prefix) and emit rows.
+
+    Columns: hash, tag, nmac_proximity_aware, nmac_proximity_trust_rid,
+    nmac_spoofer_unsafe_aware, nmac_spoofer_unsafe_trust_rid, aware_sca, trust_sca
+    """
+    root = root.resolve()
+    pairs: dict[tuple[str, str], dict[str, Path]] = {}
+
+    for sca in sorted(root.rglob("*.sca")):
+        m = _SCA_PAIR_RE.match(sca.name)
+        if not m:
+            continue
+        h, tag_base, variant = m.groups()
+        vk = "aware" if variant.lower() == "aware" else "trust_rid"
+        key = (h, tag_base)
+        pairs.setdefault(key, {})
+        pairs[key][vk] = sca
+
+    rows: list[dict[str, str | float | None]] = []
+    for (h, tag_base) in sorted(pairs.keys()):
+        g = pairs[(h, tag_base)]
+        pa = g.get("aware")
+        pt = g.get("trust_rid")
+        sa: dict[str, float] = load_sca_scalars(pa) if pa else {}
+        st: dict[str, float] = load_sca_scalars(pt) if pt else {}
+
+        rows.append({
+            "hash": h,
+            "tag": tag_base,
+            "nmac_proximity_aware": sa.get("nmac_proximity_final"),
+            "nmac_proximity_trust_rid": st.get("nmac_proximity_final"),
+            "nmac_spoofer_unsafe_aware": sa.get("nmac_spoofer_unsafe_final"),
+            "nmac_spoofer_unsafe_trust_rid": st.get("nmac_spoofer_unsafe_final"),
+            "aware_sca": str(pa) if pa else None,
+            "trust_rid_sca": str(pt) if pt else None,
+        })
+
+    if csv_path is not None:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        if rows:
+            fieldnames = list(rows[0].keys())
+            with csv_path.open("w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fieldnames)
+                w.writeheader()
+                w.writerows(rows)
+        else:
+            csv_path.write_text("")
+
+    return rows
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        description="Summarize paired Aware/TrustRid .sca metrics under a directory",
+    )
+    p.add_argument(
+        "sweep_root",
+        type=Path,
+        help="Directory tree containing copied ``{hash}-{Config}.sca`` files",
+    )
+    p.add_argument(
+        "-o", "--output",
+        type=Path,
+        default=None,
+        help="Write CSV summary to this path",
+    )
+    args = p.parse_args(argv)
+
+    rows = summarize_sweep_directory(args.sweep_root, csv_path=args.output)
+    if args.output:
+        print(f"Wrote {len(rows)} row(s) to {args.output}")
+    else:
+        for r in rows:
+            print(r)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

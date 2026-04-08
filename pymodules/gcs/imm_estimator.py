@@ -27,14 +27,29 @@ class KalmanFilter3D:
         self.x = self.F @ self.x
         self.P = self.F @ self.P @ self.F.T + self.Q
 
-    def update(self, z):
+    def update(self, z, meas_cov: np.ndarray | None = None):
         z = np.asarray(z, dtype=float).ravel()
         y = z - self.H @ self.x
-        S = self.H @ self.P @ self.H.T + self.R
-        K = self.P @ self.H.T @ np.linalg.inv(S)
+        R_eff = self.R if meas_cov is None else np.asarray(meas_cov, dtype=float)
+        R_eff = np.nan_to_num(R_eff, nan=1e3, posinf=1e6, neginf=1e3)
+        if R_eff.shape != (3, 3):
+            R_eff = np.eye(3) * 1e3
+        R_eff = 0.5 * (R_eff + R_eff.T)
+
+        S = self.H @ self.P @ self.H.T + R_eff
+        S = np.nan_to_num(S, nan=1e3, posinf=1e6, neginf=1e3)
+        S = 0.5 * (S + S.T)
+        try:
+            S_inv = np.linalg.inv(S)
+        except np.linalg.LinAlgError:
+            S_inv = np.linalg.pinv(S)
+
+        K = self.P @ self.H.T @ S_inv
         self.x = self.x + K @ y
+        self.x = np.nan_to_num(self.x, nan=0.0, posinf=0.0, neginf=0.0)
         I = np.eye(len(self.x))
         self.P = (I - K @ self.H) @ self.P
+        self.P = np.nan_to_num(self.P, nan=1e3, posinf=1e6, neginf=-1e6)
         return y, S
 
     @staticmethod
@@ -83,31 +98,122 @@ class IMMEstimator:
     """
 
     def __init__(self, dt: float = 1.0):
-        self.kf_cv = KalmanFilter3D.create_cv(dt)
-        self.kf_ca = KalmanFilter3D.create_ca(dt)
+        # Use a more responsive process model so a maneuvering spoofer track
+        # does not remain anchored after detection.
+        self.dt = float(max(dt, 1e-3))
+        self.kf_cv = KalmanFilter3D.create_cv(
+            self.dt, pos_noise=2.0, vel_noise=40.0, measurement_noise=100.0
+        )
+        self.kf_ca = KalmanFilter3D.create_ca(
+            self.dt, pos_noise=2.0, vel_noise=25.0, acc_noise=60.0, measurement_noise=100.0
+        )
         self.mu = np.array([0.6, 0.4])  # prefer CV (spoofer likely steady)
         self.pi = np.array([[0.95, 0.05],
                             [0.05, 0.95]])
         self._initialized = False
+        self._last_z: np.ndarray | None = None
+        self._snap_distance_m = 15.0
+        self._min_pos_var = 1.0
+        self._max_pos_var = 2500.0
+        self._predicts_since_update = 0
 
-    def update(self, z: np.ndarray):
+    def _clamp_pos_cov(self, P: np.ndarray) -> np.ndarray:
+        """Clamp position covariance eigenvalues to avoid collapse/blow-up."""
+        C = np.asarray(P[:3, :3], dtype=float)
+        vmin = float(max(self._min_pos_var, 1e-6))
+        vmax = float(max(vmin, self._max_pos_var))
+
+        # Clean non-finite values first.
+        C = np.nan_to_num(C, nan=0.0, posinf=vmax, neginf=-vmax)
+        C = 0.5 * (C + C.T)
+
+        # Robust eigendecomposition with progressive jitter.
+        success = False
+        for k in range(6):
+            jitter = (10.0 ** k) * 1e-9
+            try:
+                vals, vecs = np.linalg.eigh(C + np.eye(3) * jitter)
+                vals = np.clip(vals, vmin, vmax)
+                C_out = vecs @ np.diag(vals) @ vecs.T
+                C_out = 0.5 * (C_out + C_out.T)
+                if np.all(np.isfinite(C_out)):
+                    P[:3, :3] = C_out
+                    success = True
+                    break
+            except np.linalg.LinAlgError:
+                continue
+
+        if not success:
+            # Last-resort diagonal fallback.
+            d = np.diag(C)
+            d = np.nan_to_num(d, nan=vmin, posinf=vmax, neginf=vmin)
+            d = np.clip(d, vmin, vmax)
+            P[:3, :3] = np.diag(d)
+        return P
+
+    def _propagate_modes(self) -> None:
+        self.mu = self.pi.T @ self.mu
+        s = float(self.mu.sum())
+        if s > 1e-12:
+            self.mu /= s
+
+    def predict_only(self, max_predict_steps: int | None = None) -> None:
+        """
+        Propagate IMM state without a measurement update.
+
+        Used to provide smooth, continuous unsafe-region motion between
+        1 Hz RID/multilateration updates.
+        """
+        if not self._initialized:
+            return
+        if max_predict_steps is not None and self._predicts_since_update >= max_predict_steps:
+            return
+        self.kf_cv.predict()
+        self.kf_ca.predict()
+        self.kf_cv.P = self._clamp_pos_cov(self.kf_cv.P)
+        self.kf_ca.P = self._clamp_pos_cov(self.kf_ca.P)
+        self._propagate_modes()
+        self._predicts_since_update += 1
+
+    def update(
+        self,
+        z: np.ndarray,
+        meas_cov: np.ndarray | None = None,
+        do_predict: bool = True,
+    ):
         """Predict-then-update cycle, called when a new measurement arrives."""
         z = np.asarray(z, dtype=float).ravel()[:3]
         if not self._initialized:
             self.kf_cv.x[:3] = z
             self.kf_ca.x[:3] = z
+            if meas_cov is not None:
+                m = np.asarray(meas_cov, dtype=float)
+                self.kf_cv.P[:3, :3] = m
+                self.kf_ca.P[:3, :3] = m
+            self.kf_cv.P = self._clamp_pos_cov(self.kf_cv.P)
+            self.kf_ca.P = self._clamp_pos_cov(self.kf_ca.P)
             self._initialized = True
+            self._last_z = z.copy()
+            self._predicts_since_update = 0
             return
 
-        # Predict step (only right before measurement)
-        self.kf_cv.predict()
-        self.kf_ca.predict()
-        self.mu = self.pi.T @ self.mu
-        self.mu /= self.mu.sum()
+        # Finite-difference velocity cue from multilateration positions.
+        vel_meas = None
+        if self._last_z is not None:
+            vel_meas = (z - self._last_z) / self.dt
+            self.kf_cv.x[3:6] = 0.5 * self.kf_cv.x[3:6] + 0.5 * vel_meas
+            self.kf_ca.x[3:6] = 0.5 * self.kf_ca.x[3:6] + 0.5 * vel_meas
+
+        # Optional predict step right before measurement.
+        if do_predict:
+            self.predict_only()
+        pred_pos = self.mu[0] * self.kf_cv.x[:3] + self.mu[1] * self.kf_ca.x[:3]
 
         # Update step
-        y_cv, S_cv = self.kf_cv.update(z)
-        y_ca, S_ca = self.kf_ca.update(z)
+        y_cv, S_cv = self.kf_cv.update(z, meas_cov=meas_cov)
+        y_ca, S_ca = self.kf_ca.update(z, meas_cov=meas_cov)
+        self.kf_cv.P = self._clamp_pos_cov(self.kf_cv.P)
+        self.kf_ca.P = self._clamp_pos_cov(self.kf_ca.P)
 
         L_cv = self._gaussian_likelihood(y_cv, S_cv)
         L_ca = self._gaussian_likelihood(y_ca, S_ca)
@@ -116,6 +222,26 @@ class IMMEstimator:
         if c > 1e-300:
             self.mu[0] = self.mu[0] * L_cv / c
             self.mu[1] = self.mu[1] * L_ca / c
+
+        # If prediction is far from current multilateration, snap position to
+        # measurement to prevent a "stuck bubble" while preserving covariance.
+        if np.linalg.norm(z - pred_pos) > self._snap_distance_m:
+            self.kf_cv.x[:3] = z
+            self.kf_ca.x[:3] = z
+            if vel_meas is not None:
+                self.kf_cv.x[3:6] = vel_meas
+                self.kf_ca.x[3:6] = vel_meas
+            if meas_cov is not None:
+                m = np.asarray(meas_cov, dtype=float)
+                self.kf_cv.P[:3, :3] = m
+                self.kf_ca.P[:3, :3] = m
+            self.kf_cv.P = self._clamp_pos_cov(self.kf_cv.P)
+            self.kf_ca.P = self._clamp_pos_cov(self.kf_ca.P)
+            # Favor CA briefly after large jumps.
+            self.mu = np.array([0.35, 0.65], dtype=float)
+
+        self._last_z = z.copy()
+        self._predicts_since_update = 0
 
     def get_state(self) -> tuple[np.ndarray, np.ndarray]:
         """Return merged (mu_pos, Sigma_pos) — position only."""
@@ -136,9 +262,32 @@ class IMMEstimator:
     @staticmethod
     def _gaussian_likelihood(y, S):
         n = len(y)
-        sign, logdet = np.linalg.slogdet(S)
-        if sign <= 0:
+        y = np.nan_to_num(np.asarray(y, dtype=float).ravel(), nan=0.0, posinf=0.0, neginf=0.0)
+        S = np.nan_to_num(np.asarray(S, dtype=float), nan=1e3, posinf=1e6, neginf=1e3)
+        if S.shape != (n, n):
             return 1e-300
-        exp_term = -0.5 * y @ np.linalg.inv(S) @ y
-        log_L = -0.5 * n * np.log(2 * np.pi) - 0.5 * logdet + exp_term
-        return max(np.exp(log_L), 1e-300)
+        S = 0.5 * (S + S.T)
+
+        # Robust slogdet/inverse with progressive jitter.
+        for k in range(6):
+            jitter = (10.0 ** k) * 1e-9
+            Sj = S + np.eye(n) * jitter
+            try:
+                sign, logdet = np.linalg.slogdet(Sj)
+                if not np.isfinite(logdet) or sign <= 0:
+                    continue
+                try:
+                    S_inv = np.linalg.inv(Sj)
+                except np.linalg.LinAlgError:
+                    S_inv = np.linalg.pinv(Sj)
+                quad = float(y @ S_inv @ y)
+                if not np.isfinite(quad):
+                    continue
+                exp_term = -0.5 * quad
+                log_L = -0.5 * n * np.log(2 * np.pi) - 0.5 * logdet + exp_term
+                if not np.isfinite(log_L):
+                    continue
+                return max(float(np.exp(log_L)), 1e-300)
+            except np.linalg.LinAlgError:
+                continue
+        return 1e-300

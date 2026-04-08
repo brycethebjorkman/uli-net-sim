@@ -41,10 +41,52 @@ Next, clone this repository and import the contained project into the OMNeT++ ID
 | **Multilateration (MLAT)** | Per-transmission | RSSI triangulation from multiple receivers |
 | **MLP** | Per-transmission | Supervised neural network on per-transmission features |
 
-## Quick Start (Container)
+## Quick Start (Docker)
+
+Paths inside the image use **`/usr/uli-net-sim/uav_rid`** as the project root.
+
+### Build the image
 
 ```bash
-# Build the simulator
+docker build -f Containerfile -t uli-net-sim:latest .
+# or: docker compose build
+```
+
+### Run with the repo bind-mounted
+
+Python packages come from the image’s **`/opt/uli-venv`** (on `PATH`); you do **not** need a host `.venv` inside the clone.
+
+```bash
+# Interactive shell
+docker compose run --rm uli-net-sim
+# or: ./scripts/docker-run.sh bash
+
+# Rebuild the simulator after C++ changes (inside the container)
+./scripts/docker-run.sh ./scripts/build.sh
+```
+
+### Batch: spoofing sweep + simulations
+
+```bash
+# 1) Generate seeded INI bundles (writes under simulations/.../sweeps/generated/)
+./scripts/docker-run.sh python3 datagen/generate_spoofing_sweep.py \
+    --layout circle8 --seed-range 0 9 \
+    --output-dir simulations/spoofing_aware_with_planning/sweeps/generated
+
+# 2) Run all leaf configs under that tree (Aware + TrustRid per seed)
+./scripts/docker-run.sh python3 datagen/run_batch.py \
+    simulations/spoofing_aware_with_planning/sweeps/generated/ \
+    --parallel 4
+
+# 3) Summarize NMAC scalars from copied *.sca next to parquet
+./scripts/docker-run.sh python3 -m pymodules.analysis.spoofing_batch_metrics \
+    simulations/spoofing_aware_with_planning/sweeps/generated/ \
+    -o simulations/spoofing_aware_with_planning/sweeps/summary.csv
+```
+
+### In-container paths (no Docker)
+
+```bash
 cd /usr/uli-net-sim/uav_rid
 ./scripts/build.sh
 

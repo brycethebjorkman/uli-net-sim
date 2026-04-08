@@ -163,6 +163,13 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
         print(f"  [{scenario_name}] Created: {pq_file.name}")
         produced.append(pq_file)
 
+        # Preserve OMNeT++ scalars (.sca) next to parquet for NMAC / analysis
+        sca_file = results_dir / f"{config}-#0.sca"
+        if sca_file.is_file():
+            sca_dest = scenario_path / f"{hash_prefix}{suffix}.sca"
+            shutil.copy2(sca_file, sca_dest)
+            print(f"  [{scenario_name}] Copied scalars: {sca_dest.name}")
+
     # Clean up intermediate results (unless keep_vec)
     if not keep_vec and results_dir.exists():
         shutil.rmtree(results_dir)

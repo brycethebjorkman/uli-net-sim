@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -34,6 +35,32 @@ VEC2PQ = SCRIPT_DIR / "vec2parquet.py"
 
 # vec2parquet events_to_parquet needs both (see vec2parquet.events_to_parquet)
 _VEC2PQ_DEPS_CHECK = "import pyarrow, pandas"
+_HEARTBEAT_SECONDS = 30.0
+
+
+def _run_with_heartbeat(
+    cmd: list[str],
+    cwd: str,
+    heartbeat_label: str,
+    heartbeat_s: float = _HEARTBEAT_SECONDS,
+) -> subprocess.CompletedProcess[str]:
+    """Run command and emit periodic progress while it is still executing."""
+    start = time.monotonic()
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=heartbeat_s)
+            break
+        except subprocess.TimeoutExpired:
+            elapsed = time.monotonic() - start
+            print(f"  [{heartbeat_label}] still running... {elapsed:.0f}s elapsed", flush=True)
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 def pick_vec2parquet_python(proj_dir: Path | None = None) -> str:
@@ -174,15 +201,28 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
         results_dir.mkdir(parents=True, exist_ok=True)
 
         # Run simulation from scenario directory (relative paths in ini)
-        result = subprocess.run(
+        result = _run_with_heartbeat(
             [str(RUN_SH), "-f", "omnetpp.ini", "-c", config,
              "-r", str(results_dir), "-q"],
             cwd=str(scenario_path),
-            capture_output=True, text=True,
+            heartbeat_label=f"{scenario_name}:{config}:sim",
         )
         if result.returncode != 0:
-            print(f"  [{scenario_name}] Simulation failed: {result.stderr[-1000:]}")
+            err_tail = (result.stderr or "").strip()[-1000:]
+            out_tail = (result.stdout or "").strip()[-1000:]
+            print(
+                f"  [{scenario_name}] Simulation failed (exit={result.returncode}).\n"
+                f"    stderr: {err_tail if err_tail else '<empty>'}\n"
+                f"    stdout: {out_tail if out_tail else '<empty>'}"
+            )
             continue
+
+        # Preserve OMNeT++ scalars (.sca) for analysis regardless of parquet status.
+        sca_file = results_dir / f"{config}-#0.sca"
+        if sca_file.is_file():
+            sca_dest = scenario_path / f"{hash_prefix}{suffix}.sca"
+            shutil.copy2(sca_file, sca_dest)
+            print(f"  [{scenario_name}] Copied scalars: {sca_dest.name}")
 
         # Convert .vec to parquet
         vec_file = results_dir / f"{config}-#0.vec"
@@ -195,20 +235,17 @@ def run_scenario(scenario_path: Path, spoofer_host: str | None = None,
         if spoofer_host and spoofer_host != "-":
             cmd.extend(["--spoofer-hosts", spoofer_host])
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = _run_with_heartbeat(
+            cmd,
+            cwd=str(scenario_path),
+            heartbeat_label=f"{scenario_name}:{config}:parquet",
+        )
         if result.returncode != 0:
             print(f"  [{scenario_name}] Parquet conversion failed: {result.stderr[-1000:]}")
             continue
 
         print(f"  [{scenario_name}] Created: {pq_file.name}")
         produced.append(pq_file)
-
-        # Preserve OMNeT++ scalars (.sca) next to parquet for NMAC / analysis
-        sca_file = results_dir / f"{config}-#0.sca"
-        if sca_file.is_file():
-            sca_dest = scenario_path / f"{hash_prefix}{suffix}.sca"
-            shutil.copy2(sca_file, sca_dest)
-            print(f"  [{scenario_name}] Copied scalars: {sca_dest.name}")
 
     # Clean up intermediate results (unless keep_vec)
     if not keep_vec and results_dir.exists():

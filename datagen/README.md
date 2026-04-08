@@ -172,6 +172,8 @@ Distribution-first outputs (for paper tables) are written under `.../charts/`:
 
 - `summary_distribution_table.csv` (median, IQR, bootstrap 95% CI by scenario + variant + metric)
 - `summary_means_table.csv` (legacy file name; now stores median/q1/q3 columns)
+- `<run-root>/run_timing.csv` (wall-clock runtime per scenario-seed pair)
+- `<run-root>/total_runtime_seconds.txt` (total pipeline runtime)
 
 See help:
 

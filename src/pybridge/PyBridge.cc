@@ -7,8 +7,10 @@
 
 #include "PyBridgePy.h"
 #include "PyBridge.h"
+#include <cstdlib>
 #include <filesystem>
 #include <sstream>
+#include <vector>
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
@@ -51,27 +53,59 @@ void PyBridge::initialize()
         // sys.base_prefix stays at /usr so the stdlib is still found.
         py::module_ sys = py::module_::import("sys");
         std::string projDir = STR(PROJ_DIR);
-        std::string venvPrefix = projDir + "/.venv";
-        sys.attr("prefix") = venvPrefix;
-        sys.attr("exec_prefix") = venvPrefix;
 
         // site-packages must match the *embedded* interpreter (linked libpython),
         // not the first pythonX.Y directory under lib/ — lexical / FS order can
         // pick e.g. python3.10 before python3.14 when a stale venv layout exists.
-        std::string venvLib = venvPrefix + "/lib";
         py::tuple version_info = sys.attr("version_info");
         int pyMajor = version_info[0].cast<int>();
         int pyMinor = version_info[1].cast<int>();
-        std::ostringstream sitePath;
-        sitePath << venvLib << "/python" << pyMajor << "." << pyMinor << "/site-packages";
-        std::string venvSitePackages = sitePath.str();
-        if (!std::filesystem::exists(venvSitePackages)) {
-            throw cRuntimeError(
-                "PyBridge: expected venv site-packages at %s — use the same Python as the "
-                "simulation binary (embedded: %d.%d). Recreate .venv with that interpreter and "
-                "pip install -r requirements.txt.",
-                venvSitePackages.c_str(), pyMajor, pyMinor);
+        std::vector<std::string> venvPrefixes;
+        auto addPrefix = [&](const std::string& p) {
+            if (!p.empty())
+                venvPrefixes.push_back(p);
+        };
+
+        // Priority:
+        // 1) explicit env override, 2) derive from ULI_PYTHON, 3) legacy .venv.
+        if (const char* env = std::getenv("ULI_VENV_PREFIX")) {
+            addPrefix(env);
         }
+        if (const char* envPy = std::getenv("ULI_PYTHON")) {
+            std::filesystem::path p(envPy);
+            if (p.has_parent_path() && p.parent_path().has_parent_path()) {
+                addPrefix(p.parent_path().parent_path().string());
+            }
+        }
+        addPrefix(projDir + "/.venv");
+
+        std::string venvPrefix;
+        std::string venvSitePackages;
+        std::ostringstream expectedSuffix;
+        expectedSuffix << "/lib/python" << pyMajor << "." << pyMinor << "/site-packages";
+        for (const auto& prefix : venvPrefixes) {
+            std::string candidate = prefix + expectedSuffix.str();
+            if (std::filesystem::exists(candidate)) {
+                venvPrefix = prefix;
+                venvSitePackages = candidate;
+                break;
+            }
+        }
+        if (venvSitePackages.empty()) {
+            std::ostringstream tried;
+            for (size_t i = 0; i < venvPrefixes.size(); ++i) {
+                if (i > 0) tried << ", ";
+                tried << venvPrefixes[i] << expectedSuffix.str();
+            }
+            throw cRuntimeError(
+                "PyBridge: expected venv site-packages for embedded Python %d.%d. "
+                "Tried: %s. "
+                "Set ULI_VENV_PREFIX, set ULI_PYTHON, or recreate .venv with matching interpreter.",
+                pyMajor, pyMinor, tried.str().c_str());
+        }
+
+        sys.attr("prefix") = venvPrefix;
+        sys.attr("exec_prefix") = venvPrefix;
         py::module_ site = py::module_::import("site");
         site.attr("addsitedir")(venvSitePackages);
     }

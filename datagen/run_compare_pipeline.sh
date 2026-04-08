@@ -158,6 +158,8 @@ RUN_ROOT="$SWEEP_ROOT/$RUN_NAME"
 GEN_DIR="$RUN_ROOT/generated"
 SUMMARY_CSV="$RUN_ROOT/summary.csv"
 GCS_VEC_DIR="$RUN_ROOT/gcs_vectors"
+RUNTIME_CSV="$RUN_ROOT/run_timing.csv"
+OVERALL_START_EPOCH="$(date +%s)"
 
 echo "== Config =="
 echo "Scenarios:     ${SCENARIOS[*]}"
@@ -173,6 +175,8 @@ fi
 export ULI_NET_SIM_IMAGE="$IMAGE"
 
 mkdir -p "$GEN_DIR" "$GCS_VEC_DIR"
+mkdir -p "$RUN_ROOT"
+echo "scenario,seed,scenario_tag,elapsed_seconds" > "$RUNTIME_CSV"
 
 if [[ "$DO_CLEAN" == "1" ]]; then
   echo "== Cleaning prior artifacts for run root =="
@@ -231,11 +235,15 @@ PY
     fi
 
     echo "== Running $scen_tag comparison =="
+    run_start_epoch="$(date +%s)"
     RUN_CMD=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$aware_cfg" "$trust_cfg" --parallel "$PARALLEL")
     if [[ "$KEEP_VEC" == "1" ]]; then
       RUN_CMD+=(--keep-vec)
     fi
     "${RUN_CMD[@]}"
+    run_elapsed=$(( $(date +%s) - run_start_epoch ))
+    echo "$scenario,$seed,$scen_tag,$run_elapsed" >> "$RUNTIME_CSV"
+    echo "== Completed $scen_tag in ${run_elapsed}s =="
   done
 done
 
@@ -270,6 +278,10 @@ if [[ "$DO_PLOT" == "1" ]]; then
 fi
 
 echo "== Done =="
+total_elapsed=$(( $(date +%s) - OVERALL_START_EPOCH ))
+echo "Total runtime: ${total_elapsed}s"
+echo "$total_elapsed" > "$RUN_ROOT/total_runtime_seconds.txt"
 echo "Summary:  $SUMMARY_CSV"
 echo "Vectors:  $GCS_VEC_DIR"
 echo "Charts:   $RUN_ROOT/charts"
+echo "Run timing CSV: $RUNTIME_CSV"

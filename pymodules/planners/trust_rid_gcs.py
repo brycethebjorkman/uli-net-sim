@@ -16,6 +16,7 @@ INI:
 from __future__ import annotations
 
 import numpy as np
+import time
 
 from pymodules.gcs.chance_constraint import is_safe
 
@@ -47,8 +48,14 @@ class TrustRidGcs:
         self.nmac_spoofer_unsafe_count = 0
         self.min_benign_spoofer_distance_now_m = -1.0
         self.min_benign_spoofer_distance_m = float("inf")
+        self._reports_time_total_s = 0.0
+        self._reports_calls = 0
+        self._tick_time_total_s = 0.0
+        self._tick_calls = 0
+        self._max_host_count = 0
 
     def on_gcs_reports(self, data: dict) -> dict | None:
+        t0 = time.perf_counter()
         serial = data["serial_number"]
         claimed_pos = np.array(data["claimed_pos"])
         reports = data["reports"]
@@ -57,7 +64,7 @@ class TrustRidGcs:
         for r in reports:
             self.federate_ids.add(r["host_id"])
 
-        return {
+        out = {
             "log": {
                 "mlat_raw_error": 0.0,
                 "spoofer_detected": 0.0,
@@ -65,6 +72,9 @@ class TrustRidGcs:
                 "hit_count": 0.0,
             },
         }
+        self._reports_time_total_s += max(0.0, time.perf_counter() - t0)
+        self._reports_calls += 1
+        return out
 
     def _spoofer_hid(self, host_ids: list[int]) -> int | None:
         if self._spoofer_host is not None:
@@ -184,8 +194,10 @@ class TrustRidGcs:
         self._nmac_serial_inside_unsafe = inside_now
 
     def on_gcs_tick(self, data: dict) -> dict:
+        t0 = time.perf_counter()
         host_ids = list(data.get("host_ids", []))
         sim_time = float(data.get("time", 0.0))
+        self._max_host_count = max(self._max_host_count, len(host_ids))
 
         if self._spoofer_host is None and host_ids:
             self._spoofer_host = max(int(h) for h in host_ids)
@@ -225,7 +237,7 @@ class TrustRidGcs:
 
             commands[hid] = cmd
 
-        return {
+        out = {
             "commands": commands,
             "visualization": {},
             "log": {
@@ -240,8 +252,19 @@ class TrustRidGcs:
                     float(self.min_benign_spoofer_distance_m)
                     if np.isfinite(self.min_benign_spoofer_distance_m) else -1.0
                 ),
+                "gcs_reports_mean_ms": (
+                    1000.0 * self._reports_time_total_s / float(self._reports_calls)
+                    if self._reports_calls > 0 else 0.0
+                ),
+                "gcs_tick_mean_ms": (
+                    1000.0 * self._tick_time_total_s / float(self._tick_calls)
+                    if self._tick_calls > 0 else 0.0
+                ),
             },
         }
+        self._tick_time_total_s += max(0.0, time.perf_counter() - t0)
+        self._tick_calls += 1
+        return out
 
     def on_gcs_finish(self) -> dict:
         return {
@@ -253,5 +276,15 @@ class TrustRidGcs:
                     float(self.min_benign_spoofer_distance_m)
                     if np.isfinite(self.min_benign_spoofer_distance_m) else -1.0
                 ),
+                "gcs_reports_mean_ms_final": (
+                    1000.0 * self._reports_time_total_s / float(self._reports_calls)
+                    if self._reports_calls > 0 else 0.0
+                ),
+                "gcs_tick_mean_ms_final": (
+                    1000.0 * self._tick_time_total_s / float(self._tick_calls)
+                    if self._tick_calls > 0 else 0.0
+                ),
+                "gcs_compute_total_s_final": float(self._reports_time_total_s + self._tick_time_total_s),
+                "num_hosts_observed_final": float(self._max_host_count),
             },
         }

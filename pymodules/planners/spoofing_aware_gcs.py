@@ -40,6 +40,7 @@ INI usage:
 """
 
 import numpy as np
+import time
 
 from pymodules.gcs.chance_constraint import (
     is_safe,
@@ -123,15 +124,29 @@ class SpoofingAwareGcs:
         self._spoofer_containment_total = 0
         self._spoofer_containment_hits = 0
         self._spoofer_host: int | None = None
+        self._reports_time_total_s = 0.0
+        self._reports_calls = 0
+        self._tick_time_total_s = 0.0
+        self._tick_calls = 0
+        self._max_host_count = 0
+        self._first_seen_time_s: dict[int, float] = {}
+        self._first_detection_time_s: float | None = None
+        self._detection_latency_s: float | None = None
+        self._loc_err_sq_sum = 0.0
+        self._loc_err_abs_sum = 0.0
+        self._loc_samples = 0
 
     # ------------------------------------------------------------------
     # Per-transmission callback
     # ------------------------------------------------------------------
 
     def on_gcs_reports(self, data: dict) -> dict | None:
+        t0 = time.perf_counter()
+        report_time = float(data.get("time", data.get("sim_time", 0.0)))
         serial = data["serial_number"]
         claimed_pos = np.array(data["claimed_pos"])
         reports = data["reports"]
+        self._first_seen_time_s.setdefault(int(serial), report_time)
 
         self.rid_positions[serial] = tuple(claimed_pos)
 
@@ -271,6 +286,11 @@ class SpoofingAwareGcs:
 
                     if self._hit_count.get(serial, 0) >= DETECT_COUNT:
                         self.spoofers.add(serial)
+                        if self._first_detection_time_s is None:
+                            self._first_detection_time_s = report_time
+                        if self._detection_latency_s is None:
+                            t_first = self._first_seen_time_s.get(int(serial), report_time)
+                            self._detection_latency_s = max(0.0, report_time - t_first)
                         print(
                             f"[DETECT] spoofer serial={serial} detected "
                             f"raw_error_m={mlat_raw_error:.2f} "
@@ -307,6 +327,8 @@ class SpoofingAwareGcs:
         }
         if visualization:
             result["visualization"] = visualization
+        self._reports_time_total_s += max(0.0, time.perf_counter() - t0)
+        self._reports_calls += 1
         return result
 
     def _benign_positions_for_nmac(self, ground_truth: dict | None) -> dict[int, np.ndarray]:
@@ -515,8 +537,10 @@ class SpoofingAwareGcs:
     # ------------------------------------------------------------------
 
     def on_gcs_tick(self, data: dict) -> dict:
+        t0 = time.perf_counter()
         host_ids = list(data.get("host_ids", []))
         sim_time = float(data.get("time", 0.0))
+        self._max_host_count = max(self._max_host_count, len(host_ids))
         if self._spoofer_host is None and host_ids:
             # Sweep layouts convention: spoofer is last host index.
             self._spoofer_host = max(int(h) for h in host_ids)
@@ -572,6 +596,11 @@ class SpoofingAwareGcs:
                     containment_miss_now = 0.0
                 else:
                     containment_miss_now = 1.0
+                # Localization accuracy: unsafe-region center vs true spoofer position.
+                loc_err = float(np.linalg.norm(pos_arr - mu))
+                self._loc_err_abs_sum += loc_err
+                self._loc_err_sq_sum += loc_err * loc_err
+                self._loc_samples += 1
 
         self._update_nmac_metrics(
             sim_time,
@@ -608,7 +637,7 @@ class SpoofingAwareGcs:
             visualization["ellipsoid"] = primary_unsafe
             visualization["detected"] = True
 
-        return {
+        out = {
             "commands": commands,
             "visualization": visualization,
             "log": {
@@ -635,8 +664,24 @@ class SpoofingAwareGcs:
                     float(self.min_benign_spoofer_distance_m)
                     if np.isfinite(self.min_benign_spoofer_distance_m) else -1.0
                 ),
+                "gcs_reports_mean_ms": (
+                    1000.0 * self._reports_time_total_s / float(self._reports_calls)
+                    if self._reports_calls > 0 else 0.0
+                ),
+                "gcs_tick_mean_ms": (
+                    1000.0 * self._tick_time_total_s / float(self._tick_calls)
+                    if self._tick_calls > 0 else 0.0
+                ),
+                "detection_latency_s": float(self._detection_latency_s) if self._detection_latency_s is not None else -1.0,
+                "localization_rmse_m": (
+                    float(np.sqrt(self._loc_err_sq_sum / float(self._loc_samples)))
+                    if self._loc_samples > 0 else -1.0
+                ),
             },
         }
+        self._tick_time_total_s += max(0.0, time.perf_counter() - t0)
+        self._tick_calls += 1
+        return out
 
     def on_gcs_finish(self) -> dict:
         """Simulation end: emit final NMAC totals as OMNeT++ scalars (.sca) for analysis filters."""
@@ -654,5 +699,26 @@ class SpoofingAwareGcs:
                     float(self.min_benign_spoofer_distance_m)
                     if np.isfinite(self.min_benign_spoofer_distance_m) else -1.0
                 ),
+                "gcs_reports_mean_ms_final": (
+                    1000.0 * self._reports_time_total_s / float(self._reports_calls)
+                    if self._reports_calls > 0 else 0.0
+                ),
+                "gcs_tick_mean_ms_final": (
+                    1000.0 * self._tick_time_total_s / float(self._tick_calls)
+                    if self._tick_calls > 0 else 0.0
+                ),
+                "gcs_compute_total_s_final": float(self._reports_time_total_s + self._tick_time_total_s),
+                "num_hosts_observed_final": float(self._max_host_count),
+                "first_detection_time_s_final": float(self._first_detection_time_s) if self._first_detection_time_s is not None else -1.0,
+                "detection_latency_s_final": float(self._detection_latency_s) if self._detection_latency_s is not None else -1.0,
+                "localization_mae_m_final": (
+                    float(self._loc_err_abs_sum / float(self._loc_samples))
+                    if self._loc_samples > 0 else -1.0
+                ),
+                "localization_rmse_m_final": (
+                    float(np.sqrt(self._loc_err_sq_sum / float(self._loc_samples)))
+                    if self._loc_samples > 0 else -1.0
+                ),
+                "localization_samples_final": float(self._loc_samples),
             },
         }

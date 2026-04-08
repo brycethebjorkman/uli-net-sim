@@ -1,60 +1,68 @@
 #!/usr/bin/env bash
 #
-# One-command Aware vs TrustRid comparison runner for a scenario config.
+# One-command SpoofingAware vs TrustRID comparison runner.
 #
-# Example:
-#   ./datagen/run_compare_pipeline.sh --scenario-config Scenario_Corners_4x1
-#
-# This script:
-#   1) optionally builds Docker image
-#   2) creates an isolated scenario folder with *_Aware / *_TrustRid leaf configs
-#   3) runs run_batch.py for those two configs
-#   4) writes summary.csv
-#   5) exports GCS vectors for time-series charts
-#   6) runs datagen/plot_sweep_charts.py
+# Supports:
+#   - one scenario or many scenarios
+#   - multiple seeds (e.g., --seeds 0:29)
+#   - combined summary + vector export + charts for paper figures
 #
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./datagen/run_compare_pipeline.sh --scenario-config <ConfigName> [options]
+  ./datagen/run_compare_pipeline.sh [scenario selection] [options]
 
-Required:
-  --scenario-config NAME      Base config in simulations/.../omnetpp.ini
-                              (e.g., Scenario_Corners_4x1)
+Scenario selection (choose one):
+  --scenario-config NAME           Single base config (e.g., Scenario_Corners_4x1)
+  --scenario-configs CSV           Comma-separated list of configs
+  --paper-scenarios                Use paper default set:
+                                   Scenario_Corners_4x1,Scenario_Hub_4x1,
+                                   Scenario_Circle_8x1,Scenario_Hub_8x1
 
-Optional:
-  --base-ini PATH             Source INI (default: simulations/spoofing_aware_with_planning/omnetpp.ini)
-  --run-name NAME             Output run folder name (default: derived from scenario)
-  --sweep-root PATH           Root for outputs (default: simulations/spoofing_aware_with_planning/sweeps)
-  --parallel N                run_batch parallel value (default: 0 = auto)
-  --image NAME                Docker image tag (default: uli-net-sim:latest)
-  --skip-build                Skip docker build
-  --no-clean                  Keep prior run artifacts
-  --no-keep-vec               Do not keep results/*.vec (disables vector export)
-  --no-export-vectors         Skip GCS vector CSV export
-  --no-plot                   Skip chart generation
-  -h, --help                  Show this help
+Options:
+  --seeds SPEC                     Seed spec: "0:29" or "0,1,2" (default: 0)
+  --base-ini PATH                  Source INI (default: simulations/spoofing_aware_with_planning/omnetpp.ini)
+  --run-name NAME                  Output folder under sweep root (default: derived)
+  --sweep-root PATH                Root for outputs (default: simulations/spoofing_aware_with_planning/sweeps)
+  --parallel N                     run_batch parallel value (default: 0 = auto)
+  --image NAME                     Docker image tag (default: uli-net-sim:latest)
+  --skip-build                     Skip docker build
+  --no-clean                       Keep prior run artifacts
+  --no-keep-vec                    Do not keep results/*.vec (disables vector export)
+  --no-export-vectors              Skip GCS vector CSV export
+  --no-plot                        Skip chart generation
+  -h, --help                       Show this help
 EOF
 }
 
-SCENARIO_CONFIG=""
 BASE_INI="simulations/spoofing_aware_with_planning/omnetpp.ini"
 SWEEP_ROOT="simulations/spoofing_aware_with_planning/sweeps"
 RUN_NAME=""
 PARALLEL="0"
 IMAGE="uli-net-sim:latest"
+SEEDS_SPEC="0"
 SKIP_BUILD="0"
 DO_CLEAN="1"
 KEEP_VEC="1"
 EXPORT_VECTORS="1"
 DO_PLOT="1"
 
+SINGLE_SCENARIO=""
+SCENARIOS_CSV=""
+PAPER_SCENARIOS="0"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --scenario-config)
-      SCENARIO_CONFIG="${2:-}"; shift 2 ;;
+      SINGLE_SCENARIO="${2:-}"; shift 2 ;;
+    --scenario-configs)
+      SCENARIOS_CSV="${2:-}"; shift 2 ;;
+    --paper-scenarios)
+      PAPER_SCENARIOS="1"; shift ;;
+    --seeds)
+      SEEDS_SPEC="${2:-}"; shift 2 ;;
     --base-ini)
       BASE_INI="${2:-}"; shift 2 ;;
     --run-name)
@@ -84,46 +92,111 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$SCENARIO_CONFIG" ]]; then
-  echo "Missing required argument: --scenario-config" >&2
-  usage
-  exit 2
-fi
-
 if [[ ! -f "$BASE_INI" ]]; then
   echo "Base INI not found: $BASE_INI" >&2
   exit 1
 fi
 
+declare -a SCENARIOS=()
+if [[ "$PAPER_SCENARIOS" == "1" ]]; then
+  SCENARIOS=(
+    "Scenario_Corners_4x1"
+    "Scenario_Hub_4x1"
+    "Scenario_Circle_8x1"
+    "Scenario_Hub_8x1"
+  )
+elif [[ -n "$SCENARIOS_CSV" ]]; then
+  IFS=',' read -r -a SCENARIOS <<<"$SCENARIOS_CSV"
+elif [[ -n "$SINGLE_SCENARIO" ]]; then
+  SCENARIOS=("$SINGLE_SCENARIO")
+else
+  echo "Choose one scenario selection: --scenario-config, --scenario-configs, or --paper-scenarios" >&2
+  usage
+  exit 2
+fi
+
+declare -a SEEDS=()
+if [[ "$SEEDS_SPEC" == *:* ]]; then
+  start="${SEEDS_SPEC%%:*}"
+  end="${SEEDS_SPEC##*:}"
+  if ! [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ ]]; then
+    echo "Invalid --seeds range: $SEEDS_SPEC (expected like 0:29)" >&2
+    exit 2
+  fi
+  if (( start > end )); then
+    echo "Invalid --seeds range: start > end" >&2
+    exit 2
+  fi
+  for ((s=start; s<=end; s++)); do
+    SEEDS+=("$s")
+  done
+else
+  IFS=',' read -r -a raw_seeds <<<"$SEEDS_SPEC"
+  for s in "${raw_seeds[@]}"; do
+    if ! [[ "$s" =~ ^[0-9]+$ ]]; then
+      echo "Invalid seed in --seeds: $s" >&2
+      exit 2
+    fi
+    SEEDS+=("$s")
+  done
+fi
+
+if [[ ${#SEEDS[@]} -eq 0 ]]; then
+  echo "No seeds resolved from --seeds $SEEDS_SPEC" >&2
+  exit 2
+fi
+
 if [[ -z "$RUN_NAME" ]]; then
-  # Scenario_Corners_4x1 -> corners_4x1
-  RUN_NAME="$(printf '%s' "$SCENARIO_CONFIG" | sed 's/^Scenario_//' | tr '[:upper:]' '[:lower:]')"
+  if [[ ${#SCENARIOS[@]} -eq 1 ]]; then
+    RUN_NAME="$(printf '%s' "${SCENARIOS[0]}" | sed 's/^Scenario_//' | tr '[:upper:]' '[:lower:]')_sweep"
+  else
+    RUN_NAME="paper_suite"
+  fi
 fi
 
 RUN_ROOT="$SWEEP_ROOT/$RUN_NAME"
 GEN_DIR="$RUN_ROOT/generated"
-SCEN_DIR="$GEN_DIR/${RUN_NAME}_s00000"
 SUMMARY_CSV="$RUN_ROOT/summary.csv"
 GCS_VEC_DIR="$RUN_ROOT/gcs_vectors"
 
-AWARE_CFG="${SCENARIO_CONFIG}_Aware"
-TRUST_CFG="${SCENARIO_CONFIG}_TrustRid"
-
 echo "== Config =="
-echo "Scenario:      $SCENARIO_CONFIG"
-echo "Aware config:  $AWARE_CFG"
-echo "Trust config:  $TRUST_CFG"
+echo "Scenarios:     ${SCENARIOS[*]}"
+echo "Seeds:         ${SEEDS[*]}"
 echo "Run root:      $RUN_ROOT"
+echo "Parallel:      $PARALLEL"
 
 if [[ "$SKIP_BUILD" == "0" ]]; then
   echo "== Building Docker image: $IMAGE =="
   docker build -f Containerfile -t "$IMAGE" .
 fi
 
-mkdir -p "$SCEN_DIR" "$GCS_VEC_DIR"
+export ULI_NET_SIM_IMAGE="$IMAGE"
 
-echo "== Writing isolated INI: $SCEN_DIR/omnetpp.ini =="
-python3 - "$BASE_INI" "$SCEN_DIR/omnetpp.ini" "$SCENARIO_CONFIG" "$AWARE_CFG" "$TRUST_CFG" <<'PY'
+mkdir -p "$GEN_DIR" "$GCS_VEC_DIR"
+
+if [[ "$DO_CLEAN" == "1" ]]; then
+  echo "== Cleaning prior artifacts for run root =="
+  rm -rf "$GEN_DIR" "$RUN_ROOT/charts" || true
+  mkdir -p "$GEN_DIR" "$GCS_VEC_DIR"
+  rm -f "$SUMMARY_CSV" || true
+  rm -f "$GCS_VEC_DIR"/*.csv || true
+fi
+
+for scenario in "${SCENARIOS[@]}"; do
+  scen_slug="$(printf '%s' "$scenario" | sed 's/^Scenario_//' | tr '[:upper:]' '[:lower:]')"
+  for seed in "${SEEDS[@]}"; do
+    seed_pad="$(printf '%05d' "$seed")"
+    scen_tag="${scenario}_s${seed_pad}"
+    dir_tag="${scen_slug}_s${seed_pad}"
+    scen_dir="$GEN_DIR/$dir_tag"
+    aware_cfg="${scen_tag}_Aware"
+    trust_cfg="${scen_tag}_TrustRid"
+
+    mkdir -p "$scen_dir"
+    ini_out="$scen_dir/omnetpp.ini"
+
+    echo "== Writing isolated INI: $ini_out =="
+    python3 - "$BASE_INI" "$ini_out" "$scenario" "$aware_cfg" "$trust_cfg" "$seed" <<'PY'
 from pathlib import Path
 import sys
 
@@ -132,6 +205,7 @@ out_ini = Path(sys.argv[2])
 scenario = sys.argv[3]
 aware = sys.argv[4]
 trust = sys.argv[5]
+seed = int(sys.argv[6])
 
 text = base_ini.read_text()
 append = f"""
@@ -139,46 +213,48 @@ append = f"""
 # ---- Auto-added by datagen/run_compare_pipeline.sh ----
 [Config {aware}]
 extends = {scenario}
+seed-set = {seed}
 *.gcs[0].pyClass = "pymodules.planners.spoofing_aware_gcs.SpoofingAwareGcs"
 
 [Config {trust}]
 extends = {scenario}
+seed-set = {seed}
 *.gcs[0].pyClass = "pymodules.planners.trust_rid_gcs.TrustRidGcs"
 """
 out_ini.write_text(text + append)
 print(f"Wrote {out_ini}")
 PY
 
-if [[ "$DO_CLEAN" == "1" ]]; then
-  echo "== Cleaning prior artifacts for run folder =="
-  rm -f "$SCEN_DIR"/*.parquet "$SCEN_DIR"/*.sca || true
-  rm -rf "$SCEN_DIR"/results || true
-  rm -f "$SUMMARY_CSV" || true
-  rm -f "$GCS_VEC_DIR"/*.csv || true
-fi
+    if [[ "$DO_CLEAN" == "1" ]]; then
+      rm -f "$scen_dir"/*.parquet "$scen_dir"/*.sca || true
+      rm -rf "$scen_dir"/results || true
+    fi
 
-echo "== Running scenario comparison (Aware + TrustRid) =="
-RUN_CMD=(./scripts/docker-run.sh python3 datagen/run_batch.py "$SCEN_DIR" --configs "$AWARE_CFG" "$TRUST_CFG" --parallel "$PARALLEL")
-if [[ "$KEEP_VEC" == "1" ]]; then
-  RUN_CMD+=(--keep-vec)
-fi
-"${RUN_CMD[@]}"
+    echo "== Running $scen_tag comparison =="
+    RUN_CMD=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$aware_cfg" "$trust_cfg" --parallel "$PARALLEL")
+    if [[ "$KEEP_VEC" == "1" ]]; then
+      RUN_CMD+=(--keep-vec)
+    fi
+    "${RUN_CMD[@]}"
+  done
+done
 
-echo "== Writing scalar summary CSV =="
+echo "== Writing combined scalar summary CSV =="
 ./scripts/docker-run.sh python3 -m pymodules.analysis.spoofing_batch_metrics \
   "$GEN_DIR" \
   -o "$SUMMARY_CSV"
 
 if [[ "$EXPORT_VECTORS" == "1" && "$KEEP_VEC" == "1" ]]; then
-  echo "== Exporting GCS vectors =="
+  echo "== Exporting GCS vectors (all runs) =="
   shopt -s nullglob
-  vecs=("$SCEN_DIR"/results/*-#0.vec)
+  vecs=("$GEN_DIR"/*/results/*-#0.vec)
   if [[ ${#vecs[@]} -eq 0 ]]; then
-    echo "No .vec files found under $SCEN_DIR/results; skipping vector export."
+    echo "No .vec files found under $GEN_DIR/*/results; skipping vector export."
   else
     for vec in "${vecs[@]}"; do
+      scenedir="$(basename "$(dirname "$(dirname "$vec")")")"
       runbase="$(basename "$vec" .vec)"
-      out="$GCS_VEC_DIR/${runbase}-gcs.csv"
+      out="$GCS_VEC_DIR/${scenedir}-${runbase}-gcs.csv"
       ./scripts/docker-run.sh opp_scavetool export -F CSV-R -x columnNames=true \
         -f 'type=~"vector" and module=~"*.gcs[*]" and (name=~"*min_benign_spoofer_distance_now_m*" or name=~"*min_benign_spoofer_distance_running_min_m*" or name=~"*spoofer_containment_rate*" or name=~"*nmac_proximity_total*" or name=~"*nmac_benign_spoofer_total*" or name=~"*nmac_spoofer_unsafe_total*")' \
         -o "$out" "$vec"
@@ -188,7 +264,7 @@ if [[ "$EXPORT_VECTORS" == "1" && "$KEEP_VEC" == "1" ]]; then
 fi
 
 if [[ "$DO_PLOT" == "1" ]]; then
-  echo "== Generating charts =="
+  echo "== Generating charts and distribution tables =="
   ./scripts/docker-run.sh python3 datagen/plot_sweep_charts.py \
     --sweep-root "$RUN_ROOT"
 fi

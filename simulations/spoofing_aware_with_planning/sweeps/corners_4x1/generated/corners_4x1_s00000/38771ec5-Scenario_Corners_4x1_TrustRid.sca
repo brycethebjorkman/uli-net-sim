@@ -1,8 +1,8 @@
 version 3
-run Scenario_Corners_4x1_TrustRid-0-20260408-07:47:36-89
+run Scenario_Corners_4x1_TrustRid-0-20260408-07:56:58-89
 attr configname Scenario_Corners_4x1_TrustRid
-attr datetime 20260408-07:47:36
-attr datetimef 20260408-074736
+attr datetime 20260408-07:56:58
+attr datetimef 20260408-075658
 attr experiment Scenario_Corners_4x1_TrustRid
 attr inifile omnetpp.ini
 attr iterationvars ""

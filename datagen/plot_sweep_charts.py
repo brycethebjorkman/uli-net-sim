@@ -218,13 +218,13 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
                 continue
             med = g.groupby("time", as_index=False)["value"].median()
             ax.plot(med["time"], med["value"], label=variant)
-        nmac_threshold_m = 10.0
+        nmac_threshold_m = 50.0
         ax.axhline(
             y=nmac_threshold_m,
             color="crimson",
             linestyle="--",
             linewidth=1.2,
-            label="NMAC threshold (10 m)",
+            label="NMAC threshold (50 m)",
         )
         ax.set_title("Min Benign-Spoofer Distance Through Time (Median Across Runs)")
         ax.set_xlabel("time (s)")

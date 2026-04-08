@@ -1,8 +1,8 @@
 version 3
-run Scenario_Corners_4x1_Aware-0-20260408-07:46:45-29
+run Scenario_Corners_4x1_Aware-0-20260408-07:56:08-29
 attr configname Scenario_Corners_4x1_Aware
-attr datetime 20260408-07:46:45
-attr datetimef 20260408-074645
+attr datetime 20260408-07:56:08
+attr datetimef 20260408-075608
 attr experiment Scenario_Corners_4x1_Aware
 attr inifile omnetpp.ini
 attr iterationvars ""
@@ -99,11 +99,11 @@ par BasicUav.gcs[0] sendControlCommands true
 par BasicUav.gcs[0] tickInterval 0.25s
 attr unit s
 scalar BasicUav.gcs[0] nmac_proximity_final 0
-scalar BasicUav.gcs[0] nmac_benign_spoofer_final 1
+scalar BasicUav.gcs[0] nmac_benign_spoofer_final 0
 scalar BasicUav.gcs[0] nmac_spoofer_unsafe_final 3
 scalar BasicUav.gcs[0] num_spoofers_final 1
 scalar BasicUav.gcs[0] spoofer_containment_rate_final 0.78205128205128
-scalar BasicUav.gcs[0] min_benign_spoofer_distance_final_m 0
+scalar BasicUav.gcs[0] min_benign_spoofer_distance_final_m 58.961943099455
 par BasicUav.host[0].radioIn[0].channel typename "\"ned.IdealChannel\""
 par BasicUav.host[0].mobility typename "\"uav_rid.mobility.MultirotorMobility\""
 par BasicUav.host[0].mobility subjectModule "\"^\""

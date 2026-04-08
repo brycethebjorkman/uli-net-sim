@@ -63,8 +63,8 @@ Notes:
 
 `summary.csv` includes (per seed):
 
-- `nmac_proximity_*`: benign-vs-benign proximity NMAC entry counts (`< 10m`)
-- `nmac_benign_spoofer_*`: benign-vs-spoofer proximity NMAC entry counts (`< 10m`)
+- `nmac_proximity_*`: benign-vs-benign proximity NMAC entry counts (`< 50m`)
+- `nmac_benign_spoofer_*`: benign-vs-spoofer proximity NMAC entry counts (`< 50m`)
 - `nmac_spoofer_unsafe_*`: benign entries into the published unsafe region
 - `min_benign_spoofer_distance_*_m`: minimum benign-to-spoofer distance over run (meters)
 - `spoofer_containment_rate_*`: fraction of checks where unsafe region contains true spoofer
@@ -147,6 +147,18 @@ charts) with a single script:
 Common options:
 
 ```bash
+# 30-seed sweep for one scenario
+./datagen/run_compare_pipeline.sh \
+  --scenario-config Scenario_Corners_4x1 \
+  --seeds 0:29 --parallel 0
+
+# Paper suite (4 scenarios) with 30 seeds each
+./datagen/run_compare_pipeline.sh \
+  --paper-scenarios \
+  --seeds 0:29 \
+  --run-name paper_suite_30seeds \
+  --parallel 0
+
 # Skip docker build, auto-parallel, keep old artifacts
 ./datagen/run_compare_pipeline.sh \
   --scenario-config Scenario_Corners_4x1 \
@@ -155,6 +167,11 @@ Common options:
 # Use a different scenario config from the same base INI
 ./datagen/run_compare_pipeline.sh --scenario-config Scenario_Hub_4x1
 ```
+
+Distribution-first outputs (for paper tables) are written under `.../charts/`:
+
+- `summary_distribution_table.csv` (median, IQR, bootstrap 95% CI by scenario + variant + metric)
+- `summary_means_table.csv` (legacy file name; now stores median/q1/q3 columns)
 
 See help:
 

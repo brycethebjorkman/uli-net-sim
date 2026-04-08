@@ -19,7 +19,7 @@ import numpy as np
 
 from pymodules.gcs.chance_constraint import is_safe
 
-NMAC_PROXIMITY_M = 10.0
+NMAC_PROXIMITY_M = 50.0
 DEFAULT_AGENT_RADIUS = 60.0
 
 

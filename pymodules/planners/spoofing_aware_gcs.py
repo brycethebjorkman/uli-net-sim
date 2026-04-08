@@ -22,9 +22,9 @@ Two-phase pipeline per the paper (AIAA SciTech '26, Sec. V-B):
 
   NMAC metrics (evaluated on GCS ticks; uses ``ground_truth_positions`` from
   GcsModule when present — true mobility from OMNeT++ — else RID positions):
-    - Proximity: any pair of benign agents with 3D separation < 10 m (new
+    - Proximity: any pair of benign agents with 3D separation < 50 m (new
       entry into that condition per pair counts once until they separate).
-    - Benign-vs-spoofer proximity: any benign agent within 10 m of the true
+    - Benign-vs-spoofer proximity: any benign agent within 50 m of the true
       spoofer host (edge-counted per benign agent).
     - Spoofer unsafe: benign agent inside the chance-constraint ellipsoid
       (same is_safe test as the MDP hard constraint); entry events per serial.
@@ -59,7 +59,7 @@ DETECT_COUNT = 3              # consecutive hits to declare spoofer
 DEFAULT_AGENT_RADIUS = 60.0
 
 # NMAC: pairwise proximity (m); spoofer unsafe uses chance-constraint ellipsoid (is_safe)
-NMAC_PROXIMITY_M = 10.0
+NMAC_PROXIMITY_M = 50.0
 TX_EST_EMA = 0.2              # smoothing on dynamic TX estimate
 TX_EST_MAX_STEP_DB = 2.0      # max per-update TX change (dB)
 TX_LOCK_MIN_DBM = -50.0

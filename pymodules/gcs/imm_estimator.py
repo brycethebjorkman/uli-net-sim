@@ -97,25 +97,59 @@ class IMMEstimator:
     unbounded covariance growth between measurements.
     """
 
-    def __init__(self, dt: float = 1.0):
+    def __init__(
+        self,
+        dt: float = 1.0,
+        cv_pos_noise: float = 2.0,
+        cv_vel_noise: float = 40.0,
+        cv_measurement_noise: float = 100.0,
+        ca_pos_noise: float = 2.0,
+        ca_vel_noise: float = 25.0,
+        ca_acc_noise: float = 60.0,
+        ca_measurement_noise: float = 100.0,
+        init_mode_cv: float = 0.6,
+        p_cv_stay: float = 0.95,
+        p_ca_stay: float = 0.95,
+    ):
         # Use a more responsive process model so a maneuvering spoofer track
         # does not remain anchored after detection.
         self.dt = float(max(dt, 1e-3))
+        cv_measurement_noise = float(max(cv_measurement_noise, 1e-6))
+        ca_measurement_noise = float(max(ca_measurement_noise, 1e-6))
         self.kf_cv = KalmanFilter3D.create_cv(
-            self.dt, pos_noise=2.0, vel_noise=40.0, measurement_noise=100.0
+            self.dt,
+            pos_noise=float(max(cv_pos_noise, 1e-9)),
+            vel_noise=float(max(cv_vel_noise, 1e-9)),
+            measurement_noise=cv_measurement_noise,
         )
         self.kf_ca = KalmanFilter3D.create_ca(
-            self.dt, pos_noise=2.0, vel_noise=25.0, acc_noise=60.0, measurement_noise=100.0
+            self.dt,
+            pos_noise=float(max(ca_pos_noise, 1e-9)),
+            vel_noise=float(max(ca_vel_noise, 1e-9)),
+            acc_noise=float(max(ca_acc_noise, 1e-9)),
+            measurement_noise=ca_measurement_noise,
         )
-        self.mu = np.array([0.6, 0.4])  # prefer CV (spoofer likely steady)
-        self.pi = np.array([[0.95, 0.05],
-                            [0.05, 0.95]])
+        init_mode_cv = float(np.clip(init_mode_cv, 0.0, 1.0))
+        self.mu = np.array([init_mode_cv, 1.0 - init_mode_cv], dtype=float)
+        p_cv_stay = float(np.clip(p_cv_stay, 0.0, 1.0))
+        p_ca_stay = float(np.clip(p_ca_stay, 0.0, 1.0))
+        self.pi = np.array(
+            [
+                [p_cv_stay, 1.0 - p_cv_stay],
+                [1.0 - p_ca_stay, p_ca_stay],
+            ],
+            dtype=float,
+        )
         self._initialized = False
         self._last_z: np.ndarray | None = None
         self._snap_distance_m = 15.0
         self._min_pos_var = 1.0
         self._max_pos_var = 2500.0
         self._predicts_since_update = 0
+        self._last_nis_cv = float("nan")
+        self._last_nis_ca = float("nan")
+        self._last_nis_mix = float("nan")
+        self._last_meas_time_s = float("nan")
 
     def _clamp_pos_cov(self, P: np.ndarray) -> np.ndarray:
         """Clamp position covariance eigenvalues to avoid collapse/blow-up."""
@@ -180,6 +214,7 @@ class IMMEstimator:
         z: np.ndarray,
         meas_cov: np.ndarray | None = None,
         do_predict: bool = True,
+        measurement_time_s: float | None = None,
     ):
         """Predict-then-update cycle, called when a new measurement arrives."""
         z = np.asarray(z, dtype=float).ravel()[:3]
@@ -195,6 +230,8 @@ class IMMEstimator:
             self._initialized = True
             self._last_z = z.copy()
             self._predicts_since_update = 0
+            if measurement_time_s is not None:
+                self._last_meas_time_s = float(measurement_time_s)
             return
 
         # Finite-difference velocity cue from multilateration positions.
@@ -217,11 +254,16 @@ class IMMEstimator:
 
         L_cv = self._gaussian_likelihood(y_cv, S_cv)
         L_ca = self._gaussian_likelihood(y_ca, S_ca)
+        self._last_nis_cv = self._nis(y_cv, S_cv)
+        self._last_nis_ca = self._nis(y_ca, S_ca)
 
         c = self.mu[0] * L_cv + self.mu[1] * L_ca
         if c > 1e-300:
             self.mu[0] = self.mu[0] * L_cv / c
             self.mu[1] = self.mu[1] * L_ca / c
+        self._last_nis_mix = (
+            float(self.mu[0]) * self._last_nis_cv + float(self.mu[1]) * self._last_nis_ca
+        )
 
         # If prediction is far from current multilateration, snap position to
         # measurement to prevent a "stuck bubble" while preserving covariance.
@@ -242,6 +284,8 @@ class IMMEstimator:
 
         self._last_z = z.copy()
         self._predicts_since_update = 0
+        if measurement_time_s is not None:
+            self._last_meas_time_s = float(measurement_time_s)
 
     def get_state(self) -> tuple[np.ndarray, np.ndarray]:
         """Return merged (mu_pos, Sigma_pos) — position only."""
@@ -258,6 +302,16 @@ class IMMEstimator:
             self.mu[1] * (cov_ca + d_ca @ d_ca.T)
         )
         return mu_merged, cov_merged
+
+    def get_diagnostics(self) -> dict[str, float]:
+        return {
+            "mode_prob_cv": float(self.mu[0]),
+            "mode_prob_ca": float(self.mu[1]),
+            "nis_cv": float(self._last_nis_cv),
+            "nis_ca": float(self._last_nis_ca),
+            "nis_mix": float(self._last_nis_mix),
+            "last_measurement_time_s": float(self._last_meas_time_s),
+        }
 
     @staticmethod
     def _gaussian_likelihood(y, S):
@@ -291,3 +345,26 @@ class IMMEstimator:
             except np.linalg.LinAlgError:
                 continue
         return 1e-300
+
+    @staticmethod
+    def _nis(y: np.ndarray, S: np.ndarray) -> float:
+        yv = np.nan_to_num(np.asarray(y, dtype=float).ravel(), nan=0.0, posinf=0.0, neginf=0.0)
+        Sm = np.nan_to_num(np.asarray(S, dtype=float), nan=1e3, posinf=1e6, neginf=1e3)
+        n = yv.shape[0]
+        if Sm.shape != (n, n):
+            return float("nan")
+        Sm = 0.5 * (Sm + Sm.T)
+        for k in range(6):
+            jitter = (10.0 ** k) * 1e-9
+            Sj = Sm + np.eye(n) * jitter
+            try:
+                Sinv = np.linalg.inv(Sj)
+            except np.linalg.LinAlgError:
+                try:
+                    Sinv = np.linalg.pinv(Sj)
+                except np.linalg.LinAlgError:
+                    continue
+            nis = float(yv @ Sinv @ yv)
+            if np.isfinite(nis):
+                return nis
+        return float("nan")

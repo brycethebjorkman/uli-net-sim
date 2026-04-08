@@ -170,6 +170,8 @@ SUMMARY_CSV="$RUN_ROOT/summary.csv"
 GCS_VEC_DIR="$RUN_ROOT/gcs_vectors"
 RUNTIME_CSV="$RUN_ROOT/run_timing.csv"
 OVERALL_START_EPOCH="$(date +%s)"
+FAILED_RUN_JOBS=0
+PIPELINE_FAILED=0
 
 if [[ "$PARALLEL" == "0" ]]; then
   if command -v nproc >/dev/null 2>&1; then
@@ -198,7 +200,7 @@ export ULI_NET_SIM_IMAGE="$IMAGE"
 
 mkdir -p "$GEN_DIR" "$GCS_VEC_DIR"
 mkdir -p "$RUN_ROOT"
-echo "scenario,seed,scenario_tag,elapsed_seconds" > "$RUNTIME_CSV"
+echo "scenario,seed,scenario_tag,elapsed_seconds,elapsed_aware_seconds,elapsed_trust_rid_seconds" > "$RUNTIME_CSV"
 
 if [[ "$DO_CLEAN" == "1" ]]; then
   echo "== Cleaning prior artifacts for run root =="
@@ -217,17 +219,29 @@ run_one() {
   local trust_cfg="$6"
   local run_start_epoch
   local run_elapsed
-  local RUN_CMD
+  local RUN_CMD_AWARE
+  local RUN_CMD_TRUST
+  local aware_elapsed
+  local trust_elapsed
+  local aware_start
+  local trust_start
 
   echo "== Running $scen_tag comparison =="
   run_start_epoch="$(date +%s)"
-  RUN_CMD=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$aware_cfg" "$trust_cfg" --parallel 1)
+  RUN_CMD_AWARE=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$aware_cfg" --parallel 1)
+  RUN_CMD_TRUST=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$trust_cfg" --parallel 1)
   if [[ "$KEEP_VEC" == "1" ]]; then
-    RUN_CMD+=(--keep-vec)
+    RUN_CMD_AWARE+=(--keep-vec)
+    RUN_CMD_TRUST+=(--keep-vec)
   fi
-  "${RUN_CMD[@]}"
+  aware_start="$(date +%s)"
+  "${RUN_CMD_AWARE[@]}"
+  aware_elapsed=$(( $(date +%s) - aware_start ))
+  trust_start="$(date +%s)"
+  "${RUN_CMD_TRUST[@]}"
+  trust_elapsed=$(( $(date +%s) - trust_start ))
   run_elapsed=$(( $(date +%s) - run_start_epoch ))
-  echo "$scenario,$seed,$scen_tag,$run_elapsed" >> "$RUNTIME_CSV"
+  echo "$scenario,$seed,$scen_tag,$run_elapsed,$aware_elapsed,$trust_elapsed" >> "$RUNTIME_CSV"
   echo "== Completed $scen_tag in ${run_elapsed}s =="
 }
 
@@ -281,17 +295,30 @@ PY
 
     run_one "$scenario" "$seed" "$scen_tag" "$scen_dir" "$aware_cfg" "$trust_cfg" &
     while (( $(jobs -pr | wc -l) >= PARALLEL )); do
-      wait -n
+      if ! wait -n; then
+        FAILED_RUN_JOBS=$((FAILED_RUN_JOBS + 1))
+        PIPELINE_FAILED=1
+        echo "[WARN] A background scenario run failed (running total failures: $FAILED_RUN_JOBS). Continuing..."
+      fi
     done
   done
 done
 
-wait
+while (( $(jobs -pr | wc -l) > 0 )); do
+  if ! wait -n; then
+    FAILED_RUN_JOBS=$((FAILED_RUN_JOBS + 1))
+    PIPELINE_FAILED=1
+    echo "[WARN] A background scenario run failed (running total failures: $FAILED_RUN_JOBS). Continuing..."
+  fi
+done
 
 echo "== Writing combined scalar summary CSV =="
-./scripts/docker-run.sh python3 -m pymodules.analysis.spoofing_batch_metrics \
+if ! ./scripts/docker-run.sh python3 -m pymodules.analysis.spoofing_batch_metrics \
   "$GEN_DIR" \
-  -o "$SUMMARY_CSV"
+  -o "$SUMMARY_CSV"; then
+  PIPELINE_FAILED=1
+  echo "[WARN] Summary CSV generation failed."
+fi
 
 if [[ "$EXPORT_VECTORS" == "1" && "$KEEP_VEC" == "1" ]]; then
   echo "== Exporting GCS vectors (all runs) =="
@@ -304,9 +331,13 @@ if [[ "$EXPORT_VECTORS" == "1" && "$KEEP_VEC" == "1" ]]; then
       scenedir="$(basename "$(dirname "$(dirname "$vec")")")"
       runbase="$(basename "$vec" .vec)"
       out="$GCS_VEC_DIR/${scenedir}-${runbase}-gcs.csv"
-      ./scripts/docker-run.sh opp_scavetool export -F CSV-R -x columnNames=true \
-        -f 'type=~"vector" and module=~"*.gcs[*]" and (name=~"*min_benign_spoofer_distance_now_m*" or name=~"*min_benign_spoofer_distance_running_min_m*" or name=~"*spoofer_containment_rate*" or name=~"*nmac_proximity_total*" or name=~"*nmac_benign_spoofer_total*" or name=~"*nmac_spoofer_unsafe_total*" or name=~"*mlat_raw_error*" or name=~"*unsafe_radius_max_m*")' \
-        -o "$out" "$vec"
+      if ! ./scripts/docker-run.sh opp_scavetool export -F CSV-R -x columnNames=true \
+        -f 'type=~"vector" and module=~"*.gcs[*]" and (name=~"*min_benign_spoofer_distance_now_m*" or name=~"*min_benign_spoofer_distance_running_min_m*" or name=~"*spoofer_containment_rate*" or name=~"*nmac_proximity_total*" or name=~"*nmac_benign_spoofer_total*" or name=~"*nmac_spoofer_unsafe_total*" or name=~"*mlat_raw_error*" or name=~"*localization_rmse_m*" or name=~"*unsafe_radius_max_m*" or name=~"*imm_mode_prob_cv*" or name=~"*imm_mode_prob_ca*" or name=~"*imm_nis_cv*" or name=~"*imm_nis_ca*" or name=~"*imm_nis_mix*" or name=~"*imm_est_x_m*" or name=~"*imm_est_y_m*" or name=~"*imm_true_x_m*" or name=~"*imm_true_y_m*" or name=~"*imm_error_norm_m*" or name=~"*imm_nees*")' \
+        -o "$out" "$vec"; then
+        PIPELINE_FAILED=1
+        echo "[WARN] Vector export failed for $vec"
+        continue
+      fi
       echo "Wrote $out"
     done
   fi
@@ -314,8 +345,11 @@ fi
 
 if [[ "$DO_PLOT" == "1" ]]; then
   echo "== Generating charts and distribution tables =="
-  ./scripts/docker-run.sh python3 datagen/plot_sweep_charts.py \
-    --sweep-root "$RUN_ROOT"
+  if ! ./scripts/docker-run.sh python3 datagen/plot_sweep_charts.py \
+    --sweep-root "$RUN_ROOT"; then
+    PIPELINE_FAILED=1
+    echo "[WARN] Chart generation failed."
+  fi
 fi
 
 echo "== Done =="
@@ -326,3 +360,10 @@ echo "Summary:  $SUMMARY_CSV"
 echo "Vectors:  $GCS_VEC_DIR"
 echo "Charts:   $RUN_ROOT/charts"
 echo "Run timing CSV: $RUNTIME_CSV"
+if (( FAILED_RUN_JOBS > 0 )); then
+  echo "Background run failures: $FAILED_RUN_JOBS"
+fi
+if (( PIPELINE_FAILED != 0 )); then
+  echo "[WARN] Pipeline completed with one or more failures."
+  exit 1
+fi

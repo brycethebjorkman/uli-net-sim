@@ -14,9 +14,15 @@ IMAGE="${ULI_NET_SIM_IMAGE:-uli-net-sim:latest}"
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
 
+ENV_ARGS=()
+for name in $(env | awk -F= '/^ULI_IMM_/ {print $1}'); do
+  ENV_ARGS+=("-e" "$name")
+done
+
 exec docker run --rm \
   --user "${HOST_UID}:${HOST_GID}" \
   -e HOME=/tmp \
+  "${ENV_ARGS[@]}" \
   -v "$ROOT:/usr/uli-net-sim/uav_rid" \
   -w /usr/uli-net-sim/uav_rid \
   "$IMAGE" \

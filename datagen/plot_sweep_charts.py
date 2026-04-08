@@ -17,6 +17,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+NMAC_THRESHOLD_M = 50.0
+CHI2_3DOF_95_LO = 0.21579528262389785
+CHI2_3DOF_95_HI = 9.348403604496148
+
 
 def _variant_from_name(name: str) -> str:
     return "TrustRID" if "TrustRid" in name else ("SpoofingAware" if "Aware" in name else "Unknown")
@@ -189,7 +193,8 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
     plt.close(fig)
     out_paths.append(p)
 
-    # Median chart with IQR bars.
+    # Keep summary_means_table.csv for downstream analysis, but stop generating
+    # summary_means.png because it duplicates summary_boxplots.png information.
     mean_specs = [
         (
             "Total NMACs (real-position)",
@@ -239,28 +244,6 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 trust_q3 = float(np.quantile(trust_vals, 0.75))
         rows.append((label, aware_med, aware_q1, aware_q3, trust_med, trust_q1, trust_q3))
     if rows:
-        labels = [r[0] for r in rows]
-        aware_vals = [r[1] for r in rows]
-        aware_err_lo = [r[1] - r[2] for r in rows]
-        aware_err_hi = [r[3] - r[1] for r in rows]
-        trust_vals = [r[4] for r in rows]
-        trust_err_lo = [r[4] - r[5] if np.isfinite(r[4]) and np.isfinite(r[5]) else 0.0 for r in rows]
-        trust_err_hi = [r[6] - r[4] if np.isfinite(r[4]) and np.isfinite(r[6]) else 0.0 for r in rows]
-        x = range(len(labels))
-        width = 0.38
-        fig, ax = plt.subplots(figsize=(14, 5.5))
-        ax.bar([i - width / 2 for i in x], aware_vals, width=width, label="SpoofingAware", yerr=[aware_err_lo, aware_err_hi], capsize=3)
-        ax.bar([i + width / 2 for i in x], trust_vals, width=width, label="TrustRID", yerr=[trust_err_lo, trust_err_hi], capsize=3)
-        ax.set_xticks(list(x))
-        ax.set_xticklabels(labels, rotation=20, ha="right")
-        ax.set_title("Median Metrics Across Seeds with IQR (TrustRID vs SpoofingAware)")
-        ax.legend()
-        fig.tight_layout()
-        p = out_dir / "summary_means.png"
-        fig.savefig(p, dpi=220)
-        plt.close(fig)
-        out_paths.append(p)
-
         mean_df = pd.DataFrame(
             rows,
             columns=[
@@ -276,6 +259,108 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
         p_csv = out_dir / "summary_means_table.csv"
         mean_df.to_csv(p_csv, index=False)
         out_paths.append(p_csv)
+
+    stale_summary_means_png = out_dir / "summary_means.png"
+    if stale_summary_means_png.exists():
+        stale_summary_means_png.unlink()
+
+    # Runtime comparison across scenarios: SpoofingAware vs TrustRID.
+    # Prefer full wall-clock per-variant runtime from run_timing.csv.
+    rt = None
+    runtime_label = ""
+    rt_csv = out_dir.parent / "run_timing.csv"
+    if rt_csv.is_file():
+        try:
+            rt_file = pd.read_csv(rt_csv)
+            if (
+                "scenario" in rt_file.columns
+                and "elapsed_aware_seconds" in rt_file.columns
+                and "elapsed_trust_rid_seconds" in rt_file.columns
+            ):
+                rt = rt_file.copy()
+                runtime_label = "Wall-clock runtime per run (s)"
+        except Exception:
+            rt = None
+    # Backward-compatible fallback for older runs without per-variant wall-clock.
+    if rt is None and (
+        "tag" in df.columns
+        and "gcs_compute_total_s_aware" in df.columns
+        and "gcs_compute_total_s_trust_rid" in df.columns
+    ):
+        rt = df.copy()
+        rt["scenario"] = rt["tag"].apply(_scenario_group_from_tag)
+        rt = rt.rename(
+            columns={
+                "gcs_compute_total_s_aware": "elapsed_aware_seconds",
+                "gcs_compute_total_s_trust_rid": "elapsed_trust_rid_seconds",
+            }
+        )
+        runtime_label = "GCS compute total per run (s)"
+
+    if rt is not None and "scenario" in rt.columns:
+        scenarios = sorted(rt["scenario"].dropna().unique().tolist())
+        if scenarios:
+            aware_meds: list[float] = []
+            aware_err_lo: list[float] = []
+            aware_err_hi: list[float] = []
+            trust_meds: list[float] = []
+            trust_err_lo: list[float] = []
+            trust_err_hi: list[float] = []
+            labels: list[str] = []
+            for scen in scenarios:
+                ss = rt[rt["scenario"] == scen]
+                aware_vals = pd.to_numeric(ss["elapsed_aware_seconds"], errors="coerce").dropna().to_numpy(dtype=float)
+                trust_vals = pd.to_numeric(ss["elapsed_trust_rid_seconds"], errors="coerce").dropna().to_numpy(dtype=float)
+                if aware_vals.size == 0 or trust_vals.size == 0:
+                    continue
+                a_q1 = float(np.quantile(aware_vals, 0.25))
+                a_med = float(np.quantile(aware_vals, 0.5))
+                a_q3 = float(np.quantile(aware_vals, 0.75))
+                t_q1 = float(np.quantile(trust_vals, 0.25))
+                t_med = float(np.quantile(trust_vals, 0.5))
+                t_q3 = float(np.quantile(trust_vals, 0.75))
+
+                labels.append(scen.replace("Scenario_", "").replace("_", " "))
+                aware_meds.append(a_med)
+                aware_err_lo.append(a_med - a_q1)
+                aware_err_hi.append(a_q3 - a_med)
+                trust_meds.append(t_med)
+                trust_err_lo.append(t_med - t_q1)
+                trust_err_hi.append(t_q3 - t_med)
+
+            if labels:
+                x = np.arange(len(labels))
+                width = 0.38
+                fig, ax = plt.subplots(figsize=(12.5, 5.5))
+                ax.bar(
+                    x - width / 2,
+                    aware_meds,
+                    width=width,
+                    yerr=[aware_err_lo, aware_err_hi],
+                    capsize=3,
+                    label="SpoofingAware",
+                    color="#4c78a8",
+                )
+                ax.bar(
+                    x + width / 2,
+                    trust_meds,
+                    width=width,
+                    yerr=[trust_err_lo, trust_err_hi],
+                    capsize=3,
+                    label="TrustRID",
+                    color="#f58518",
+                )
+                ax.set_xticks(x)
+                ax.set_xticklabels(labels, rotation=20, ha="right")
+                ax.set_ylabel(runtime_label)
+                ax.set_title("Runtime by Scenario: SpoofingAware vs TrustRID (median with IQR)")
+                ax.grid(axis="y", alpha=0.2)
+                ax.legend()
+                fig.tight_layout()
+                p = out_dir / "runtime_compare_scenarios_aware_vs_trustrid.png"
+                fig.savefig(p, dpi=220)
+                plt.close(fig)
+                out_paths.append(p)
 
     out_paths.append(_write_distribution_table(df, out_dir))
 
@@ -334,6 +419,61 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
     long_df.to_csv(out_dir / "gcs_timeseries_long.csv", index=False)
     out_paths.append(out_dir / "gcs_timeseries_long.csv")
 
+    def _clean_imm_sub(df: pd.DataFrame) -> pd.DataFrame:
+        sub = df.copy()
+        # Filter obviously non-physical IMM states so charts are interpretable.
+        lim_xy = 5000.0
+        lim_z = 3000.0
+        lim_err = 10000.0
+        m_xy = sub["name"].isin(["imm_est_x_m", "imm_est_y_m", "imm_true_x_m", "imm_true_y_m"])
+        m_z = sub["name"].isin(["imm_est_z_m", "imm_true_z_m"])
+        m_err = sub["name"].isin(["imm_error_norm_m"])
+        sub = sub[(~m_xy) | (sub["value"].abs() <= lim_xy)]
+        sub = sub[(~m_z) | (sub["value"].abs() <= lim_z)]
+        sub = sub[(~m_err) | (sub["value"].abs() <= lim_err)]
+        return sub
+
+    def _write_imm_diagnostics_table(df: pd.DataFrame) -> Path | None:
+        sub = df[(df["variant"] == "SpoofingAware") & (df["name"].str.contains("imm_", na=False))]
+        if sub.empty:
+            return None
+        rows: list[dict] = []
+        for scen in sorted(sub["scenario"].dropna().unique().tolist()):
+            ss = sub[sub["scenario"] == scen]
+            nees = pd.to_numeric(ss.loc[ss["name"] == "imm_nees", "value"], errors="coerce").dropna()
+            nis = pd.to_numeric(ss.loc[ss["name"] == "imm_nis_mix", "value"], errors="coerce").dropna()
+            err = pd.to_numeric(ss.loc[ss["name"] == "imm_error_norm_m", "value"], errors="coerce").dropna()
+            p_cv = pd.to_numeric(ss.loc[ss["name"] == "imm_mode_prob_cv", "value"], errors="coerce").dropna()
+            p_ca = pd.to_numeric(ss.loc[ss["name"] == "imm_mode_prob_ca", "value"], errors="coerce").dropna()
+            p = pd.concat([p_cv, (1.0 - p_ca)], ignore_index=True) if not p_cv.empty or not p_ca.empty else pd.Series(dtype=float)
+            if not p.empty:
+                p = p.clip(1e-9, 1.0 - 1e-9)
+                mode_entropy = float(np.mean(-(p * np.log(p) + (1.0 - p) * np.log(1.0 - p))))
+            else:
+                mode_entropy = float("nan")
+            rows.append(
+                {
+                    "scenario": scen,
+                    "imm_error_median_m": float(err.median()) if not err.empty else float("nan"),
+                    "imm_nees_median": float(nees.median()) if not nees.empty else float("nan"),
+                    "imm_nees_in_95pct_fraction": (
+                        float(((nees >= CHI2_3DOF_95_LO) & (nees <= CHI2_3DOF_95_HI)).mean())
+                        if not nees.empty else float("nan")
+                    ),
+                    "imm_nis_median": float(nis.median()) if not nis.empty else float("nan"),
+                    "imm_nis_in_95pct_fraction": (
+                        float(((nis >= CHI2_3DOF_95_LO) & (nis <= CHI2_3DOF_95_HI)).mean())
+                        if not nis.empty else float("nan")
+                    ),
+                    "imm_mode_entropy_mean": mode_entropy,
+                }
+            )
+        if not rows:
+            return None
+        p = out_dir / "imm_diagnostics_summary.csv"
+        pd.DataFrame(rows).to_csv(p, index=False)
+        return p
+
     def _plot_by_scenario(
         df: pd.DataFrame,
         metric_pattern: str,
@@ -343,6 +483,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
         variants: list[str],
         hline: float | None = None,
         hline_label: str | None = None,
+        hlines: list[tuple[float, str, str]] | None = None,
     ) -> Path | None:
         sub = df[df["name"].str.contains(metric_pattern, na=False)]
         if sub.empty:
@@ -369,6 +510,15 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
                     linewidth=1.1,
                     label=hline_label if hline_label else None,
                 )
+            if hlines:
+                for yval, style, label in hlines:
+                    ax.axhline(
+                        y=float(yval),
+                        color="crimson",
+                        linestyle=style,
+                        linewidth=1.1,
+                        label=label,
+                    )
             ax.set_title(str(scen))
             ax.set_xlabel("time (s)")
             ax.set_ylabel(ylabel)
@@ -381,6 +531,218 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
         plt.close(fig)
         return p
 
+    def _plot_imm_mode_probabilities(df: pd.DataFrame) -> Path | None:
+        sub = df[
+            (df["variant"] == "SpoofingAware")
+            & (df["name"].str.contains("imm_mode_prob_(cv|ca)", na=False))
+        ]
+        if sub.empty:
+            return None
+        scenarios = sorted(sub["scenario"].dropna().unique().tolist())
+        if not scenarios:
+            return None
+        n = len(scenarios)
+        fig, axes = plt.subplots(1, n, figsize=(5.0 * n, 4.2), squeeze=False)
+        for i, scen in enumerate(scenarios):
+            ax = axes[0][i]
+            ss = sub[sub["scenario"] == scen]
+            for metric_name, label, color in [
+                ("imm_mode_prob_cv", "IMM CV mode probability", "#1f77b4"),
+                ("imm_mode_prob_ca", "IMM CA mode probability", "#ff7f0e"),
+            ]:
+                g = ss[ss["name"] == metric_name]
+                if g.empty:
+                    continue
+                med = g.groupby("time", as_index=False)["value"].median()
+                ax.plot(med["time"], med["value"], label=label, color=color)
+            ax.set_title(str(scen))
+            ax.set_xlabel("time (s)")
+            ax.set_ylabel("probability")
+            ax.set_ylim(-0.02, 1.02)
+            ax.grid(alpha=0.2)
+            ax.legend(fontsize=8)
+        fig.suptitle("SpoofingAware IMM Mode Probabilities Through Time (Median)")
+        fig.tight_layout()
+        p = out_dir / "timeseries_imm_mode_probabilities_median.png"
+        fig.savefig(p, dpi=220)
+        plt.close(fig)
+        return p
+
+    def _plot_imm_true_vs_estimated_xy(df: pd.DataFrame) -> Path | None:
+        sub = df[(df["variant"] == "SpoofingAware") & (df["name"].str.contains("imm_(true|est)_[xy]_m", na=False))]
+        sub = _clean_imm_sub(sub)
+        if sub.empty:
+            return None
+        scenarios = sorted(sub["scenario"].dropna().unique().tolist())
+        if not scenarios:
+            return None
+        n = len(scenarios)
+        fig, axes = plt.subplots(1, n, figsize=(5.0 * n, 4.5), squeeze=False)
+        for i, scen in enumerate(scenarios):
+            ax = axes[0][i]
+            ss = sub[sub["scenario"] == scen]
+            ex = ss[ss["name"] == "imm_est_x_m"].groupby("time", as_index=False)["value"].median()
+            ey = ss[ss["name"] == "imm_est_y_m"].groupby("time", as_index=False)["value"].median()
+            tx = ss[ss["name"] == "imm_true_x_m"].groupby("time", as_index=False)["value"].median()
+            ty = ss[ss["name"] == "imm_true_y_m"].groupby("time", as_index=False)["value"].median()
+            est = pd.merge(ex.rename(columns={"value": "x"}), ey.rename(columns={"value": "y"}), on="time", how="inner")
+            tru = pd.merge(tx.rename(columns={"value": "x"}), ty.rename(columns={"value": "y"}), on="time", how="inner")
+            if not est.empty:
+                ax.plot(est["x"], est["y"], label="Estimated trajectory", color="#1f77b4", linewidth=1.7)
+            if not tru.empty:
+                ax.plot(tru["x"], tru["y"], label="True trajectory", color="#2ca02c", linewidth=1.7, linestyle="--")
+            ax.set_title(str(scen))
+            ax.set_xlabel("x (m)")
+            ax.set_ylabel("y (m)")
+            ax.axis("equal")
+            ax.grid(alpha=0.2)
+            ax.legend(fontsize=8)
+        fig.suptitle("SpoofingAware IMM: True vs Estimated XY Trajectory (Median)")
+        fig.tight_layout()
+        p = out_dir / "timeseries_imm_true_vs_estimated_xy_median.png"
+        fig.savefig(p, dpi=220)
+        plt.close(fig)
+        return p
+
+    def _plot_imm_error_from_trajectory(df: pd.DataFrame) -> Path | None:
+        sub = df[(df["variant"] == "SpoofingAware") & (df["name"].str.contains("imm_(true|est)_[xyz]_m", na=False))]
+        sub = _clean_imm_sub(sub)
+        if sub.empty:
+            return None
+        scenarios = sorted(sub["scenario"].dropna().unique().tolist())
+        if not scenarios:
+            return None
+        n = len(scenarios)
+        fig, axes = plt.subplots(1, n, figsize=(5.2 * n, 4.2), squeeze=False)
+        for i, scen in enumerate(scenarios):
+            ax = axes[0][i]
+            ss = sub[sub["scenario"] == scen]
+            ex = ss[ss["name"] == "imm_est_x_m"].groupby("time", as_index=False)["value"].median()
+            ey = ss[ss["name"] == "imm_est_y_m"].groupby("time", as_index=False)["value"].median()
+            ez = ss[ss["name"] == "imm_est_z_m"].groupby("time", as_index=False)["value"].median()
+            tx = ss[ss["name"] == "imm_true_x_m"].groupby("time", as_index=False)["value"].median()
+            ty = ss[ss["name"] == "imm_true_y_m"].groupby("time", as_index=False)["value"].median()
+            tz = ss[ss["name"] == "imm_true_z_m"].groupby("time", as_index=False)["value"].median()
+            if ex.empty or ey.empty or tx.empty or ty.empty:
+                continue
+            est = ex.rename(columns={"value": "ex"}).merge(
+                ey.rename(columns={"value": "ey"}), on="time", how="inner"
+            )
+            tru = tx.rename(columns={"value": "tx"}).merge(
+                ty.rename(columns={"value": "ty"}), on="time", how="inner"
+            )
+            merged = est.merge(tru, on="time", how="inner")
+            if not ez.empty and not tz.empty:
+                ez2 = ez.rename(columns={"value": "ez"})
+                tz2 = tz.rename(columns={"value": "tz"})
+                merged = merged.merge(ez2, on="time", how="inner").merge(tz2, on="time", how="inner")
+                merged["err"] = np.sqrt(
+                    (merged["ex"] - merged["tx"]) ** 2
+                    + (merged["ey"] - merged["ty"]) ** 2
+                    + (merged["ez"] - merged["tz"]) ** 2
+                )
+            else:
+                merged["err"] = np.sqrt(
+                    (merged["ex"] - merged["tx"]) ** 2 + (merged["ey"] - merged["ty"]) ** 2
+                )
+            if merged.empty:
+                continue
+            ax.plot(merged["time"], merged["err"], color="#1f77b4", linewidth=1.7, label="IMM trajectory error")
+            ax.set_title(str(scen))
+            ax.set_xlabel("time (s)")
+            ax.set_ylabel("error (m)")
+            ax.grid(alpha=0.2)
+            ax.legend(fontsize=8)
+        fig.suptitle("SpoofingAware IMM Position Error from True vs Estimated Trajectory (Median)")
+        fig.tight_layout()
+        p = out_dir / "timeseries_imm_error_norm_median.png"
+        fig.savefig(p, dpi=220)
+        plt.close(fig)
+        return p
+
+    def _plot_localization_and_bubble_by_scenario(df: pd.DataFrame) -> Path | None:
+        containment = df[
+            (df["variant"] == "SpoofingAware")
+            & (df["name"].str.contains("spoofer_containment_rate", na=False))
+        ]
+        loc = df[
+            (df["variant"] == "SpoofingAware")
+            & (df["name"].str.contains("localization_rmse_m", na=False))
+        ]
+        bubble = df[
+            (df["variant"] == "SpoofingAware")
+            & (df["name"].str.contains("unsafe_radius_max_m", na=False))
+        ]
+        if containment.empty or loc.empty or bubble.empty:
+            return None
+        scenarios = sorted(
+            set(containment["scenario"].dropna())
+            & set(loc["scenario"].dropna())
+            & set(bubble["scenario"].dropna())
+        )
+        if not scenarios:
+            return None
+        n = len(scenarios)
+        fig, axes = plt.subplots(1, n, figsize=(5.6 * n, 4.2), squeeze=False)
+        for i, scen in enumerate(scenarios):
+            ax = axes[0][i]
+            containment_s = containment[containment["scenario"] == scen]
+            loc_s = loc[loc["scenario"] == scen]
+            bubble_s = bubble[bubble["scenario"] == scen]
+            if containment_s.empty or loc_s.empty or bubble_s.empty:
+                continue
+            containment_med = containment_s.groupby("time", as_index=False)["value"].median()
+            loc_med = loc_s.groupby("time", as_index=False)["value"].median()
+            bubble_med = bubble_s.groupby("time", as_index=False)["value"].median()
+
+            line1 = ax.plot(
+                containment_med["time"],
+                containment_med["value"],
+                color="#2ca02c",
+                linewidth=1.7,
+                label="Containment rate median",
+            )[0]
+            ax.set_xlabel("time (s)")
+            ax.set_ylabel("containment rate", color="#2ca02c")
+            ax.tick_params(axis="y", labelcolor="#2ca02c")
+            ax.set_ylim(-0.02, 1.02)
+            ax.grid(alpha=0.2)
+
+            ax2 = ax.twinx()
+            line2 = ax2.plot(
+                loc_med["time"],
+                loc_med["value"],
+                color="#1f77b4",
+                linewidth=1.7,
+                label="Localization RMSE median (m)",
+            )[0]
+            line3 = ax2.plot(
+                bubble_med["time"],
+                bubble_med["value"],
+                color="#ff7f0e",
+                linewidth=1.7,
+                label="Unsafe bubble radius max median (m)",
+            )[0]
+            ax2.set_ylabel("meters", color="#1f77b4")
+            ax2.tick_params(axis="y", labelcolor="#1f77b4")
+
+            ax.set_title(str(scen))
+            ax.legend(
+                [line1, line2, line3],
+                [line1.get_label(), line2.get_label(), line3.get_label()],
+                fontsize=8,
+                loc="best",
+            )
+
+        fig.suptitle(
+            "SpoofingAware Containment (left) and Localization/Bubble Metrics (right) Through Time (Median)"
+        )
+        fig.tight_layout()
+        p = out_dir / "timeseries_containment_localization_unsafe_bubble_median.png"
+        fig.savefig(p, dpi=220)
+        plt.close(fig)
+        return p
+
     p = _plot_by_scenario(
         long_df,
         metric_pattern="min_benign_spoofer_distance_now_m",
@@ -388,8 +750,8 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
         ylabel="distance (m)",
         out_name="timeseries_min_distance_median.png",
         variants=["SpoofingAware", "TrustRID"],
-        hline=10.0,
-        hline_label="NMAC threshold (10 m)",
+        hline=NMAC_THRESHOLD_M,
+        hline_label=f"NMAC threshold ({int(NMAC_THRESHOLD_M)} m)",
     )
     if p is not None:
         out_paths.append(p)
@@ -411,7 +773,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
         title="Localization Raw Error Through Time (Median, by Scenario)",
         ylabel="error (m)",
         out_name="timeseries_localization_error_median.png",
-        variants=["SpoofingAware", "TrustRID"],
+        variants=["SpoofingAware"],
     )
     if p is not None:
         out_paths.append(p)
@@ -424,6 +786,56 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
         out_name="timeseries_unsafe_bubble_radius_median.png",
         variants=["SpoofingAware"],
     )
+    if p is not None:
+        out_paths.append(p)
+
+    p = _plot_imm_true_vs_estimated_xy(long_df)
+    if p is not None:
+        out_paths.append(p)
+
+    p = _plot_imm_error_from_trajectory(long_df)
+    if p is not None:
+        out_paths.append(p)
+
+    p = _plot_imm_mode_probabilities(long_df)
+    if p is not None:
+        out_paths.append(p)
+
+    p = _plot_by_scenario(
+        long_df,
+        metric_pattern="imm_nis_mix",
+        title="SpoofingAware IMM NIS Through Time (Median, by Scenario)",
+        ylabel="NIS (3 dof)",
+        out_name="timeseries_imm_nis_median.png",
+        variants=["SpoofingAware"],
+        hlines=[
+            (CHI2_3DOF_95_LO, "--", "chi2 95% lower"),
+            (CHI2_3DOF_95_HI, "--", "chi2 95% upper"),
+        ],
+    )
+    if p is not None:
+        out_paths.append(p)
+
+    p = _plot_by_scenario(
+        long_df,
+        metric_pattern="imm_nees",
+        title="SpoofingAware IMM NEES Through Time (Median, by Scenario)",
+        ylabel="NEES (3 dof)",
+        out_name="timeseries_imm_nees_median.png",
+        variants=["SpoofingAware"],
+        hlines=[
+            (CHI2_3DOF_95_LO, "--", "chi2 95% lower"),
+            (CHI2_3DOF_95_HI, "--", "chi2 95% upper"),
+        ],
+    )
+    if p is not None:
+        out_paths.append(p)
+
+    p = _plot_localization_and_bubble_by_scenario(long_df)
+    if p is not None:
+        out_paths.append(p)
+
+    p = _write_imm_diagnostics_table(long_df)
     if p is not None:
         out_paths.append(p)
 

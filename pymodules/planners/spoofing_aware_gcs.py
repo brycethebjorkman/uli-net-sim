@@ -40,6 +40,7 @@ INI usage:
 """
 
 import numpy as np
+import os
 import time
 
 from pymodules.gcs.chance_constraint import (
@@ -69,6 +70,16 @@ DEBUG_USE_GROUND_TRUTH_TX = True   # DEBUG ONLY: use tx_true_pos to estimate TX
 FSPL_CONSTANT_DB = 40.04
 IMM_DT = 0.25
 IMM_MAX_PREDICT_STEPS = 0     # 0 => unlimited predict-only propagation between measurements
+IMM_INIT_MODE_CV = 0.6
+IMM_P_CV_STAY = 0.95
+IMM_P_CA_STAY = 0.95
+IMM_CV_POS_NOISE = 2.0
+IMM_CV_VEL_NOISE = 40.0
+IMM_CV_MEAS_NOISE = 100.0
+IMM_CA_POS_NOISE = 2.0
+IMM_CA_VEL_NOISE = 25.0
+IMM_CA_ACC_NOISE = 60.0
+IMM_CA_MEAS_NOISE = 100.0
 UNSAFE_MU_SMOOTH = 0.35       # EMA gain for published unsafe-region center
 UNSAFE_SIGMA_SMOOTH = 0.25    # EMA gain for published unsafe covariance
 UNSAFE_STD_MIN_M = 4.0        # floor for visual/planning stability (avoid vanish)
@@ -80,6 +91,41 @@ CLAIMED_FALLBACK_STD_M = 30.0     # pseudo-measurement std when falling back to 
 MLAT_INIT_CLIP_XY = 2000.0
 MLAT_INIT_CLIP_Z = 1000.0
 MLAT_INIT_MAX_FROM_CLAIMED = 600.0
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return int(default)
+    try:
+        return int(raw)
+    except ValueError:
+        return int(default)
+
+
+NMAC_PROXIMITY_M = _env_float("ULI_IMM_NMAC_PROXIMITY_M", NMAC_PROXIMITY_M)
+IMM_DT = _env_float("ULI_IMM_DT", IMM_DT)
+IMM_MAX_PREDICT_STEPS = _env_int("ULI_IMM_MAX_PREDICT_STEPS", IMM_MAX_PREDICT_STEPS)
+IMM_INIT_MODE_CV = _env_float("ULI_IMM_INIT_MODE_CV", IMM_INIT_MODE_CV)
+IMM_P_CV_STAY = _env_float("ULI_IMM_P_CV_STAY", IMM_P_CV_STAY)
+IMM_P_CA_STAY = _env_float("ULI_IMM_P_CA_STAY", IMM_P_CA_STAY)
+IMM_CV_POS_NOISE = _env_float("ULI_IMM_CV_POS_NOISE", IMM_CV_POS_NOISE)
+IMM_CV_VEL_NOISE = _env_float("ULI_IMM_CV_VEL_NOISE", IMM_CV_VEL_NOISE)
+IMM_CV_MEAS_NOISE = _env_float("ULI_IMM_CV_MEAS_NOISE", IMM_CV_MEAS_NOISE)
+IMM_CA_POS_NOISE = _env_float("ULI_IMM_CA_POS_NOISE", IMM_CA_POS_NOISE)
+IMM_CA_VEL_NOISE = _env_float("ULI_IMM_CA_VEL_NOISE", IMM_CA_VEL_NOISE)
+IMM_CA_ACC_NOISE = _env_float("ULI_IMM_CA_ACC_NOISE", IMM_CA_ACC_NOISE)
+IMM_CA_MEAS_NOISE = _env_float("ULI_IMM_CA_MEAS_NOISE", IMM_CA_MEAS_NOISE)
 
 
 class SpoofingAwareGcs:
@@ -238,14 +284,24 @@ class SpoofingAwareGcs:
                         self._claimed_bias[serial] = bias_meas.copy()
 
                     # Tick path already handles propagation; measurement path only corrects.
-                    imm.update(est_pos_arr, meas_cov=est_cov, do_predict=False)
+                    imm.update(
+                        est_pos_arr,
+                        meas_cov=est_cov,
+                        do_predict=False,
+                        measurement_time_s=report_time,
+                    )
                     self._ticks_since_spoofer_meas[serial] = 0
                 elif serial in self._claimed_bias:
                     # When multilateration is unavailable, follow claimed motion with
                     # learned bias and high uncertainty so turn dynamics are retained.
                     pseudo_pos = claimed_pos + self._claimed_bias[serial]
                     pseudo_cov = np.eye(3) * (CLAIMED_FALLBACK_STD_M ** 2)
-                    imm.update(pseudo_pos, meas_cov=pseudo_cov, do_predict=False)
+                    imm.update(
+                        pseudo_pos,
+                        meas_cov=pseudo_cov,
+                        do_predict=False,
+                        measurement_time_s=report_time,
+                    )
                     self._ticks_since_spoofer_meas[serial] = 0
                     used_claimed_fallback = True
 
@@ -261,7 +317,12 @@ class SpoofingAwareGcs:
                     else:
                         pseudo_pos = claimed_pos.copy()
                     pseudo_cov = np.eye(3) * (CLAIMED_FALLBACK_STD_M ** 2)
-                    imm.update(pseudo_pos, meas_cov=pseudo_cov, do_predict=False)
+                    imm.update(
+                        pseudo_pos,
+                        meas_cov=pseudo_cov,
+                        do_predict=False,
+                        measurement_time_s=report_time,
+                    )
                     self._ticks_since_spoofer_meas[serial] = 0
                     visualization["used_claimed_fallback"] = True
                 else:
@@ -303,9 +364,25 @@ class SpoofingAwareGcs:
                         self._spoofer_tx_power[serial] = float(np.median(tx_samples))
 
                         # Initialize IMM with all accumulated position estimates
-                        self._imm[serial] = IMMEstimator(dt=IMM_DT)
+                        self._imm[serial] = IMMEstimator(
+                            dt=IMM_DT,
+                            cv_pos_noise=IMM_CV_POS_NOISE,
+                            cv_vel_noise=IMM_CV_VEL_NOISE,
+                            cv_measurement_noise=IMM_CV_MEAS_NOISE,
+                            ca_pos_noise=IMM_CA_POS_NOISE,
+                            ca_vel_noise=IMM_CA_VEL_NOISE,
+                            ca_acc_noise=IMM_CA_ACC_NOISE,
+                            ca_measurement_noise=IMM_CA_MEAS_NOISE,
+                            init_mode_cv=IMM_INIT_MODE_CV,
+                            p_cv_stay=IMM_P_CV_STAY,
+                            p_ca_stay=IMM_P_CA_STAY,
+                        )
                         for p in self._pos_samples[serial]:
-                            self._imm[serial].update(p, do_predict=False)
+                            self._imm[serial].update(
+                                p,
+                                do_predict=False,
+                                measurement_time_s=report_time,
+                            )
 
                         # Clean up detection buffers
                         self._tx_power_samples.pop(serial, None)
@@ -546,6 +623,20 @@ class SpoofingAwareGcs:
             self._spoofer_host = max(int(h) for h in host_ids)
 
         unsafe_regions = []
+        gt = data.get("ground_truth_positions") or {}
+        primary_serial = sorted(self.spoofers)[0] if self.spoofers else None
+        primary_diag: dict[str, float] = {
+            "mode_prob_cv": float("nan"),
+            "mode_prob_ca": float("nan"),
+            "nis_cv": float("nan"),
+            "nis_ca": float("nan"),
+            "nis_mix": float("nan"),
+            "last_measurement_time_s": float("nan"),
+        }
+        primary_est = np.array([float("nan"), float("nan"), float("nan")], dtype=float)
+        primary_cov = np.full((3, 3), np.nan, dtype=float)
+        primary_true = np.array([float("nan"), float("nan"), float("nan")], dtype=float)
+
         for serial in self.spoofers:
             imm = self._imm.get(serial)
             if imm is not None and imm._initialized:
@@ -556,6 +647,21 @@ class SpoofingAwareGcs:
                 mu, sigma = imm.get_state()
                 mu_pub, sigma_pub = self._smoothed_unsafe_state(serial, mu, sigma)
                 unsafe_regions.append(unsafe_region_to_dict(mu_pub, sigma_pub, self.alpha))
+                if primary_serial is not None and int(serial) == int(primary_serial):
+                    primary_diag = imm.get_diagnostics()
+                    primary_est = np.asarray(mu, dtype=float).ravel()[:3]
+                    if primary_est.shape[0] < 3:
+                        primary_est = np.pad(primary_est, (0, 3 - primary_est.shape[0]), mode="constant")
+                    primary_cov = np.asarray(sigma, dtype=float)
+                    if primary_cov.shape != (3, 3):
+                        primary_cov = np.full((3, 3), np.nan, dtype=float)
+                    gt_pos = gt.get(int(serial))
+                    if gt_pos is None:
+                        gt_pos = gt.get(str(serial))
+                    if gt_pos is not None:
+                        primary_true = np.asarray(gt_pos, dtype=float).ravel()[:3]
+                        if primary_true.shape[0] < 3:
+                            primary_true = np.pad(primary_true, (0, 3 - primary_true.shape[0]), mode="constant")
 
         # Robustness: if no fresh unsafe region is available this tick, keep
         # broadcasting the last valid one so planner constraints do not drop out.
@@ -583,7 +689,6 @@ class SpoofingAwareGcs:
 
         # Simulation-only diagnostic: does unsafe ellipsoid contain true spoofer?
         # ground_truth_positions is provided by GcsModule from mobility state.
-        gt = data.get("ground_truth_positions") or {}
         containment_now = 0.0
         containment_miss_now = 0.0
         containment_margin_now = 0.0
@@ -691,6 +796,33 @@ class SpoofingAwareGcs:
                     float(np.sqrt(self._loc_err_sq_sum / float(self._loc_samples)))
                     if self._loc_samples > 0 else -1.0
                 ),
+                "imm_mode_prob_cv": float(primary_diag.get("mode_prob_cv", float("nan"))),
+                "imm_mode_prob_ca": float(primary_diag.get("mode_prob_ca", float("nan"))),
+                "imm_nis_cv": float(primary_diag.get("nis_cv", float("nan"))),
+                "imm_nis_ca": float(primary_diag.get("nis_ca", float("nan"))),
+                "imm_nis_mix": float(primary_diag.get("nis_mix", float("nan"))),
+                "imm_last_measurement_time_s": float(primary_diag.get("last_measurement_time_s", float("nan"))),
+                "imm_est_x_m": float(primary_est[0]),
+                "imm_est_y_m": float(primary_est[1]),
+                "imm_est_z_m": float(primary_est[2]),
+                "imm_true_x_m": float(primary_true[0]),
+                "imm_true_y_m": float(primary_true[1]),
+                "imm_true_z_m": float(primary_true[2]),
+                "imm_error_norm_m": (
+                    float(np.linalg.norm(primary_true - primary_est))
+                    if np.all(np.isfinite(primary_true)) and np.all(np.isfinite(primary_est))
+                    else float("nan")
+                ),
+                "imm_cov_trace_m2": (
+                    float(np.trace(primary_cov)) if np.all(np.isfinite(primary_cov)) else float("nan")
+                ),
+                "imm_nees": (
+                    float(mahalanobis_squared(primary_true, primary_est, primary_cov))
+                    if np.all(np.isfinite(primary_true))
+                    and np.all(np.isfinite(primary_est))
+                    and np.all(np.isfinite(primary_cov))
+                    else float("nan")
+                ),
             },
         }
         self._tick_time_total_s += max(0.0, time.perf_counter() - t0)
@@ -734,5 +866,16 @@ class SpoofingAwareGcs:
                     if self._loc_samples > 0 else -1.0
                 ),
                 "localization_samples_final": float(self._loc_samples),
+                "imm_dt_s_final": float(IMM_DT),
+                "imm_init_mode_cv_final": float(IMM_INIT_MODE_CV),
+                "imm_p_cv_stay_final": float(IMM_P_CV_STAY),
+                "imm_p_ca_stay_final": float(IMM_P_CA_STAY),
+                "imm_cv_pos_noise_final": float(IMM_CV_POS_NOISE),
+                "imm_cv_vel_noise_final": float(IMM_CV_VEL_NOISE),
+                "imm_cv_meas_noise_final": float(IMM_CV_MEAS_NOISE),
+                "imm_ca_pos_noise_final": float(IMM_CA_POS_NOISE),
+                "imm_ca_vel_noise_final": float(IMM_CA_VEL_NOISE),
+                "imm_ca_acc_noise_final": float(IMM_CA_ACC_NOISE),
+                "imm_ca_meas_noise_final": float(IMM_CA_MEAS_NOISE),
             },
         }

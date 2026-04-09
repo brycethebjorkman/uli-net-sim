@@ -26,3 +26,4 @@ tests/__pycache__/
 tests/out/
 tests/htmlcov/
 *.DS_Store
+pybind11/

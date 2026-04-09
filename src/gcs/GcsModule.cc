@@ -480,7 +480,10 @@ void GcsModule::pyOnReport(const BeaconKey& key,
         rd["pos"]      = py::make_tuple(r->getRxPosX(), r->getRxPosY(), r->getRxPosZ());
         rd["rssi_dbm"] = r->getRssiDbm();
         double kfNis = r->getKfNis();
-        rd["kf_nis"]   = (kfNis < 0) ? py::none().cast<py::object>() : py::cast(kfNis);
+        if (kfNis < 0)
+            rd["kf_nis"] = py::none();
+        else
+            rd["kf_nis"] = kfNis;
         reportList.append(rd);
     }
     txData["reports"] = reportList;

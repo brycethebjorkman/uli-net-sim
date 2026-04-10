@@ -836,6 +836,42 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
     if p is not None:
         out_paths.append(p)
 
+    # NMAC-by-time charts (cumulative event counts).
+    nmac_timeseries_specs = [
+        (
+            "nmac_proximity_total",
+            "Benign-Benign NMACs Through Time (Median, by Scenario)",
+            "cumulative benign-benign NMAC count",
+            "timeseries_nmac_benign_benign_median.pdf",
+            ["SpoofingAware", "TrustRID"],
+        ),
+        (
+            "nmac_benign_spoofer_total",
+            "Benign-Spoofer NMACs Through Time (Median, by Scenario)",
+            "cumulative benign-spoofer NMAC count",
+            "timeseries_nmac_benign_spoofer_median.pdf",
+            ["SpoofingAware", "TrustRID"],
+        ),
+        (
+            "nmac_spoofer_unsafe_total",
+            "SpoofingAware Unsafe-Region NMACs Through Time (Median, by Scenario)",
+            "cumulative unsafe-region NMAC count",
+            "timeseries_nmac_spoofer_unsafe_median.pdf",
+            ["SpoofingAware"],
+        ),
+    ]
+    for metric_pattern, title, ylabel, out_name, variants in nmac_timeseries_specs:
+        p = _plot_by_scenario(
+            long_df,
+            metric_pattern=metric_pattern,
+            title=title,
+            ylabel=ylabel,
+            out_name=out_name,
+            variants=variants,
+        )
+        if p is not None:
+            out_paths.append(p)
+
     p = _plot_imm_true_vs_estimated_xy(long_df)
     if p is not None:
         out_paths.append(p)
@@ -901,6 +937,9 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
         "timeseries_imm_nis_median.png",
         "timeseries_imm_nees_median.png",
         "timeseries_containment_localization_unsafe_bubble_median.png",
+        "timeseries_nmac_benign_benign_median.png",
+        "timeseries_nmac_benign_spoofer_median.png",
+        "timeseries_nmac_spoofer_unsafe_median.png",
         "timeseries_containment_rate_median.png",
         "timeseries_localization_error_median.png",
         "timeseries_unsafe_bubble_radius_median.png",

@@ -34,6 +34,7 @@ Options:
   --no-keep-vec                    Do not keep results/*.vec (disables vector export)
   --no-export-vectors              Skip GCS vector CSV export
   --no-plot                        Skip chart generation
+  --heartbeat-sec N                Emit heartbeat every N seconds (0 disables; default: 60)
   -h, --help                       Show this help
 EOF
 }
@@ -48,6 +49,7 @@ DO_CLEAN="1"
 KEEP_VEC="1"
 EXPORT_VECTORS="1"
 DO_PLOT="1"
+HEARTBEAT_SEC="60"
 
 SINGLE_SCENARIO=""
 SCENARIOS_CSV=""
@@ -103,6 +105,8 @@ while [[ $# -gt 0 ]]; do
       EXPORT_VECTORS="0"; shift ;;
     --no-plot)
       DO_PLOT="0"; shift ;;
+    --heartbeat-sec)
+      HEARTBEAT_SEC="${2:-}"; shift 2 ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -192,12 +196,60 @@ if ! [[ "$PARALLEL" =~ ^[0-9]+$ ]] || (( PARALLEL < 1 )); then
   echo "Invalid --parallel value: $PARALLEL" >&2
   exit 2
 fi
+if ! [[ "$HEARTBEAT_SEC" =~ ^[0-9]+$ ]] || (( HEARTBEAT_SEC < 0 )); then
+  echo "Invalid --heartbeat-sec value: $HEARTBEAT_SEC" >&2
+  exit 2
+fi
 
 echo "== Config =="
 echo "Scenarios:     ${SCENARIOS[*]}"
 echo "Seeds:         ${SEEDS[*]}"
 echo "Run root:      $RUN_ROOT"
 echo "Parallel jobs: $PARALLEL"
+echo "Heartbeat sec: $HEARTBEAT_SEC"
+
+TOTAL_RUN_JOBS=$(( ${#SCENARIOS[@]} * ${#SEEDS[@]} ))
+COMPLETED_RUN_JOBS=0
+HEARTBEAT_PID=""
+CURRENT_PHASE="startup"
+
+progress_pct_int() {
+  if (( TOTAL_RUN_JOBS <= 0 )); then
+    echo "100"
+    return
+  fi
+  echo $(( (100 * COMPLETED_RUN_JOBS) / TOTAL_RUN_JOBS ))
+}
+
+heartbeat_loop() {
+  while true; do
+    sleep "$HEARTBEAT_SEC" || break
+    local now elapsed running pct
+    now="$(date +%s)"
+    elapsed=$(( now - OVERALL_START_EPOCH ))
+    running="$(jobs -pr | wc -l | tr -d ' ')"
+    pct="$(progress_pct_int)"
+    echo "[HEARTBEAT] phase=${CURRENT_PHASE} elapsed_s=${elapsed} completed_jobs=${COMPLETED_RUN_JOBS}/${TOTAL_RUN_JOBS} progress_pct=${pct} running_jobs=${running} failed_jobs=${FAILED_RUN_JOBS} run_root=${RUN_ROOT}"
+  done
+}
+
+start_heartbeat() {
+  if (( HEARTBEAT_SEC > 0 )); then
+    heartbeat_loop &
+    HEARTBEAT_PID="$!"
+  fi
+}
+
+stop_heartbeat() {
+  if [[ -n "${HEARTBEAT_PID:-}" ]]; then
+    kill "$HEARTBEAT_PID" 2>/dev/null || true
+    wait "$HEARTBEAT_PID" 2>/dev/null || true
+    HEARTBEAT_PID=""
+  fi
+}
+
+trap stop_heartbeat EXIT
+start_heartbeat
 
 if [[ "$SKIP_BUILD" == "0" ]]; then
   echo "== Building Docker image: $IMAGE =="
@@ -254,6 +306,7 @@ run_one() {
 }
 
 for scenario in "${SCENARIOS[@]}"; do
+  CURRENT_PHASE="running_scenarios"
   scen_slug="$(printf '%s' "$scenario" | sed 's/^Scenario_//' | tr '[:upper:]' '[:lower:]')"
   for seed in "${SEEDS[@]}"; do
     seed_pad="$(printf '%05d' "$seed")"
@@ -308,6 +361,8 @@ PY
         PIPELINE_FAILED=1
         echo "[WARN] A background scenario run failed (running total failures: $FAILED_RUN_JOBS). Continuing..."
       fi
+      COMPLETED_RUN_JOBS=$((COMPLETED_RUN_JOBS + 1))
+      echo "[PROGRESS] phase=running_scenarios completed_jobs=${COMPLETED_RUN_JOBS}/${TOTAL_RUN_JOBS} progress_pct=$(progress_pct_int)"
     done
   done
 done
@@ -318,9 +373,12 @@ while (( $(jobs -pr | wc -l) > 0 )); do
     PIPELINE_FAILED=1
     echo "[WARN] A background scenario run failed (running total failures: $FAILED_RUN_JOBS). Continuing..."
   fi
+  COMPLETED_RUN_JOBS=$((COMPLETED_RUN_JOBS + 1))
+  echo "[PROGRESS] phase=running_scenarios completed_jobs=${COMPLETED_RUN_JOBS}/${TOTAL_RUN_JOBS} progress_pct=$(progress_pct_int)"
 done
 
 echo "== Writing combined scalar summary CSV =="
+CURRENT_PHASE="summary_csv"
 if ! ./scripts/docker-run.sh python3 -m pymodules.analysis.spoofing_batch_metrics \
   "$GEN_DIR" \
   -o "$SUMMARY_CSV"; then
@@ -330,6 +388,7 @@ fi
 
 if [[ "$EXPORT_VECTORS" == "1" && "$KEEP_VEC" == "1" ]]; then
   echo "== Exporting GCS vectors (all runs) =="
+  CURRENT_PHASE="export_vectors"
   shopt -s nullglob
   vecs=("$GEN_DIR"/*/results/*-#0.vec)
   if [[ ${#vecs[@]} -eq 0 ]]; then
@@ -353,6 +412,7 @@ fi
 
 if [[ "$DO_PLOT" == "1" ]]; then
   echo "== Generating charts and distribution tables =="
+  CURRENT_PHASE="plotting"
   if ! ./scripts/docker-run.sh python3 datagen/spoofting_aware_trajectory_planning_datagen/plot_batch.py \
     --batch-root "$RUN_ROOT"; then
     PIPELINE_FAILED=1
@@ -361,6 +421,7 @@ if [[ "$DO_PLOT" == "1" ]]; then
 fi
 
 echo "== Done =="
+CURRENT_PHASE="done"
 total_elapsed=$(( $(date +%s) - OVERALL_START_EPOCH ))
 echo "Total runtime: ${total_elapsed}s"
 echo "$total_elapsed" > "$RUN_ROOT/total_runtime_seconds.txt"
@@ -373,5 +434,7 @@ if (( FAILED_RUN_JOBS > 0 )); then
 fi
 if (( PIPELINE_FAILED != 0 )); then
   echo "[WARN] Pipeline completed with one or more failures."
+  echo "=== BATCH_RUN_FINISHED status=FAILED run_root=${RUN_ROOT} total_elapsed_s=${total_elapsed} failed_jobs=${FAILED_RUN_JOBS} timestamp=$(date -Iseconds) ==="
   exit 1
 fi
+echo "=== BATCH_RUN_FINISHED status=OK run_root=${RUN_ROOT} total_elapsed_s=${total_elapsed} failed_jobs=${FAILED_RUN_JOBS} timestamp=$(date -Iseconds) ==="

@@ -28,6 +28,7 @@ import sys
 import time
 import random
 import math
+from datetime import datetime
 from pathlib import Path
 from statistics import mean
 
@@ -35,6 +36,51 @@ from statistics import mean
 DEFAULT_BATCH_ROOT = Path(
     "simulations/spoofing_aware_with_planning/batches"
 )
+
+PRESET_GRIDS: dict[str, dict[str, list[float]]] = {
+    "single": {
+        "ULI_IMM_INIT_MODE_CV": [0.6],
+        "ULI_IMM_P_CV_STAY": [0.95],
+        "ULI_IMM_P_CA_STAY": [0.95],
+        "ULI_IMM_CV_POS_NOISE": [2.0],
+        "ULI_IMM_CV_VEL_NOISE": [40.0],
+        "ULI_IMM_CV_MEAS_NOISE": [100.0],
+        "ULI_IMM_CA_POS_NOISE": [2.0],
+        "ULI_IMM_CA_VEL_NOISE": [25.0],
+        "ULI_IMM_CA_ACC_NOISE": [60.0],
+        "ULI_IMM_CA_MEAS_NOISE": [100.0],
+    },
+    "quick": {
+        "ULI_IMM_INIT_MODE_CV": [0.5, 0.6, 0.7],
+        "ULI_IMM_P_CV_STAY": [0.9, 0.95, 0.98],
+        "ULI_IMM_P_CA_STAY": [0.88, 0.93, 0.97],
+        "ULI_IMM_CV_POS_NOISE": [1.0, 2.0],
+        "ULI_IMM_CV_VEL_NOISE": [20.0, 40.0, 80.0],
+        "ULI_IMM_CV_MEAS_NOISE": [50.0, 100.0, 200.0],
+        "ULI_IMM_CA_POS_NOISE": [1.0, 2.0],
+        "ULI_IMM_CA_VEL_NOISE": [15.0, 25.0, 40.0],
+        "ULI_IMM_CA_ACC_NOISE": [30.0, 60.0, 120.0],
+        "ULI_IMM_CA_MEAS_NOISE": [50.0, 100.0, 200.0],
+    },
+    "overnight": {
+        "ULI_IMM_INIT_MODE_CV": [0.45, 0.55, 0.65, 0.75],
+        "ULI_IMM_P_CV_STAY": [0.88, 0.92, 0.95, 0.98],
+        "ULI_IMM_P_CA_STAY": [0.84, 0.9, 0.95, 0.98],
+        "ULI_IMM_CV_POS_NOISE": [0.5, 1.0, 2.0, 4.0],
+        "ULI_IMM_CV_VEL_NOISE": [10.0, 20.0, 40.0, 80.0, 120.0],
+        "ULI_IMM_CV_MEAS_NOISE": [30.0, 50.0, 100.0, 200.0, 400.0],
+        "ULI_IMM_CA_POS_NOISE": [0.5, 1.0, 2.0, 4.0],
+        "ULI_IMM_CA_VEL_NOISE": [10.0, 20.0, 30.0, 50.0],
+        "ULI_IMM_CA_ACC_NOISE": [20.0, 40.0, 60.0, 100.0, 160.0],
+        "ULI_IMM_CA_MEAS_NOISE": [30.0, 50.0, 100.0, 200.0, 400.0],
+    },
+}
+
+PRESET_MAX_TRIALS_DEFAULT = {
+    "single": 0,
+    "quick": 80,
+    "overnight": 500,
+}
 
 
 def _parse_float_grid(raw: str) -> list[float]:
@@ -206,7 +252,14 @@ def _append_result_row(csv_path: Path, fieldnames: list[str], row: dict[str, flo
         w.writerow(row)
 
 
+def _parse_optional_grid(raw: str | None, fallback: list[float]) -> list[float]:
+    if raw is None or raw == "":
+        return list(fallback)
+    return _parse_float_grid(raw)
+
+
 def main(argv: list[str] | None = None) -> int:
+    started_wall = time.perf_counter()
     ap = argparse.ArgumentParser(description="Grid-search IMM tuning via compare pipeline")
     scenario_group = ap.add_mutually_exclusive_group(required=True)
     scenario_group.add_argument("--scenario-config", type=str, default=None)
@@ -234,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="Per-trial timeout in seconds (0 disables timeout)")
     ap.add_argument("--trial-retries", type=int, default=0,
                     help="Retries for failed trial launch/exit")
+    ap.add_argument("--heartbeat-sec", type=int, default=60,
+                    help="Print trial heartbeat every N seconds (0 disables)")
     ap.add_argument("--shuffle", action="store_true",
                     help="Shuffle trial order before running")
     ap.add_argument("--shuffle-seed", type=int, default=1337)
@@ -251,35 +306,65 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--weight-rmse", type=float, default=0.02)
     ap.add_argument("--min-containment", type=float, default=0.0,
                     help="If containment mean is below this, mark trial as low_containment")
+    ap.add_argument(
+        "--preset-grid",
+        type=str,
+        choices=sorted(PRESET_GRIDS.keys()),
+        default="single",
+        help="Predefined IMM grid profile; individual --*-noise args can override.",
+    )
+    ap.add_argument(
+        "--estimate-min-per-trial",
+        type=float,
+        default=25.0,
+        help="Used for rough runtime estimate printout.",
+    )
+    ap.add_argument(
+        "--target-runtime-hours",
+        type=float,
+        default=0.0,
+        help="If >0, auto-select max trials to roughly match this wall time.",
+    )
     ap.add_argument("--dry-run", action="store_true")
 
-    ap.add_argument("--init-mode-cv", type=str, default="0.6")
-    ap.add_argument("--p-cv-stay", type=str, default="0.95")
-    ap.add_argument("--p-ca-stay", type=str, default="0.95")
-    ap.add_argument("--cv-pos-noise", type=str, default="2.0")
-    ap.add_argument("--cv-vel-noise", type=str, default="40.0")
-    ap.add_argument("--cv-meas-noise", type=str, default="100.0")
-    ap.add_argument("--ca-pos-noise", type=str, default="2.0")
-    ap.add_argument("--ca-vel-noise", type=str, default="25.0")
-    ap.add_argument("--ca-acc-noise", type=str, default="60.0")
-    ap.add_argument("--ca-meas-noise", type=str, default="100.0")
+    ap.add_argument("--init-mode-cv", type=str, default=None)
+    ap.add_argument("--p-cv-stay", type=str, default=None)
+    ap.add_argument("--p-ca-stay", type=str, default=None)
+    ap.add_argument("--cv-pos-noise", type=str, default=None)
+    ap.add_argument("--cv-vel-noise", type=str, default=None)
+    ap.add_argument("--cv-meas-noise", type=str, default=None)
+    ap.add_argument("--ca-pos-noise", type=str, default=None)
+    ap.add_argument("--ca-vel-noise", type=str, default=None)
+    ap.add_argument("--ca-acc-noise", type=str, default=None)
+    ap.add_argument("--ca-meas-noise", type=str, default=None)
     args = ap.parse_args(argv)
 
+    base = PRESET_GRIDS.get(args.preset_grid, PRESET_GRIDS["single"])
     grids = {
-        "ULI_IMM_INIT_MODE_CV": _parse_float_grid(args.init_mode_cv),
-        "ULI_IMM_P_CV_STAY": _parse_float_grid(args.p_cv_stay),
-        "ULI_IMM_P_CA_STAY": _parse_float_grid(args.p_ca_stay),
-        "ULI_IMM_CV_POS_NOISE": _parse_float_grid(args.cv_pos_noise),
-        "ULI_IMM_CV_VEL_NOISE": _parse_float_grid(args.cv_vel_noise),
-        "ULI_IMM_CV_MEAS_NOISE": _parse_float_grid(args.cv_meas_noise),
-        "ULI_IMM_CA_POS_NOISE": _parse_float_grid(args.ca_pos_noise),
-        "ULI_IMM_CA_VEL_NOISE": _parse_float_grid(args.ca_vel_noise),
-        "ULI_IMM_CA_ACC_NOISE": _parse_float_grid(args.ca_acc_noise),
-        "ULI_IMM_CA_MEAS_NOISE": _parse_float_grid(args.ca_meas_noise),
+        "ULI_IMM_INIT_MODE_CV": _parse_optional_grid(args.init_mode_cv, base["ULI_IMM_INIT_MODE_CV"]),
+        "ULI_IMM_P_CV_STAY": _parse_optional_grid(args.p_cv_stay, base["ULI_IMM_P_CV_STAY"]),
+        "ULI_IMM_P_CA_STAY": _parse_optional_grid(args.p_ca_stay, base["ULI_IMM_P_CA_STAY"]),
+        "ULI_IMM_CV_POS_NOISE": _parse_optional_grid(args.cv_pos_noise, base["ULI_IMM_CV_POS_NOISE"]),
+        "ULI_IMM_CV_VEL_NOISE": _parse_optional_grid(args.cv_vel_noise, base["ULI_IMM_CV_VEL_NOISE"]),
+        "ULI_IMM_CV_MEAS_NOISE": _parse_optional_grid(args.cv_meas_noise, base["ULI_IMM_CV_MEAS_NOISE"]),
+        "ULI_IMM_CA_POS_NOISE": _parse_optional_grid(args.ca_pos_noise, base["ULI_IMM_CA_POS_NOISE"]),
+        "ULI_IMM_CA_VEL_NOISE": _parse_optional_grid(args.ca_vel_noise, base["ULI_IMM_CA_VEL_NOISE"]),
+        "ULI_IMM_CA_ACC_NOISE": _parse_optional_grid(args.ca_acc_noise, base["ULI_IMM_CA_ACC_NOISE"]),
+        "ULI_IMM_CA_MEAS_NOISE": _parse_optional_grid(args.ca_meas_noise, base["ULI_IMM_CA_MEAS_NOISE"]),
     }
 
     keys = list(grids.keys())
     combos = list(itertools.product(*(grids[k] for k in keys)))
+    full_combo_count = len(combos)
+    if args.max_trials <= 0 and PRESET_MAX_TRIALS_DEFAULT.get(args.preset_grid, 0) > 0:
+        args.max_trials = PRESET_MAX_TRIALS_DEFAULT[args.preset_grid]
+    if args.target_runtime_hours > 0:
+        est_min = float(max(args.estimate_min_per_trial, 0.1))
+        derived_max = max(1, int(math.floor((args.target_runtime_hours * 60.0) / est_min)))
+        if args.max_trials > 0:
+            args.max_trials = min(args.max_trials, derived_max)
+        else:
+            args.max_trials = derived_max
     args.batch_root.mkdir(parents=True, exist_ok=True)
     if args.shuffle:
         rng = random.Random(args.shuffle_seed)
@@ -294,9 +379,17 @@ def main(argv: list[str] | None = None) -> int:
 
     log_dir = args.log_dir or (args.batch_root / f"{args.run_prefix}_logs")
     log_dir.mkdir(parents=True, exist_ok=True)
+    est_total_min = float(len(combos)) * float(max(args.estimate_min_per_trial, 0.0))
+    est_wall_min = est_total_min / float(max(args.parallel, 1))
     print(f"Running {len(combos)} IMM trial(s) under {args.batch_root}")
     print(f"Results CSV: {out_csv}")
     print(f"Log dir: {log_dir}")
+    print(
+        f"Preset={args.preset_grid} full_grid={full_combo_count} "
+        f"planned_trials={len(combos)} parallel={args.parallel} "
+        f"est_wall_hours={est_wall_min / 60.0:.2f}"
+    )
+    total_trials = len(combos)
 
     results: list[dict[str, float | str]] = []
     fieldnames: list[str] = [
@@ -320,7 +413,12 @@ def main(argv: list[str] | None = None) -> int:
         run_root = args.batch_root / run_id
         cmd = _build_pipeline_args(args)
 
-        print(f"[{i}/{len(combos)}] {run_name} starting...")
+        completed_before = i - 1
+        progress_before = (100.0 * float(completed_before) / float(total_trials)) if total_trials > 0 else 100.0
+        print(
+            f"[{i}/{total_trials}] {run_name} starting... "
+            f"overall_progress={completed_before}/{total_trials} ({progress_before:.1f}%)"
+        )
         if args.dry_run:
             print("  DRY RUN:", " ".join(cmd), f"combo={combo_key}")
             continue
@@ -333,17 +431,67 @@ def main(argv: list[str] | None = None) -> int:
         while attempt < max_attempts:
             attempt += 1
             try:
-                proc = subprocess.run(
-                    cmd,
-                    check=True,
-                    env=trial_env,
-                    capture_output=True,
-                    text=True,
-                    timeout=(None if args.trial_timeout_sec <= 0 else args.trial_timeout_sec),
-                )
                 log_path = log_dir / f"{run_name}.log"
-                log_path.write_text((proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else ""))
-                break
+                with log_path.open("a", buffering=1) as lf:
+                    lf.write(f"=== Trial {run_name} attempt {attempt}/{max_attempts} ===\n")
+                    lf.write(f"Command: {' '.join(cmd)}\n")
+                    lf.write(f"Combo: {combo_key}\n")
+                    lf.flush()
+
+                    proc = subprocess.Popen(
+                        cmd,
+                        env=trial_env,
+                        stdout=lf,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                    start_wait = time.monotonic()
+                    last_hb = start_wait
+                    timeout_s = None if args.trial_timeout_sec <= 0 else float(args.trial_timeout_sec)
+
+                    while True:
+                        rc = proc.poll()
+                        now = time.monotonic()
+                        if rc is not None:
+                            if rc == 0:
+                                status = "ok"
+                                error_msg = ""
+                            else:
+                                status = "failed"
+                                error_msg = f"exit code {rc}"
+                                lf.write(f"[grid_search] trial failed rc={rc}\n")
+                            break
+
+                        if timeout_s is not None and (now - start_wait) > timeout_s:
+                            status = "timeout"
+                            error_msg = f"timeout after {args.trial_timeout_sec}s"
+                            lf.write(f"[grid_search] timeout reached; terminating trial\n")
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=20)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                                proc.wait()
+                            break
+
+                        hb = int(args.heartbeat_sec)
+                        if hb > 0 and (now - last_hb) >= hb:
+                            elapsed_hb = int(now - start_wait)
+                            lf.write(
+                                f"[grid_search] heartbeat run={run_name} "
+                                f"attempt={attempt}/{max_attempts} elapsed_s={elapsed_hb}\n"
+                            )
+                            lf.flush()
+                            print(
+                                f"[{i}/{total_trials}] {run_name} heartbeat: {elapsed_hb}s elapsed "
+                                f"(attempt {attempt}/{max_attempts}) "
+                                f"overall_progress={completed_before}/{total_trials} ({progress_before:.1f}%)"
+                            )
+                            last_hb = now
+
+                        time.sleep(1.0)
+                if status == "ok":
+                    break
             except subprocess.TimeoutExpired as e:
                 status = "timeout"
                 error_msg = f"timeout after {args.trial_timeout_sec}s"
@@ -425,17 +573,25 @@ def main(argv: list[str] | None = None) -> int:
             row[k] = v
         results.append(row)
         _append_result_row(out_csv, fieldnames, row)
+        completed_after = i
+        progress_after = (100.0 * float(completed_after) / float(total_trials)) if total_trials > 0 else 100.0
         print(
-            f"[{i}/{len(combos)}] {run_name} done: "
+            f"[{i}/{total_trials}] {run_name} done: "
             f"status={status} score={score:.4f} containment={containment:.4f} "
             f"rmse={loc_rmse:.4f} nees95={nees_in95:.4f} nis95={nis_in95:.4f} "
-            f"lat={detection_latency:.3f}s"
+            f"lat={detection_latency:.3f}s "
+            f"overall_progress={completed_after}/{total_trials} ({progress_after:.1f}%)"
         )
         if status != "ok" and args.fail_fast:
             print(f"Fail-fast enabled; stopping at {run_name} ({status}).")
             break
 
     if args.dry_run:
+        elapsed_wall = time.perf_counter() - started_wall
+        print(
+            f"=== IMM_GRID_SEARCH_FINISHED status=DRY_RUN trials_attempted=0 "
+            f"trials_ok=0 elapsed_s={elapsed_wall:.1f} timestamp={datetime.now().astimezone().isoformat()} ==="
+        )
         return 0
 
     ok_results = [r for r in results if str(r.get("status", "")).lower() == "ok"]
@@ -493,8 +649,28 @@ def main(argv: list[str] | None = None) -> int:
             )
         summary_md.write_text("\n".join(lines) + "\n")
         print(f"Wrote {summary_md}")
+        elapsed_wall = time.perf_counter() - started_wall
+        print(
+            f"=== IMM_GRID_SEARCH_FINISHED status=OK trials_attempted={len(results)} "
+            f"trials_ok={len(ok_results)} best_run={best['run_name']} "
+            f"best_score={float(best['score']):.6g} elapsed_s={elapsed_wall:.1f} "
+            f"timestamp={datetime.now().astimezone().isoformat()} ==="
+        )
     elif results:
         print("No successful trial to rank (all failed/timed out).")
+        elapsed_wall = time.perf_counter() - started_wall
+        print(
+            f"=== IMM_GRID_SEARCH_FINISHED status=FAILED trials_attempted={len(results)} "
+            f"trials_ok=0 elapsed_s={elapsed_wall:.1f} "
+            f"timestamp={datetime.now().astimezone().isoformat()} ==="
+        )
+    else:
+        elapsed_wall = time.perf_counter() - started_wall
+        print(
+            f"=== IMM_GRID_SEARCH_FINISHED status=NO_TRIALS trials_attempted=0 "
+            f"trials_ok=0 elapsed_s={elapsed_wall:.1f} "
+            f"timestamp={datetime.now().astimezone().isoformat()} ==="
+        )
     return 0
 
 

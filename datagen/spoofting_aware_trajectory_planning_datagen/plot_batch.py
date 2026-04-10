@@ -84,6 +84,30 @@ def _write_distribution_table(df: pd.DataFrame, out_dir: Path) -> Path:
         ("chance_constraint_violations", "SpoofingAware: chance-constraint violations", "nmac_spoofer_unsafe_aware", None),
         ("spoofer_containment_percent", "SpoofingAware: spoofer containment percent", "spoofer_containment_rate_aware", None),
         ("detection_latency_s", "SpoofingAware: detection latency (s)", "detection_latency_s_aware", None),
+        (
+            "detection_reports_total",
+            "SpoofingAware: detection reports processed",
+            "detection_reports_total_aware",
+            None,
+        ),
+        (
+            "detection_mlat_attempted",
+            "SpoofingAware: detection callbacks with MLAT attempted",
+            "detection_mlat_attempted_aware",
+            None,
+        ),
+        (
+            "detection_mlat_skipped_insufficient_receivers",
+            "SpoofingAware: detection callbacks skipped (receivers < 4)",
+            "detection_mlat_skipped_insufficient_receivers_aware",
+            None,
+        ),
+        (
+            "detection_mlat_skip_fraction",
+            "SpoofingAware: skipped MLAT fraction during detection",
+            "detection_mlat_skipped_insufficient_receivers_fraction_aware",
+            None,
+        ),
         ("localization_mae_m", "SpoofingAware: localization MAE (m)", "localization_mae_m_aware", None),
         ("localization_rmse_m", "SpoofingAware: localization RMSE (m)", "localization_rmse_m_aware", None),
     ]
@@ -181,10 +205,23 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
     aware_only_metrics = [
         ("nmac_spoofer_unsafe_aware", "SpoofingAware: chance-constraint violations"),
         ("spoofer_containment_rate_aware", "SpoofingAware: spoofer containment percent"),
+        ("detection_reports_total_aware", "SpoofingAware: detection reports processed"),
+        ("detection_mlat_attempted_aware", "SpoofingAware: detection callbacks with MLAT attempted"),
+        (
+            "detection_mlat_skipped_insufficient_receivers_aware",
+            "SpoofingAware: detection callbacks skipped (receivers < 4)",
+        ),
+        (
+            "detection_mlat_skipped_insufficient_receivers_fraction_aware",
+            "SpoofingAware: skipped MLAT fraction during detection",
+        ),
     ]
 
-    # Boxplots across seeds: 4 paired + 2 SpoofingAware-only.
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+    # Boxplots across seeds: paired + SpoofingAware-only metrics.
+    n_plots = len(paired_metrics) + len(aware_only_metrics)
+    n_cols = 3
+    n_rows = max(1, int(math.ceil(float(n_plots) / float(n_cols))))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.0 * n_cols, 4.0 * n_rows))
     axes = axes.ravel()
     idx = 0
     for aware_col, trust_col, title in paired_metrics:
@@ -208,6 +245,9 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             continue
         ax.boxplot([df[aware_col].dropna()], labels=["SpoofingAware"])
         ax.set_title(title)
+    while idx < len(axes):
+        axes[idx].axis("off")
+        idx += 1
     fig.suptitle("Safety Metrics Across Seeds")
     fig.tight_layout()
     p = out_dir / "summary_boxplots.pdf"
@@ -242,6 +282,26 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
         (
             "SpoofingAware: spoofer containment percent",
             "spoofer_containment_rate_aware",
+            None,
+        ),
+        (
+            "SpoofingAware: detection reports processed",
+            "detection_reports_total_aware",
+            None,
+        ),
+        (
+            "SpoofingAware: detection callbacks with MLAT attempted",
+            "detection_mlat_attempted_aware",
+            None,
+        ),
+        (
+            "SpoofingAware: detection callbacks skipped (receivers < 4)",
+            "detection_mlat_skipped_insufficient_receivers_aware",
+            None,
+        ),
+        (
+            "SpoofingAware: skipped MLAT fraction during detection",
+            "detection_mlat_skipped_insufficient_receivers_fraction_aware",
             None,
         ),
     ]
@@ -367,6 +427,53 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 fig.savefig(p, dpi=220)
                 plt.close(fig)
                 out_paths.append(p)
+
+    # Detection MLAT coverage by scenario (aware only): median with IQR.
+    if "tag" in df.columns and "detection_mlat_skipped_insufficient_receivers_fraction_aware" in df.columns:
+        dd = df.copy()
+        dd["scenario"] = dd["tag"].apply(_scenario_group_from_tag)
+        scenarios = sorted(dd["scenario"].dropna().unique().tolist())
+        labels: list[str] = []
+        medians: list[float] = []
+        err_lo: list[float] = []
+        err_hi: list[float] = []
+        for scen in scenarios:
+            ss = dd[dd["scenario"] == scen]
+            vals = pd.to_numeric(
+                ss["detection_mlat_skipped_insufficient_receivers_fraction_aware"],
+                errors="coerce",
+            ).dropna().to_numpy(dtype=float)
+            if vals.size == 0:
+                continue
+            q1 = float(np.quantile(vals, 0.25))
+            med = float(np.quantile(vals, 0.5))
+            q3 = float(np.quantile(vals, 0.75))
+            labels.append(scen.replace("Scenario_", "").replace("_", " "))
+            medians.append(med)
+            err_lo.append(max(0.0, med - q1))
+            err_hi.append(max(0.0, q3 - med))
+
+        if labels:
+            x = np.arange(len(labels))
+            fig, ax = plt.subplots(figsize=(max(10.0, 1.5 * len(labels)), 5.0))
+            ax.bar(
+                x,
+                medians,
+                yerr=[err_lo, err_hi],
+                capsize=3,
+                color="#4c78a8",
+            )
+            ax.set_xticks(x)
+            ax.set_xticklabels(labels, rotation=20, ha="right")
+            ax.set_ylabel("fraction of detection callbacks skipped")
+            ax.set_ylim(0.0, 1.0)
+            ax.set_title("Detection MLAT Skip Fraction by Scenario (median with IQR)")
+            ax.grid(axis="y", alpha=0.2)
+            fig.tight_layout()
+            p = out_dir / "detection_mlat_skip_fraction_by_scenario.pdf"
+            fig.savefig(p, dpi=220)
+            plt.close(fig)
+            out_paths.append(p)
 
     # Cleanup stale runtime chart that is now intentionally removed.
     stale_runtime_scalability = out_dir / "runtime_scalability_hub.png"

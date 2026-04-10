@@ -400,6 +400,10 @@ def main(argv: list[str] | None = None) -> int:
         "containment_rate_min", "containment_rate_max",
         "localization_rmse_median_m", "localization_rmse_std_m",
         "detection_latency_mean_s", "localization_mae_mean_m",
+        "detection_reports_total_mean_aware",
+        "detection_mlat_attempted_mean_aware",
+        "detection_mlat_skipped_insufficient_receivers_mean_aware",
+        "detection_mlat_skipped_insufficient_receivers_fraction_mean_aware",
         "imm_nees_mean", "imm_nees_std", "imm_nis_mean", "imm_nis_std",
     ] + keys
     for i, combo in enumerate(combos, start=1):
@@ -536,6 +540,18 @@ def main(argv: list[str] | None = None) -> int:
         loc_rmse_std = _metric(summary_rows, "localization_rmse_m_aware", "std")
         detection_latency = _metric(summary_rows, "detection_latency_s_aware", "mean")
         localization_mae = _metric(summary_rows, "localization_mae_m_aware", "mean")
+        detection_reports_total = _metric(summary_rows, "detection_reports_total_aware", "mean")
+        detection_mlat_attempted = _metric(summary_rows, "detection_mlat_attempted_aware", "mean")
+        detection_mlat_skipped = _metric(
+            summary_rows,
+            "detection_mlat_skipped_insufficient_receivers_aware",
+            "mean",
+        )
+        detection_mlat_skip_fraction = _metric(
+            summary_rows,
+            "detection_mlat_skipped_insufficient_receivers_fraction_aware",
+            "mean",
+        )
         imm_nees_mean = _metric(imm_rows, "imm_nees_mean", "mean")
         imm_nees_std = _metric(imm_rows, "imm_nees_mean", "std")
         imm_nis_mean = _metric(imm_rows, "imm_nis_mix_mean", "mean")
@@ -564,6 +580,10 @@ def main(argv: list[str] | None = None) -> int:
             "localization_rmse_std_m": loc_rmse_std,
             "detection_latency_mean_s": detection_latency,
             "localization_mae_mean_m": localization_mae,
+            "detection_reports_total_mean_aware": detection_reports_total,
+            "detection_mlat_attempted_mean_aware": detection_mlat_attempted,
+            "detection_mlat_skipped_insufficient_receivers_mean_aware": detection_mlat_skipped,
+            "detection_mlat_skipped_insufficient_receivers_fraction_mean_aware": detection_mlat_skip_fraction,
             "imm_nees_mean": imm_nees_mean,
             "imm_nees_std": imm_nees_std,
             "imm_nis_mean": imm_nis_mean,

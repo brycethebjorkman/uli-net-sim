@@ -105,6 +105,14 @@ def summarize_sweep_directory(
             "num_hosts_observed_trust_rid": st.get("num_hosts_observed_final"),
             "first_detection_time_s_aware": sa.get("first_detection_time_s_final"),
             "detection_latency_s_aware": sa.get("detection_latency_s_final"),
+            "detection_reports_total_aware": sa.get("detection_reports_total_final"),
+            "detection_mlat_attempted_aware": sa.get("detection_mlat_attempted_final"),
+            "detection_mlat_skipped_insufficient_receivers_aware": sa.get(
+                "detection_mlat_skipped_insufficient_receivers_final"
+            ),
+            "detection_mlat_skipped_insufficient_receivers_fraction_aware": sa.get(
+                "detection_mlat_skipped_insufficient_receivers_fraction_final"
+            ),
             "localization_mae_m_aware": sa.get("localization_mae_m_final"),
             "localization_rmse_m_aware": sa.get("localization_rmse_m_final"),
             "localization_samples_aware": sa.get("localization_samples_final"),

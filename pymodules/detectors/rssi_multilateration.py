@@ -18,7 +18,7 @@ INI usage:
 """
 
 import numpy as np
-from evaluations.detectors import multilaterate_with_tx_power, PositionErrorKF
+from pymodules.gcs.multilateration import multilaterate_with_tx_power, PositionErrorKF
 
 
 class RssiMultilaterationDetector:
@@ -34,9 +34,18 @@ class RssiMultilaterationDetector:
         serial = data['serial_number']
         reports = data['reports']
         claimed = data['claimed_pos']
+        receiver_count = int(len(reports))
+        skipped = receiver_count < self._min_receivers
 
-        if len(reports) < self._min_receivers:
-            return {'log': {'mlat_score': 0.0, 'mlat_raw_error': 0.0}}
+        if skipped:
+            return {
+                'log': {
+                    'mlat_score': 0.0,
+                    'mlat_raw_error': 0.0,
+                    'mlat_receiver_count': float(receiver_count),
+                    'mlat_skipped_insufficient_receivers': 1.0,
+                }
+            }
 
         # Build arrays from report dicts
         rx_positions = np.array([r['pos'] for r in reports])
@@ -49,7 +58,14 @@ class RssiMultilaterationDetector:
         )
 
         if est_pos is None:
-            return {'log': {'mlat_score': 0.0, 'mlat_raw_error': 0.0}}
+            return {
+                'log': {
+                    'mlat_score': 0.0,
+                    'mlat_raw_error': 0.0,
+                    'mlat_receiver_count': float(receiver_count),
+                    'mlat_skipped_insufficient_receivers': 0.0,
+                }
+            }
 
         raw_error = float(np.linalg.norm(est_pos - claimed_pos))
 
@@ -66,5 +82,11 @@ class RssiMultilaterationDetector:
             'log': {
                 'mlat_score': filtered_error,
                 'mlat_raw_error': raw_error,
+                'mlat_est_x_m': float(est_pos[0]),
+                'mlat_est_y_m': float(est_pos[1]),
+                'mlat_est_z_m': float(est_pos[2]) if len(est_pos) > 2 else 0.0,
+                'mlat_est_tx_dbm': float(est_tx),
+                'mlat_receiver_count': float(receiver_count),
+                'mlat_skipped_insufficient_receivers': 0.0,
             },
         }

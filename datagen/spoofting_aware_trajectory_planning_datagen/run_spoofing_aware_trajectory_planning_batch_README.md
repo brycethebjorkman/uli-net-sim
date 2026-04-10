@@ -68,6 +68,19 @@ Each run writes:
 - `run_timing.csv` - wall-clock timings per scenario-seed pair
 - `total_runtime_seconds.txt` - total batch runtime
 
+KF/MLAT tracking highlights:
+
+- `summary.csv` now includes detection coverage columns for Aware:
+  - `detection_reports_total_aware`
+  - `detection_mlat_attempted_aware`
+  - `detection_mlat_skipped_insufficient_receivers_aware`
+  - `detection_mlat_skipped_insufficient_receivers_fraction_aware`
+- `gcs_vectors/*.csv` export now includes detection vectors:
+  - `kf_max_nis`, `kf_mean_nis`, `kf_nis_host*`
+  - `mlat_score`, `mlat_raw_error`
+  - `receiver_count`, `mlat_receiver_count`, `mlat_skipped_insufficient_receivers`
+  - `combined_alert`, `spoofer_detected`
+
 ---
 
 ## 4) Continue after SSH disconnect
@@ -162,6 +175,26 @@ Count failed background runs:
 
 ```bash
 rg -n "^Background run failures:" "$LOG_FILE"
+```
+
+KF/MLAT signal checks:
+
+```bash
+RUN_ROOT="simulations/spoofing_aware_with_planning/batches/<run-id>"
+python3 - <<'PY'
+import pandas as pd
+from pathlib import Path
+run_root = Path("simulations/spoofing_aware_with_planning/batches/<run-id>")
+df = pd.read_csv(run_root / "summary.csv")
+cols = [c for c in df.columns if "detection_mlat" in c or c in ("detection_reports_total_aware",)]
+print("tracking columns:", cols)
+print(df[cols].describe(include="all"))
+PY
+```
+
+```bash
+VEC_CSV="$(ls -t simulations/spoofing_aware_with_planning/batches/<run-id>/gcs_vectors/*-gcs.csv | head -n 1)"
+rg -n "kf_max_nis|kf_mean_nis|kf_nis_host|mlat_score|mlat_raw_error|mlat_skipped_insufficient_receivers|combined_alert|spoofer_detected" "$VEC_CSV" | head -n 40
 ```
 
 ---

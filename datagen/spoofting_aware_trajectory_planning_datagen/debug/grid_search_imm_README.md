@@ -102,6 +102,15 @@ rg -n "overall_progress=.*\\([0-9]+\\.[0-9]+%\\)|IMM_GRID_SEARCH_FINISHED" "$LOG
 - Markdown summary:
   - `simulations/spoofing_aware_with_planning/batches_imm_grid/imm_grid_search_summary.md`
 
+Detection KF/MLAT tracking in grid CSV:
+
+- The grid result CSV now also includes:
+  - `detection_reports_total_mean_aware`
+  - `detection_mlat_attempted_mean_aware`
+  - `detection_mlat_skipped_insufficient_receivers_mean_aware`
+  - `detection_mlat_skipped_insufficient_receivers_fraction_mean_aware`
+- Use these fields to identify trials/scenarios where MLAT was frequently skipped due to low receiver count at callback time.
+
 ---
 
 ## 5) Plot grid-search results
@@ -140,6 +149,24 @@ Key plot files:
 - `--weight-*` adjust objective weights
 - `--min-containment X` mark trials as `low_containment` when below threshold
 - `--estimate-min-per-trial N` improve startup wall-time estimate printout
+
+Useful post-run detection diagnostics query:
+
+```bash
+python3 - <<'PY'
+import pandas as pd
+csv_path = "simulations/spoofing_aware_with_planning/batches_imm_grid/imm_grid_search_results.csv"
+df = pd.read_csv(csv_path)
+cols = [
+    "run_name",
+    "score",
+    "detection_mlat_skipped_insufficient_receivers_fraction_mean_aware",
+    "detection_mlat_attempted_mean_aware",
+    "detection_reports_total_mean_aware",
+]
+print(df[cols].sort_values("score", ascending=False).head(20).to_string(index=False))
+PY
+```
 
 Preset defaults:
 

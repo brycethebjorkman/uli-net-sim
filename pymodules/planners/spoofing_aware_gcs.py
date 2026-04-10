@@ -50,17 +50,14 @@ from pymodules.gcs.chance_constraint import (
 )
 from pymodules.gcs.imm_estimator import IMMEstimator
 from pymodules.gcs.multilateration import (
-    PositionErrorKF,
     multilaterate_with_tx_power,
     multilaterate_position_with_covariance,
 )
-from pymodules.detectors.kf_nis import KfNisDetector
+from pymodules.detectors.combined import CombinedDetector
 
 MIN_RECEIVERS = 4
 COMBINED_KF_THRESHOLD = 6.63
 COMBINED_MLAT_THRESHOLD = 50.0
-MLAT_SCORE_KF_PROCESS_NOISE = 100.0
-MLAT_SCORE_KF_MEASUREMENT_NOISE = 250000.0
 STOP_DETECTION_AFTER_FIRST_SPOOFER = True
 DEFAULT_AGENT_RADIUS = 120.0
 
@@ -166,8 +163,10 @@ class SpoofingAwareGcs:
         # Detection state: per-transmitter
         self._tx_power_samples: dict[int, list] = {}    # all joint TX estimates
         self._pos_samples: dict[int, list] = {}         # (time_s, joint pos estimate)
-        self._mlat_error_kf_per_tx: dict[int, PositionErrorKF] = {}
-        self._kf_detector = KfNisDetector()
+        self._combined_detector = CombinedDetector()
+        # Keep runtime thresholds aligned with planner constants.
+        self._combined_detector.kf_threshold = float(COMBINED_KF_THRESHOLD)
+        self._combined_detector.mlat_threshold = float(COMBINED_MLAT_THRESHOLD)
 
         # Post-detection state: per-spoofer tracking
         self.spoofers: set[int] = set()
@@ -206,6 +205,10 @@ class SpoofingAwareGcs:
         self._loc_err_sq_sum = 0.0
         self._loc_err_abs_sum = 0.0
         self._loc_samples = 0
+        # Detection diagnostics: track when MLAT is skipped due to too few reports.
+        self._detection_reports_total = 0
+        self._detection_mlat_attempted = 0
+        self._detection_mlat_skipped_insufficient_receivers = 0
 
     def _combined_detection_step(
         self,
@@ -217,42 +220,36 @@ class SpoofingAwareGcs:
         claimed_pos: np.ndarray,
     ) -> dict[str, float]:
         """Apply combined detector logic and return detection diagnostics."""
-        kf_result = self._kf_detector.on_gcs_reports(data)
-        kf_log = kf_result.get("log", {})
-        kf_max_nis = float(kf_log.get("kf_max_nis", 0.0))
+        combined_result = self._combined_detector.on_gcs_reports(data)
+        combined_log = combined_result.get("log", {})
+        kf_max_nis = float(combined_log.get("kf_max_nis", 0.0))
         kf_has_data = bool(any(r.get("kf_nis") is not None for r in data.get("reports", [])))
-
-        mlat_raw_error = 0.0
-        mlat_score = 0.0
-        if len(rx_positions) >= MIN_RECEIVERS:
-            est_pos, est_tx = multilaterate_with_tx_power(
-                rx_positions, rssi_values, claimed_pos,
-            )
-            if est_pos is not None and est_tx is not None:
-                mlat_raw_error = float(np.linalg.norm(est_pos - claimed_pos))
-                self._tx_power_samples.setdefault(serial, []).append(float(est_tx))
-                self._pos_samples.setdefault(serial, []).append(
-                    (float(report_time), np.asarray(est_pos, dtype=float).copy())
-                )
-                if serial not in self._mlat_error_kf_per_tx:
-                    self._mlat_error_kf_per_tx[serial] = PositionErrorKF(
-                        process_noise=MLAT_SCORE_KF_PROCESS_NOISE,
-                        measurement_noise=MLAT_SCORE_KF_MEASUREMENT_NOISE,
-                    )
-                _nis, mlat_score, _innov = self._mlat_error_kf_per_tx[serial].update(mlat_raw_error)
-                mlat_score = float(mlat_score)
-
-        combined_rule_alert = (
-            (kf_max_nis > COMBINED_KF_THRESHOLD)
-            or (mlat_score > COMBINED_MLAT_THRESHOLD)
+        mlat_raw_error = float(combined_log.get("mlat_raw_error", 0.0))
+        mlat_score = float(combined_log.get("mlat_score", 0.0))
+        receiver_count = int(combined_log.get("mlat_receiver_count", len(rx_positions)))
+        mlat_skipped_insufficient_receivers = bool(
+            float(combined_log.get("mlat_skipped_insufficient_receivers", 0.0)) > 0.5
         )
-        combined_alert = combined_rule_alert
+        est_x = combined_log.get("mlat_est_x_m")
+        est_y = combined_log.get("mlat_est_y_m")
+        est_z = combined_log.get("mlat_est_z_m")
+        est_tx = combined_log.get("mlat_est_tx_dbm")
+        if est_x is not None and est_y is not None and est_z is not None and est_tx is not None:
+            est_pos = np.array([float(est_x), float(est_y), float(est_z)], dtype=float)
+            self._tx_power_samples.setdefault(serial, []).append(float(est_tx))
+            self._pos_samples.setdefault(serial, []).append(
+                (float(report_time), est_pos.copy())
+            )
+
+        combined_alert = float(combined_log.get("combined_alert", 0.0)) > 0.5
         return {
             "kf_max_nis": kf_max_nis,
             "kf_has_data": 1.0 if kf_has_data else 0.0,
             "mlat_score": float(mlat_score),
             "mlat_raw_error": float(mlat_raw_error),
             "combined_alert": 1.0 if combined_alert else 0.0,
+            "receiver_count": float(receiver_count),
+            "mlat_skipped_insufficient_receivers": 1.0 if mlat_skipped_insufficient_receivers else 0.0,
         }
 
     # ------------------------------------------------------------------
@@ -283,6 +280,8 @@ class SpoofingAwareGcs:
         kf_max_nis = 0.0
         combined_alert = 0.0
         kf_has_data = 0.0
+        receiver_count = float(len(reports))
+        mlat_skipped_insufficient_receivers = 0.0
         visualization = {}
         tx_oracle_dbm = 0.0
 
@@ -401,6 +400,15 @@ class SpoofingAwareGcs:
                 kf_max_nis = float(detect_diag["kf_max_nis"])
                 kf_has_data = float(detect_diag["kf_has_data"])
                 combined_alert = float(detect_diag["combined_alert"])
+                receiver_count = float(detect_diag.get("receiver_count", float(len(reports))))
+                mlat_skipped_insufficient_receivers = float(
+                    detect_diag.get("mlat_skipped_insufficient_receivers", 0.0)
+                )
+                self._detection_reports_total += 1
+                if mlat_skipped_insufficient_receivers > 0.5:
+                    self._detection_mlat_skipped_insufficient_receivers += 1
+                else:
+                    self._detection_mlat_attempted += 1
 
                 if combined_alert > 0.5:
                     self.spoofers.add(serial)
@@ -463,13 +471,11 @@ class SpoofingAwareGcs:
                     # Clean up detection buffers
                     self._tx_power_samples.pop(serial, None)
                     self._pos_samples.pop(serial, None)
-                    self._mlat_error_kf_per_tx.pop(serial, None)
             elif not detection_enabled:
                 # Simulation policy: after first spoofer is identified, stop
                 # running detection for unknown serials to avoid extra NLLS work.
                 self._tx_power_samples.pop(serial, None)
                 self._pos_samples.pop(serial, None)
-                self._mlat_error_kf_per_tx.pop(serial, None)
 
         if serial in self.spoofers:
             self.rid_positions.pop(serial, None)
@@ -481,6 +487,8 @@ class SpoofingAwareGcs:
                 "num_spoofers": float(len(self.spoofers)),
                 "kf_max_nis": float(kf_max_nis),
                 "kf_has_data": float(kf_has_data),
+                "receiver_count": float(receiver_count),
+                "mlat_skipped_insufficient_receivers": float(mlat_skipped_insufficient_receivers),
                 "mlat_score": float(mlat_score),
                 "combined_alert": float(combined_alert),
                 "tx_power_est_dbm": float(self._spoofer_tx_estimate_dbm.get(serial, 0.0)),
@@ -949,6 +957,16 @@ class SpoofingAwareGcs:
                 "num_hosts_observed_final": float(self._max_host_count),
                 "first_detection_time_s_final": float(self._first_detection_time_s) if self._first_detection_time_s is not None else -1.0,
                 "detection_latency_s_final": float(self._detection_latency_s) if self._detection_latency_s is not None else -1.0,
+                "detection_reports_total_final": float(self._detection_reports_total),
+                "detection_mlat_attempted_final": float(self._detection_mlat_attempted),
+                "detection_mlat_skipped_insufficient_receivers_final": float(
+                    self._detection_mlat_skipped_insufficient_receivers
+                ),
+                "detection_mlat_skipped_insufficient_receivers_fraction_final": (
+                    float(self._detection_mlat_skipped_insufficient_receivers)
+                    / float(self._detection_reports_total)
+                    if self._detection_reports_total > 0 else 0.0
+                ),
                 "localization_mae_m_final": (
                     float(self._loc_err_abs_sum / float(self._loc_samples))
                     if self._loc_samples > 0 else -1.0

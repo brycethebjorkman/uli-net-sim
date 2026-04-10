@@ -31,12 +31,12 @@ flowchart TD
   E --> F["GCS `SpoofingAwareGcs.on_gcs_reports`"]
 
   F --> G["KF branch: `KfNisDetector`"]
-  F --> H["MLAT branch: `multilaterate_with_tx_power` + `PositionErrorKF`"]
+  F --> H["MLAT detection branch: `RssiMultilaterationDetector`"]
   G --> I["Combined decision: `kf_max_nis > 6.63 OR mlat_score > 50`"]
   H --> I
 
   I -->|Alert| J["Mark serial as spoofer + init IMM/TX state"]
-  J --> K["Phase 2 localization (>=4 RX: joint x,tx; >=3 RX: position-only)"]
+  J --> K["Phase 2 localization (from `gcs/multilateration.py`: >=4 RX joint x,tx; >=3 RX position-only)"]
   K --> L["IMM correction (`IMMEstimator.update`)"]
   L --> M["`on_gcs_tick`: IMM predict-only + unsafe ellipsoid publish"]
   M --> C
@@ -59,7 +59,8 @@ flowchart TD
 
 - Combined trigger rule is immediate and per-report:
   - `kf_max_nis > 6.63` OR `mlat_score > 50.0`.
-- MLAT score path:
+- MLAT score path (runtime detector):
+  - implemented via `pymodules.detectors.rssi_multilateration.RssiMultilaterationDetector`,
   - requires at least 4 receivers,
   - performs joint NLLS over `(x,y,z,tx_power)`,
   - computes raw claim-vs-MLAT position error,
@@ -140,9 +141,9 @@ flowchart TD
 - `pymodules/detectors/combined.py`
   - Reference implementation of the same OR-rule used in GCS detection.
 - `pymodules/detectors/rssi_multilateration.py`
-  - Standalone detector module (not the main simulation GCS path).
+  - Main runtime MLAT detection path used by `SpoofingAwareGcs` during Phase 1.
 - `pymodules/gcs/multilateration.py`
-  - Joint and position-only RSSI multilateration + covariance estimation.
+  - Main runtime localization path used after detection (joint and position-only RSSI multilateration + covariance estimation).
 - `pymodules/gcs/imm_estimator.py`
   - CV/CA IMM tracker.
 - `pymodules/gcs/chance_constraint.py`

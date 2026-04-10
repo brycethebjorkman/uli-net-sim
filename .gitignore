@@ -23,4 +23,5 @@ __pycache__
 .pytest_cache/
 tests/__pycache__/
 tests/out/
-simulations/spoofing_aware_with_planning/sweeps/charts_store/
+simulations/spoofing_aware_with_planning/batches/
+simulations/spoofing_aware_with_planning/sweeps/

@@ -3,12 +3,11 @@ Spoofing-aware GCS: RSSI multilateration detection → position-only localizatio
 
 Two-phase pipeline per the paper (AIAA SciTech '26, Sec. V-B):
 
-  Phase 1 — Detection (runs on EVERY transmitter):
-    For every transmission from an unknown serial, jointly estimate position +
-    TX power via NLLS. Track raw position error with a consecutive-hit counter.
-    When the raw error exceeds the threshold for DETECT_COUNT consecutive
-    transmissions, the serial is flagged as a spoofer. TX power is locked as
-    the median of all joint estimates accumulated during detection.
+  Phase 1 — Detection (runs on every transmitter until first detection):
+    Uses the same combined decision rule as ``pymodules.detectors.combined``:
+    alert when either KF-NIS exceeds threshold or MLAT filtered-error exceeds
+    threshold. While in detection, accumulate joint MLAT position/TX estimates
+    so localization can be initialized immediately after alert.
 
   Phase 2 — Localization (per detected spoofer, rest of sim):
     Dynamically estimate TX power during localization using joint
@@ -51,22 +50,27 @@ from pymodules.gcs.chance_constraint import (
 )
 from pymodules.gcs.imm_estimator import IMMEstimator
 from pymodules.gcs.multilateration import (
+    PositionErrorKF,
     multilaterate_with_tx_power,
     multilaterate_position_with_covariance,
 )
+from pymodules.detectors.kf_nis import KfNisDetector
 
 MIN_RECEIVERS = 4
-DETECTION_THRESHOLD_M = 30.0
-DETECT_COUNT = 3              # consecutive hits to declare spoofer
+COMBINED_KF_THRESHOLD = 6.63
+COMBINED_MLAT_THRESHOLD = 50.0
+MLAT_SCORE_KF_PROCESS_NOISE = 100.0
+MLAT_SCORE_KF_MEASUREMENT_NOISE = 250000.0
+STOP_DETECTION_AFTER_FIRST_SPOOFER = True
 DEFAULT_AGENT_RADIUS = 60.0
 
 # NMAC: pairwise proximity (m); spoofer unsafe uses chance-constraint ellipsoid (is_safe)
 NMAC_PROXIMITY_M = 50.0
 TX_EST_EMA = 0.2              # smoothing on dynamic TX estimate
 TX_EST_MAX_STEP_DB = 2.0      # max per-update TX change (dB)
-TX_LOCK_MIN_DBM = -50.0
-TX_LOCK_MAX_DBM = 50.0
-DEBUG_USE_GROUND_TRUTH_TX = True   # DEBUG ONLY: use tx_true_pos to estimate TX
+TX_EST_MIN_DBM = -50.0
+TX_EST_MAX_DBM = 50.0
+DEBUG_USE_GROUND_TRUTH_TX = False  # DEBUG ONLY: use tx_true_pos to estimate TX
 FSPL_CONSTANT_DB = 40.04
 IMM_DT = 0.25
 IMM_MAX_PREDICT_STEPS = 0     # 0 => unlimited predict-only propagation between measurements
@@ -91,6 +95,25 @@ CLAIMED_FALLBACK_STD_M = 30.0     # pseudo-measurement std when falling back to 
 MLAT_INIT_CLIP_XY = 2000.0
 MLAT_INIT_CLIP_Z = 1000.0
 MLAT_INIT_MAX_FROM_CLAIMED = 600.0
+
+# Keep IMM keys present in report logs so OMNeT++ vector files always include them.
+_IMM_LOG_DEFAULTS = {
+    "imm_mode_prob_cv": float("nan"),
+    "imm_mode_prob_ca": float("nan"),
+    "imm_nis_cv": float("nan"),
+    "imm_nis_ca": float("nan"),
+    "imm_nis_mix": float("nan"),
+    "imm_last_measurement_time_s": float("nan"),
+    "imm_est_x_m": float("nan"),
+    "imm_est_y_m": float("nan"),
+    "imm_est_z_m": float("nan"),
+    "imm_true_x_m": float("nan"),
+    "imm_true_y_m": float("nan"),
+    "imm_true_z_m": float("nan"),
+    "imm_error_norm_m": float("nan"),
+    "imm_cov_trace_m2": float("nan"),
+    "imm_nees": float("nan"),
+}
 
 
 def _env_float(name: str, default: float) -> float:
@@ -141,14 +164,15 @@ class SpoofingAwareGcs:
         self.goals = goals or {}
 
         # Detection state: per-transmitter
-        self._hit_count: dict[int, int] = {}            # consecutive detections
         self._tx_power_samples: dict[int, list] = {}    # all joint TX estimates
         self._pos_samples: dict[int, list] = {}         # all joint pos estimates
+        self._mlat_error_kf_per_tx: dict[int, PositionErrorKF] = {}
+        self._kf_detector = KfNisDetector()
 
         # Post-detection state: per-spoofer tracking
         self.spoofers: set[int] = set()
         self._imm: dict[int, IMMEstimator] = {}
-        self._spoofer_tx_power: dict[int, float] = {}
+        self._spoofer_tx_estimate_dbm: dict[int, float] = {}
         self._published_unsafe: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._last_primary_unsafe: dict | None = None
         self._ticks_since_spoofer_meas: dict[int, int] = {}
@@ -182,6 +206,48 @@ class SpoofingAwareGcs:
         self._loc_err_abs_sum = 0.0
         self._loc_samples = 0
 
+    def _combined_detection_step(
+        self,
+        data: dict,
+        serial: int,
+        rx_positions: np.ndarray,
+        rssi_values: np.ndarray,
+        claimed_pos: np.ndarray,
+    ) -> dict[str, float]:
+        """Apply combined detector logic and return detection diagnostics."""
+        kf_result = self._kf_detector.on_gcs_reports(data)
+        kf_log = kf_result.get("log", {})
+        kf_max_nis = float(kf_log.get("kf_max_nis", 0.0))
+
+        mlat_raw_error = 0.0
+        mlat_score = 0.0
+        if len(rx_positions) >= MIN_RECEIVERS:
+            est_pos, est_tx = multilaterate_with_tx_power(
+                rx_positions, rssi_values, claimed_pos,
+            )
+            if est_pos is not None and est_tx is not None:
+                mlat_raw_error = float(np.linalg.norm(est_pos - claimed_pos))
+                self._tx_power_samples.setdefault(serial, []).append(float(est_tx))
+                self._pos_samples.setdefault(serial, []).append(np.asarray(est_pos, dtype=float).copy())
+                if serial not in self._mlat_error_kf_per_tx:
+                    self._mlat_error_kf_per_tx[serial] = PositionErrorKF(
+                        process_noise=MLAT_SCORE_KF_PROCESS_NOISE,
+                        measurement_noise=MLAT_SCORE_KF_MEASUREMENT_NOISE,
+                    )
+                _nis, mlat_score, _innov = self._mlat_error_kf_per_tx[serial].update(mlat_raw_error)
+                mlat_score = float(mlat_score)
+
+        combined_alert = (
+            (kf_max_nis > COMBINED_KF_THRESHOLD)
+            or (mlat_score > COMBINED_MLAT_THRESHOLD)
+        )
+        return {
+            "kf_max_nis": kf_max_nis,
+            "mlat_score": float(mlat_score),
+            "mlat_raw_error": float(mlat_raw_error),
+            "combined_alert": 1.0 if combined_alert else 0.0,
+        }
+
     # ------------------------------------------------------------------
     # Per-transmission callback
     # ------------------------------------------------------------------
@@ -202,6 +268,9 @@ class SpoofingAwareGcs:
             self.federate_ids.add(r["host_id"])
 
         mlat_raw_error = 0.0
+        mlat_score = 0.0
+        kf_max_nis = 0.0
+        combined_alert = 0.0
         visualization = {}
         tx_oracle_dbm = 0.0
 
@@ -227,7 +296,7 @@ class SpoofingAwareGcs:
                 if np.linalg.norm(mlat_init - claimed_pos) > MLAT_INIT_MAX_FROM_CLAIMED:
                     mlat_init = claimed_pos.copy()
 
-                tx_before = self._spoofer_tx_power[serial]
+                tx_before = self._spoofer_tx_estimate_dbm[serial]
                 tx_after = tx_before
                 est_pos = None
                 est_cov = None
@@ -240,8 +309,8 @@ class SpoofingAwareGcs:
                     if joint_pos is not None and joint_tx is not None:
                         delta = float(joint_tx - tx_before)
                         delta = float(np.clip(delta, -TX_EST_MAX_STEP_DB, TX_EST_MAX_STEP_DB))
-                        tx_after = float(np.clip(tx_before + TX_EST_EMA * delta, TX_LOCK_MIN_DBM, TX_LOCK_MAX_DBM))
-                        self._spoofer_tx_power[serial] = tx_after
+                        tx_after = float(np.clip(tx_before + TX_EST_EMA * delta, TX_EST_MIN_DBM, TX_EST_MAX_DBM))
+                        self._spoofer_tx_estimate_dbm[serial] = tx_after
                         # Covariance from position-only local geometry at updated TX.
                         est_pos, est_cov = multilaterate_position_with_covariance(
                             rx_positions, rssi_values, joint_pos, tx_after
@@ -255,19 +324,19 @@ class SpoofingAwareGcs:
                     d = np.maximum(d, 0.1)
                     tx_samples = rssi_values + 20.0 * np.log10(d) + FSPL_CONSTANT_DB
                     tx_oracle = float(np.median(tx_samples))
-                    tx_oracle = float(np.clip(tx_oracle, TX_LOCK_MIN_DBM, TX_LOCK_MAX_DBM))
-                    self._spoofer_tx_power[serial] = tx_oracle
+                    tx_oracle = float(np.clip(tx_oracle, TX_EST_MIN_DBM, TX_EST_MAX_DBM))
+                    self._spoofer_tx_estimate_dbm[serial] = tx_oracle
                     tx_oracle_dbm = tx_oracle
                     # Re-run position solve with oracle TX for this debug run.
                     est_pos, est_cov = multilaterate_position_with_covariance(
-                        rx_positions, rssi_values, mlat_init, self._spoofer_tx_power[serial]
+                        rx_positions, rssi_values, mlat_init, self._spoofer_tx_estimate_dbm[serial]
                     )
 
                 if est_pos is None:
                     # Fallback path (3-receiver geometry or joint-solve failure):
                     # use latest TX estimate for position-only solve.
                     est_pos, est_cov = multilaterate_position_with_covariance(
-                        rx_positions, rssi_values, mlat_init, self._spoofer_tx_power[serial]
+                        rx_positions, rssi_values, mlat_init, self._spoofer_tx_estimate_dbm[serial]
                     )
 
                 used_claimed_fallback = False
@@ -305,7 +374,7 @@ class SpoofingAwareGcs:
                     self._ticks_since_spoofer_meas[serial] = 0
                     used_claimed_fallback = True
 
-                visualization["tx_est"] = float(self._spoofer_tx_power[serial])
+                visualization["tx_est"] = float(self._spoofer_tx_estimate_dbm[serial])
                 visualization["tx_est_delta"] = float(tx_after - tx_before)
                 visualization["used_claimed_fallback"] = bool(used_claimed_fallback)
             else:
@@ -328,66 +397,81 @@ class SpoofingAwareGcs:
                 else:
                     visualization["used_claimed_fallback"] = False
         else:
-            # ── Phase 1: detection (runs on every unknown transmitter) ──
-            if len(rx_positions) >= MIN_RECEIVERS:
-                est_pos, est_tx = multilaterate_with_tx_power(
-                    rx_positions, rssi_values, claimed_pos,
+            # ── Phase 1: detection (optionally disabled after first detection) ──
+            detection_enabled = (not STOP_DETECTION_AFTER_FIRST_SPOOFER) or (len(self.spoofers) == 0)
+            if detection_enabled:
+                detect_diag = self._combined_detection_step(
+                    data=data,
+                    serial=serial,
+                    rx_positions=rx_positions,
+                    rssi_values=rssi_values,
+                    claimed_pos=claimed_pos,
                 )
-                if est_pos is not None and est_tx is not None:
-                    mlat_raw_error = float(np.linalg.norm(est_pos - claimed_pos))
+                mlat_raw_error = float(detect_diag["mlat_raw_error"])
+                mlat_score = float(detect_diag["mlat_score"])
+                kf_max_nis = float(detect_diag["kf_max_nis"])
+                combined_alert = float(detect_diag["combined_alert"])
 
-                    # Accumulate TX power and position estimates
-                    self._tx_power_samples.setdefault(serial, []).append(est_tx)
-                    self._pos_samples.setdefault(serial, []).append(est_pos.copy())
+                if combined_alert > 0.5:
+                    self.spoofers.add(serial)
+                    if self._first_detection_time_s is None:
+                        self._first_detection_time_s = report_time
+                    if self._detection_latency_s is None:
+                        t_first = self._first_seen_time_s.get(int(serial), report_time)
+                        self._detection_latency_s = max(0.0, report_time - t_first)
+                    print(
+                        f"[DETECT] spoofer serial={serial} detected "
+                        f"kf_max_nis={kf_max_nis:.2f} mlat_score={mlat_score:.2f} "
+                        f"tx_samples={len(self._tx_power_samples.get(serial, []))}",
+                        flush=True,
+                    )
 
-                    if mlat_raw_error > DETECTION_THRESHOLD_M:
-                        self._hit_count[serial] = self._hit_count.get(serial, 0) + 1
+                    # Initialize tracked TX estimate from detection-time MLAT samples.
+                    tx_samples = self._tx_power_samples.get(serial, [])
+                    if tx_samples:
+                        self._spoofer_tx_estimate_dbm[serial] = float(np.median(tx_samples))
                     else:
-                        self._hit_count[serial] = 0
+                        self._spoofer_tx_estimate_dbm[serial] = 0.0
 
-                    if self._hit_count.get(serial, 0) >= DETECT_COUNT:
-                        self.spoofers.add(serial)
-                        if self._first_detection_time_s is None:
-                            self._first_detection_time_s = report_time
-                        if self._detection_latency_s is None:
-                            t_first = self._first_seen_time_s.get(int(serial), report_time)
-                            self._detection_latency_s = max(0.0, report_time - t_first)
-                        print(
-                            f"[DETECT] spoofer serial={serial} detected "
-                            f"raw_error_m={mlat_raw_error:.2f} "
-                            f"tx_samples={len(self._tx_power_samples.get(serial, []))}",
-                            flush=True,
-                        )
-
-                        # Lock TX power as median of all accumulated estimates
-                        tx_samples = self._tx_power_samples[serial]
-                        self._spoofer_tx_power[serial] = float(np.median(tx_samples))
-
-                        # Initialize IMM with all accumulated position estimates
-                        self._imm[serial] = IMMEstimator(
-                            dt=IMM_DT,
-                            cv_pos_noise=IMM_CV_POS_NOISE,
-                            cv_vel_noise=IMM_CV_VEL_NOISE,
-                            cv_measurement_noise=IMM_CV_MEAS_NOISE,
-                            ca_pos_noise=IMM_CA_POS_NOISE,
-                            ca_vel_noise=IMM_CA_VEL_NOISE,
-                            ca_acc_noise=IMM_CA_ACC_NOISE,
-                            ca_measurement_noise=IMM_CA_MEAS_NOISE,
-                            init_mode_cv=IMM_INIT_MODE_CV,
-                            p_cv_stay=IMM_P_CV_STAY,
-                            p_ca_stay=IMM_P_CA_STAY,
-                        )
-                        for p in self._pos_samples[serial]:
+                    # Initialize IMM with accumulated MLAT estimates if available.
+                    self._imm[serial] = IMMEstimator(
+                        dt=IMM_DT,
+                        cv_pos_noise=IMM_CV_POS_NOISE,
+                        cv_vel_noise=IMM_CV_VEL_NOISE,
+                        cv_measurement_noise=IMM_CV_MEAS_NOISE,
+                        ca_pos_noise=IMM_CA_POS_NOISE,
+                        ca_vel_noise=IMM_CA_VEL_NOISE,
+                        ca_acc_noise=IMM_CA_ACC_NOISE,
+                        ca_measurement_noise=IMM_CA_MEAS_NOISE,
+                        init_mode_cv=IMM_INIT_MODE_CV,
+                        p_cv_stay=IMM_P_CV_STAY,
+                        p_ca_stay=IMM_P_CA_STAY,
+                    )
+                    pos_samples = self._pos_samples.get(serial, [])
+                    if pos_samples:
+                        for p in pos_samples:
                             self._imm[serial].update(
                                 p,
                                 do_predict=False,
                                 measurement_time_s=report_time,
                             )
+                    else:
+                        self._imm[serial].update(
+                            claimed_pos,
+                            do_predict=False,
+                            measurement_time_s=report_time,
+                        )
 
-                        # Clean up detection buffers
-                        self._tx_power_samples.pop(serial, None)
-                        self._pos_samples.pop(serial, None)
-                        self._hit_count.pop(serial, None)
+                    # Clean up detection buffers
+                    self._tx_power_samples.pop(serial, None)
+                    self._pos_samples.pop(serial, None)
+                    self._mlat_error_kf_per_tx.pop(serial, None)
+            elif not detection_enabled:
+                # Simulation policy: after first spoofer is identified, stop
+                # running detection for unknown serials to avoid extra NLLS work.
+                self._tx_power_samples.pop(serial, None)
+                self._pos_samples.pop(serial, None)
+                self._mlat_error_kf_per_tx.pop(serial, None)
 
         if serial in self.spoofers:
             self.rid_positions.pop(serial, None)
@@ -397,9 +481,13 @@ class SpoofingAwareGcs:
                 "mlat_raw_error": mlat_raw_error,
                 "spoofer_detected": 1.0 if serial in self.spoofers else 0.0,
                 "num_spoofers": float(len(self.spoofers)),
-                "hit_count": float(self._hit_count.get(serial, 0)),
-                "tx_power_est_dbm": float(self._spoofer_tx_power.get(serial, 0.0)),
+                "hit_count": 0.0,
+                "kf_max_nis": float(kf_max_nis),
+                "mlat_score": float(mlat_score),
+                "combined_alert": float(combined_alert),
+                "tx_power_est_dbm": float(self._spoofer_tx_estimate_dbm.get(serial, 0.0)),
                 "tx_power_oracle_dbm": float(tx_oracle_dbm),
+                **_IMM_LOG_DEFAULTS,
             },
         }
         if visualization:

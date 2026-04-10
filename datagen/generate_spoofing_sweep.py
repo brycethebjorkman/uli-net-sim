@@ -15,7 +15,7 @@ Leaf configs are *_Aware and *_TrustRid so datagen/run_batch.py runs both.
 Example:
     python3 datagen/generate_spoofing_sweep.py \\
         --layout circle8 --seeds 0 1 2 \\
-        --output-dir simulations/spoofing_aware_with_planning/sweeps/generated
+        --output-dir simulations/spoofing_aware_with_planning/batches/0001/generated
 """
 
 from __future__ import annotations

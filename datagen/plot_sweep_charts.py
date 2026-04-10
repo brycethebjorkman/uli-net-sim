@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Generate sweep analysis charts from summary.csv and optional GCS vector exports.
+Generate batch analysis charts from summary.csv and optional GCS vector exports.
 
 Usage:
     python3 datagen/plot_sweep_charts.py \
-        --sweep-root simulations/spoofing_aware_with_planning/sweeps
+        --batch-root simulations/spoofing_aware_with_planning/batches
 """
 
 from __future__ import annotations
@@ -20,6 +20,26 @@ import pandas as pd
 NMAC_THRESHOLD_M = 50.0
 CHI2_3DOF_95_LO = 0.21579528262389785
 CHI2_3DOF_95_HI = 9.348403604496148
+
+
+def _apply_paper_style(plt) -> None:
+    plt.rcParams.update(
+        {
+            "figure.dpi": 140,
+            "savefig.dpi": 260,
+            "axes.titlesize": 12,
+            "axes.labelsize": 11,
+            "xtick.labelsize": 9.5,
+            "ytick.labelsize": 9.5,
+            "legend.fontsize": 9,
+            "axes.grid": True,
+            "grid.alpha": 0.22,
+            "grid.linestyle": "-",
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "lines.linewidth": 1.8,
+        }
+    )
 
 
 def _variant_from_name(name: str) -> str:
@@ -106,6 +126,7 @@ def _write_distribution_table(df: pd.DataFrame, out_dir: Path) -> Path:
 
 def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
     import matplotlib.pyplot as plt
+    _apply_paper_style(plt)
 
     try:
         df = pd.read_csv(summary_csv)
@@ -188,7 +209,7 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
         ax.set_title(title)
     fig.suptitle("Safety Metrics Across Seeds")
     fig.tight_layout()
-    p = out_dir / "summary_boxplots.png"
+    p = out_dir / "summary_boxplots.pdf"
     fig.savefig(p, dpi=220)
     plt.close(fig)
     out_paths.append(p)
@@ -265,9 +286,9 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
         stale_summary_means_png.unlink()
 
     # Runtime comparison across scenarios: SpoofingAware vs TrustRID.
-    # Prefer full wall-clock per-variant runtime from run_timing.csv.
+    # Uses full wall-clock per-variant runtime from run_timing.csv.
     rt = None
-    runtime_label = ""
+    runtime_label = "Wall-clock runtime per run (s)"
     rt_csv = out_dir.parent / "run_timing.csv"
     if rt_csv.is_file():
         try:
@@ -278,24 +299,8 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 and "elapsed_trust_rid_seconds" in rt_file.columns
             ):
                 rt = rt_file.copy()
-                runtime_label = "Wall-clock runtime per run (s)"
         except Exception:
             rt = None
-    # Backward-compatible fallback for older runs without per-variant wall-clock.
-    if rt is None and (
-        "tag" in df.columns
-        and "gcs_compute_total_s_aware" in df.columns
-        and "gcs_compute_total_s_trust_rid" in df.columns
-    ):
-        rt = df.copy()
-        rt["scenario"] = rt["tag"].apply(_scenario_group_from_tag)
-        rt = rt.rename(
-            columns={
-                "gcs_compute_total_s_aware": "elapsed_aware_seconds",
-                "gcs_compute_total_s_trust_rid": "elapsed_trust_rid_seconds",
-            }
-        )
-        runtime_label = "GCS compute total per run (s)"
 
     if rt is not None and "scenario" in rt.columns:
         scenarios = sorted(rt["scenario"].dropna().unique().tolist())
@@ -357,10 +362,15 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 ax.grid(axis="y", alpha=0.2)
                 ax.legend()
                 fig.tight_layout()
-                p = out_dir / "runtime_compare_scenarios_aware_vs_trustrid.png"
+                p = out_dir / "runtime_compare_scenarios_aware_vs_trustrid.pdf"
                 fig.savefig(p, dpi=220)
                 plt.close(fig)
                 out_paths.append(p)
+
+    # Cleanup stale runtime chart that is now intentionally removed.
+    stale_runtime_scalability = out_dir / "runtime_scalability_hub.png"
+    if stale_runtime_scalability.exists():
+        stale_runtime_scalability.unlink()
 
     out_paths.append(_write_distribution_table(df, out_dir))
 
@@ -411,6 +421,7 @@ def _load_gcs_vector_long(gcs_vectors_dir: Path) -> pd.DataFrame:
 
 def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
     import matplotlib.pyplot as plt
+    _apply_paper_style(plt)
 
     out_paths: list[Path] = []
     if long_df.empty:
@@ -563,7 +574,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
             ax.legend(fontsize=8)
         fig.suptitle("SpoofingAware IMM Mode Probabilities Through Time (Median)")
         fig.tight_layout()
-        p = out_dir / "timeseries_imm_mode_probabilities_median.png"
+        p = out_dir / "timeseries_imm_mode_probabilities_median.pdf"
         fig.savefig(p, dpi=220)
         plt.close(fig)
         return p
@@ -599,7 +610,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
             ax.legend(fontsize=8)
         fig.suptitle("SpoofingAware IMM: True vs Estimated XY Trajectory (Median)")
         fig.tight_layout()
-        p = out_dir / "timeseries_imm_true_vs_estimated_xy_median.png"
+        p = out_dir / "timeseries_imm_true_vs_estimated_xy_median.pdf"
         fig.savefig(p, dpi=220)
         plt.close(fig)
         return p
@@ -655,7 +666,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
             ax.legend(fontsize=8)
         fig.suptitle("SpoofingAware IMM Position Error from True vs Estimated Trajectory (Median)")
         fig.tight_layout()
-        p = out_dir / "timeseries_imm_error_norm_median.png"
+        p = out_dir / "timeseries_imm_error_norm_median.pdf"
         fig.savefig(p, dpi=220)
         plt.close(fig)
         return p
@@ -738,7 +749,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
             "SpoofingAware Containment (left) and Localization/Bubble Metrics (right) Through Time (Median)"
         )
         fig.tight_layout()
-        p = out_dir / "timeseries_containment_localization_unsafe_bubble_median.png"
+        p = out_dir / "timeseries_containment_localization_unsafe_bubble_median.pdf"
         fig.savefig(p, dpi=220)
         plt.close(fig)
         return p
@@ -748,43 +759,10 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
         metric_pattern="min_benign_spoofer_distance_now_m",
         title="Min Benign-Spoofer Distance Through Time (Median, by Scenario)",
         ylabel="distance (m)",
-        out_name="timeseries_min_distance_median.png",
+        out_name="timeseries_min_distance_median.pdf",
         variants=["SpoofingAware", "TrustRID"],
         hline=NMAC_THRESHOLD_M,
         hline_label=f"NMAC threshold ({int(NMAC_THRESHOLD_M)} m)",
-    )
-    if p is not None:
-        out_paths.append(p)
-
-    p = _plot_by_scenario(
-        long_df,
-        metric_pattern="spoofer_containment_rate",
-        title="SpoofingAware Spoofer Containment Through Time (Median, by Scenario)",
-        ylabel="containment percent",
-        out_name="timeseries_containment_rate_median.png",
-        variants=["SpoofingAware"],
-    )
-    if p is not None:
-        out_paths.append(p)
-
-    p = _plot_by_scenario(
-        long_df,
-        metric_pattern="mlat_raw_error",
-        title="Localization Raw Error Through Time (Median, by Scenario)",
-        ylabel="error (m)",
-        out_name="timeseries_localization_error_median.png",
-        variants=["SpoofingAware"],
-    )
-    if p is not None:
-        out_paths.append(p)
-
-    p = _plot_by_scenario(
-        long_df,
-        metric_pattern="unsafe_radius_max_m",
-        title="Chance-Constraint Bubble Radius Through Time (Median, by Scenario)",
-        ylabel="radius (m)",
-        out_name="timeseries_unsafe_bubble_radius_median.png",
-        variants=["SpoofingAware"],
     )
     if p is not None:
         out_paths.append(p)
@@ -806,7 +784,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
         metric_pattern="imm_nis_mix",
         title="SpoofingAware IMM NIS Through Time (Median, by Scenario)",
         ylabel="NIS (3 dof)",
-        out_name="timeseries_imm_nis_median.png",
+        out_name="timeseries_imm_nis_median.pdf",
         variants=["SpoofingAware"],
         hlines=[
             (CHI2_3DOF_95_LO, "--", "chi2 95% lower"),
@@ -821,7 +799,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
         metric_pattern="imm_nees",
         title="SpoofingAware IMM NEES Through Time (Median, by Scenario)",
         ylabel="NEES (3 dof)",
-        out_name="timeseries_imm_nees_median.png",
+        out_name="timeseries_imm_nees_median.pdf",
         variants=["SpoofingAware"],
         hlines=[
             (CHI2_3DOF_95_LO, "--", "chi2 95% lower"),
@@ -839,81 +817,61 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
     if p is not None:
         out_paths.append(p)
 
-    # Runtime scalability chart for Hub 4x1 / 8x1 / 12x1 from run_timing.csv.
-    rt_csv = out_dir.parent / "run_timing.csv"
-    if rt_csv.is_file():
-        try:
-            rt = pd.read_csv(rt_csv)
-            rt["scenario_group"] = rt["scenario"].apply(_scenario_group_from_tag)
-            hub = rt[rt["scenario_group"].isin(["Scenario_Hub_4x1", "Scenario_Hub_8x1", "Scenario_Hub_12x1"])].copy()
-            if not hub.empty:
-                fig, ax = plt.subplots(figsize=(7, 4.5))
-                labels = []
-                meds = []
-                err_lo = []
-                err_hi = []
-                for scen in ["Scenario_Hub_4x1", "Scenario_Hub_8x1", "Scenario_Hub_12x1"]:
-                    s = pd.to_numeric(hub.loc[hub["scenario_group"] == scen, "elapsed_seconds"], errors="coerce").dropna().to_numpy(dtype=float)
-                    if s.size == 0:
-                        continue
-                    q1 = float(np.quantile(s, 0.25))
-                    med = float(np.quantile(s, 0.5))
-                    q3 = float(np.quantile(s, 0.75))
-                    labels.append(scen.replace("Scenario_", "").replace("_", " "))
-                    meds.append(med)
-                    err_lo.append(med - q1)
-                    err_hi.append(q3 - med)
-                if labels:
-                    x = np.arange(len(labels))
-                    ax.bar(x, meds, yerr=[err_lo, err_hi], capsize=3, color="#4c78a8")
-                    ax.set_xticks(x)
-                    ax.set_xticklabels(labels)
-                    ax.set_ylabel("runtime per seed (s)")
-                    ax.set_title("Scalability: Hub Scenario Runtime (median with IQR)")
-                    ax.grid(axis="y", alpha=0.2)
-                    fig.tight_layout()
-                    p = out_dir / "runtime_scalability_hub.png"
-                    fig.savefig(p, dpi=220)
-                    plt.close(fig)
-                    out_paths.append(p)
-        except Exception:
-            pass
+    # Cleanup stale redundant charts that are now intentionally removed.
+    for stale_name in [
+        "summary_boxplots.png",
+        "runtime_compare_scenarios_aware_vs_trustrid.png",
+        "timeseries_min_distance_median.png",
+        "timeseries_imm_mode_probabilities_median.png",
+        "timeseries_imm_true_vs_estimated_xy_median.png",
+        "timeseries_imm_error_norm_median.png",
+        "timeseries_imm_nis_median.png",
+        "timeseries_imm_nees_median.png",
+        "timeseries_containment_localization_unsafe_bubble_median.png",
+        "timeseries_containment_rate_median.png",
+        "timeseries_localization_error_median.png",
+        "timeseries_unsafe_bubble_radius_median.png",
+        "runtime_scalability_hub.png",
+    ]:
+        stale = out_dir / stale_name
+        if stale.exists():
+            stale.unlink()
 
     return out_paths
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Generate sweep charts from summary and GCS vectors.")
+    ap = argparse.ArgumentParser(description="Generate batch charts from summary and GCS vectors.")
     ap.add_argument(
-        "--sweep-root",
+        "--batch-root",
         type=Path,
-        default=Path("simulations/spoofing_aware_with_planning/sweeps"),
-        help="Sweep root containing summary.csv and optionally gcs_vectors/",
+        default=Path("simulations/spoofing_aware_with_planning/batches"),
+        help="Batch root containing summary.csv and optionally gcs_vectors/",
     )
     ap.add_argument(
         "--summary-csv",
         type=Path,
         default=None,
-        help="Override summary CSV path (default: <sweep-root>/summary.csv)",
+        help="Override summary CSV path (default: <batch-root>/summary.csv)",
     )
     ap.add_argument(
         "--gcs-vectors-dir",
         type=Path,
         default=None,
-        help="Override GCS vector CSV directory (default: <sweep-root>/gcs_vectors)",
+        help="Override GCS vector CSV directory (default: <batch-root>/gcs_vectors)",
     )
     ap.add_argument(
         "--out-dir",
         type=Path,
         default=None,
-        help="Output directory (default: <sweep-root>/charts)",
+        help="Output directory (default: <batch-root>/charts)",
     )
     args = ap.parse_args()
 
-    sweep_root = args.sweep_root.resolve()
-    summary_csv = (args.summary_csv or (sweep_root / "summary.csv")).resolve()
-    gcs_vectors_dir = (args.gcs_vectors_dir or (sweep_root / "gcs_vectors")).resolve()
-    out_dir = (args.out_dir or (sweep_root / "charts")).resolve()
+    batch_root = args.batch_root.resolve()
+    summary_csv = (args.summary_csv or (batch_root / "summary.csv")).resolve()
+    gcs_vectors_dir = (args.gcs_vectors_dir or (batch_root / "gcs_vectors")).resolve()
+    out_dir = (args.out_dir or (batch_root / "charts")).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if not summary_csv.is_file():

@@ -50,14 +50,14 @@ GOAL_REACHED_DIST = 30
 # ── Value function parameters (Table 1, scaled for ~500m domain) ─────────────
 # Paper uses κ_goal=0.999 for 15km world. For 500m we need steeper gradient:
 # V(0)=166,917  V(200)=91,470  V(500)=37,223 — strong pull across whole field
-GOAL_REWARD = 1000.0
+GOAL_REWARD = 500.0
 GOAL_DISCOUNT = 0.997
 
 AGENT_REWARD = 1000.0
 AGENT_DISCOUNT = 0.97
 AGENT_LIMIT = 60.0       # negative peak radius (meters)
 
-SPOOFER_REWARD = 5000.0
+SPOOFER_REWARD = 1000.0
 SPOOFER_DISCOUNT = 0.99
 SPOOFER_LIMIT = 120.0    # repulsion radius around unsafe region center (meters)
 ELLIPSOID_MARGIN = 1.0   # Mahalanobis-radius margin outside boundary for soft penalty

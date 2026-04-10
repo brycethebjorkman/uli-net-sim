@@ -70,20 +70,20 @@ docker compose run --rm uli-net-sim
 Use **`./scripts/docker-run.sh …`** so **`pandas`**, **`pyarrow`**, and OMNeT-related paths match the image. If you run **`python3 datagen/run_batch.py` directly on the host**, install **`pip install pandas pyarrow`** first (and use a working OMNeT env for **`scripts/run.sh`**).
 
 ```bash
-# 1) Generate seeded INI bundles (writes under simulations/.../sweeps/generated/)
+# 1) Generate seeded INI bundles (writes under simulations/.../batches/0001/generated/)
 ./scripts/docker-run.sh python3 datagen/generate_spoofing_sweep.py \
     --layout circle8 --seed-range 0 9 \
-    --output-dir simulations/spoofing_aware_with_planning/sweeps/generated
+    --output-dir simulations/spoofing_aware_with_planning/batches/0001/generated
 
 # 2) Run all leaf configs under that tree (Aware + TrustRid per seed)
 ./scripts/docker-run.sh python3 datagen/run_batch.py \
-    simulations/spoofing_aware_with_planning/sweeps/generated/ \
+    simulations/spoofing_aware_with_planning/batches/0001/generated/ \
     --parallel 4
 
 # 3) Summarize NMAC scalars from copied *.sca next to parquet
 ./scripts/docker-run.sh python3 -m pymodules.analysis.spoofing_batch_metrics \
-    simulations/spoofing_aware_with_planning/sweeps/generated/ \
-    -o simulations/spoofing_aware_with_planning/sweeps/summary.csv
+    simulations/spoofing_aware_with_planning/batches/0001/generated/ \
+    -o simulations/spoofing_aware_with_planning/batches/0001/summary.csv
 ```
 
 ### In-container paths (no Docker)

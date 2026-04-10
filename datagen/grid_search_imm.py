@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Grid-search IMM parameters by repeatedly running the compare pipeline.
+Grid-search IMM parameters by repeatedly running the batch pipeline.
 
 Each trial:
   1) Sets IMM tuning env vars (ULI_IMM_*)
-  2) Runs datagen/run_compare_pipeline.sh
+  2) Runs datagen/run_spoofing_aware_trajectory_planning_batch.sh
   3) Collects summary.csv + charts/imm_diagnostics_summary.csv metrics
   4) Ranks configurations and writes CSV report
 
@@ -29,8 +29,8 @@ from pathlib import Path
 from statistics import mean
 
 
-DEFAULT_SWEEP_ROOT = Path(
-    "simulations/spoofing_aware_with_planning/sweeps/charts_store"
+DEFAULT_BATCH_ROOT = Path(
+    "simulations/spoofing_aware_with_planning/batches"
 )
 
 
@@ -90,11 +90,10 @@ def _score_trial(
     )
 
 
-def _build_pipeline_args(args: argparse.Namespace, run_name: str) -> list[str]:
+def _build_pipeline_args(args: argparse.Namespace) -> list[str]:
     cmd = [
-        "./datagen/run_compare_pipeline.sh",
-        "--run-name", run_name,
-        "--sweep-root", str(args.sweep_root),
+        "./datagen/run_spoofing_aware_trajectory_planning_batch.sh",
+        "--batch-root", str(args.batch_root),
         "--seeds", args.seeds,
         "--parallel", str(args.parallel),
         "--image", args.image,
@@ -108,7 +107,7 @@ def _build_pipeline_args(args: argparse.Namespace, run_name: str) -> list[str]:
     if args.no_plot:
         cmd.append("--no-plot")
 
-    # Scenario selection (match run_compare_pipeline.sh semantics).
+    # Scenario selection (match run_spoofing_aware_trajectory_planning_batch.sh semantics).
     if args.paper_scenarios:
         cmd.append("--paper-scenarios")
     elif args.scenario_configs:
@@ -121,6 +120,17 @@ def _build_pipeline_args(args: argparse.Namespace, run_name: str) -> list[str]:
     if args.include_steepz:
         cmd.append("--include-steepz")
     return cmd
+
+
+def _next_batch_run_id(batch_root: Path) -> str:
+    max_n = 0
+    for child in sorted(batch_root.iterdir()):
+        if not child.is_dir():
+            continue
+        name = child.name
+        if len(name) == 4 and name.isdigit():
+            max_n = max(max_n, int(name))
+    return f"{max_n + 1:04d}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -139,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-export-vectors", action="store_true")
     ap.add_argument("--no-plot", action="store_true")
 
-    ap.add_argument("--sweep-root", type=Path, default=DEFAULT_SWEEP_ROOT)
+    ap.add_argument("--batch-root", type=Path, default=DEFAULT_BATCH_ROOT)
     ap.add_argument("--run-prefix", type=str, default="imm_grid")
     ap.add_argument("--dry-run", action="store_true")
 
@@ -170,8 +180,8 @@ def main(argv: list[str] | None = None) -> int:
 
     keys = list(grids.keys())
     combos = list(itertools.product(*(grids[k] for k in keys)))
-    args.sweep_root.mkdir(parents=True, exist_ok=True)
-    print(f"Running {len(combos)} IMM trial(s) under {args.sweep_root}")
+    args.batch_root.mkdir(parents=True, exist_ok=True)
+    print(f"Running {len(combos)} IMM trial(s) under {args.batch_root}")
 
     results: list[dict[str, float | str]] = []
     for i, combo in enumerate(combos, start=1):
@@ -179,9 +189,10 @@ def main(argv: list[str] | None = None) -> int:
         for k, v in zip(keys, combo):
             trial_env[k] = str(v)
 
-        run_name = f"{args.run_prefix}_{i:03d}"
-        run_root = args.sweep_root / run_name
-        cmd = _build_pipeline_args(args, run_name=run_name)
+        run_id = _next_batch_run_id(args.batch_root)
+        run_name = f"batch_{run_id}"
+        run_root = args.batch_root / run_id
+        cmd = _build_pipeline_args(args)
 
         print(f"[{i}/{len(combos)}] {run_name} starting...")
         if args.dry_run:
@@ -228,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         reverse=True,
     )
 
-    out_csv = args.sweep_root / "imm_grid_search_results.csv"
+    out_csv = args.batch_root / "imm_grid_search_results.csv"
     if results:
         fieldnames = list(results[0].keys())
         with out_csv.open("w", newline="") as f:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Create interactive 3D trajectory visualizations for batched sweep outputs.
+Create interactive 3D trajectory visualizations for batched run outputs.
 
 For each scenario directory under a generated/ tree, this script loads paired
 Aware/TrustRID parquet files and writes one HTML file with side-by-side 3D
@@ -8,7 +8,7 @@ scenes.
 
 Example:
     python3 datagen/plot_batch_3d_trajectories.py \
-        --generated-dir simulations/spoofing_aware_with_planning/sweeps/paper_suite_30seeds/generated
+        --generated-dir simulations/spoofing_aware_with_planning/batches/0001/generated
 """
 
 from __future__ import annotations
@@ -167,7 +167,7 @@ def iter_scenario_dirs(generated_dir: Path) -> Iterable[Path]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Generate per-scenario 3D trajectory HTMLs for batch sweeps.")
+    ap = argparse.ArgumentParser(description="Generate per-scenario 3D trajectory HTMLs for batch runs.")
     ap.add_argument(
         "--generated-dir",
         type=Path,

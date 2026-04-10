@@ -7,7 +7,7 @@ Expects filenames produced by ``datagen/run_scenario.py``::
 Example::
 
     python3 -m pymodules.analysis.spoofing_batch_metrics \\
-        simulations/spoofing_aware_with_planning/sweeps/generated/ -o summary.csv
+        simulations/spoofing_aware_with_planning/batches/0001/generated/ -o summary.csv
 """
 
 from __future__ import annotations

@@ -38,7 +38,7 @@ class GcsModule : public cSimpleModule, public cListener
                              const std::vector<std::vector<double>>& sigma,
                              double alpha,
                              bool detected);
-    void addClaimedTrailPoint(double x, double y, double z);
+    void addClaimedTrailPoint(double x, double y, double z, bool detected);
 
   protected:
     // Federate host indices this GCS manages (empty = all)
@@ -69,6 +69,7 @@ class GcsModule : public cSimpleModule, public cListener
     void *ellipsoidTransform = nullptr;
     void *claimedTrailGeode = nullptr;
     std::vector<std::tuple<double, double, double>> claimedTrailPoints;
+    std::vector<bool> claimedTrailDetected;
     bool visualizationInitialized = false;
 
     virtual void initialize() override;

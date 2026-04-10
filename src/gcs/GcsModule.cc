@@ -181,7 +181,7 @@ void GcsModule::updateVisualization(const std::vector<double>& mu,
     }
 }
 
-void GcsModule::addClaimedTrailPoint(double x, double y, double z)
+void GcsModule::addClaimedTrailPoint(double x, double y, double z, bool detected)
 {
     if constexpr (hasOsg) {
 #ifdef WITH_OSG
@@ -189,13 +189,14 @@ void GcsModule::addClaimedTrailPoint(double x, double y, double z)
             return;
 
         claimedTrailPoints.emplace_back(x, y, z);
+        claimedTrailDetected.push_back(detected);
 
         auto *osgCanvas = getSystemModule()->getOsgCanvas();
         auto *scene = osgCanvas ? dynamic_cast< ::osg::Group*>(osgCanvas->getScene()) : nullptr;
         if (!scene)
             return;
 
-        // Remove previous trail group and rebuild (includes all spheres + line)
+        // Remove previous trail group and rebuild (spheres only).
         if (claimedTrailGeode) {
             scene->removeChild(static_cast< ::osg::Node*>(claimedTrailGeode));
             claimedTrailGeode = nullptr;
@@ -203,39 +204,22 @@ void GcsModule::addClaimedTrailPoint(double x, double y, double z)
 
         auto *group = new ::osg::Group();
 
-        // Red sphere breadcrumb at each claimed position
-        for (const auto& [px, py, pz] : claimedTrailPoints) {
+        // Claimed RID breadcrumb:
+        // - pre-detection points: red
+        // - post-detection points: black
+        for (size_t i = 0; i < claimedTrailPoints.size(); ++i) {
+            const auto& [px, py, pz] = claimedTrailPoints[i];
+            bool pointDetected = (i < claimedTrailDetected.size()) ? claimedTrailDetected[i] : false;
             auto *sphere = new ::osg::ShapeDrawable(
                 new ::osg::Sphere(::osg::Vec3d(px, py, pz), 3.0));
-            sphere->setColor(::osg::Vec4(1.0f, 0.0f, 0.0f, 0.85f));
+            if (pointDetected)
+                sphere->setColor(::osg::Vec4(0.0f, 0.0f, 0.0f, 0.9f));
+            else
+                sphere->setColor(::osg::Vec4(1.0f, 0.0f, 0.0f, 0.85f));
             auto *geode = new ::osg::Geode();
             geode->addDrawable(sphere);
             geode->getOrCreateStateSet()->setMode(GL_LIGHTING, ::osg::StateAttribute::OFF);
             group->addChild(geode);
-        }
-
-        // Thin red connecting line between spheres
-        if (claimedTrailPoints.size() >= 2) {
-            auto *lineGeom = new ::osg::Geometry();
-            auto *verts = new ::osg::Vec3Array();
-            for (const auto& [px, py, pz] : claimedTrailPoints)
-                verts->push_back(::osg::Vec3d(px, py, pz));
-            lineGeom->setVertexArray(verts);
-            lineGeom->addPrimitiveSet(
-                new ::osg::DrawArrays(::osg::PrimitiveSet::LINE_STRIP, 0, verts->size()));
-
-            auto *lineColors = new ::osg::Vec4Array();
-            lineColors->push_back(::osg::Vec4(1.0f, 0.15f, 0.15f, 0.7f));
-            lineGeom->setColorArray(lineColors, ::osg::Array::BIND_OVERALL);
-
-            auto *lineState = lineGeom->getOrCreateStateSet();
-            lineState->setAttributeAndModes(
-                new ::osg::LineWidth(2.0f), ::osg::StateAttribute::ON);
-            lineState->setMode(GL_LIGHTING, ::osg::StateAttribute::OFF);
-
-            auto *lineGeode = new ::osg::Geode();
-            lineGeode->addDrawable(lineGeom);
-            group->addChild(lineGeode);
         }
 
         scene->addChild(group);
@@ -306,10 +290,15 @@ static void handlePyResult(GcsModule *gcs, const py::object& result)
         if (viz.contains("claimed_pos") && !viz["claimed_pos"].is_none()) {
             py::list pos = viz["claimed_pos"].cast<py::list>();
             if (py::len(pos) >= 3) {
+                bool claimedDetected =
+                    viz.contains("claimed_detected") && !viz["claimed_detected"].is_none()
+                    ? viz["claimed_detected"].cast<bool>()
+                    : false;
                 gcs->addClaimedTrailPoint(
                     pos[0].cast<double>(),
                     pos[1].cast<double>(),
-                    pos[2].cast<double>());
+                    pos[2].cast<double>(),
+                    claimedDetected);
             }
         }
     }
@@ -504,6 +493,19 @@ void GcsModule::pyOnReport(const BeaconKey& key,
         reportList.append(rd);
     }
     txData["reports"] = reportList;
+    // Provide host ids on report path too, so Python can keep visualization
+    // source stable from the first transmission.
+    py::list hostIds;
+    if (!allFederates) {
+        for (int id : federateSet)
+            hostIds.append(id);
+    }
+    else {
+        int n = getSystemModule()->par("numHosts").intValue();
+        for (int i = 0; i < n; ++i)
+            hostIds.append(i);
+    }
+    txData["host_ids"] = hostIds;
     txData["time"] = simTime().dbl();
 
     // Call Python: on_gcs_reports(transmission_data) — skip if method not defined

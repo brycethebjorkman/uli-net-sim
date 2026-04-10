@@ -62,7 +62,7 @@ COMBINED_MLAT_THRESHOLD = 50.0
 MLAT_SCORE_KF_PROCESS_NOISE = 100.0
 MLAT_SCORE_KF_MEASUREMENT_NOISE = 250000.0
 STOP_DETECTION_AFTER_FIRST_SPOOFER = True
-DEFAULT_AGENT_RADIUS = 60.0
+DEFAULT_AGENT_RADIUS = 120.0
 
 # NMAC: pairwise proximity (m); spoofer unsafe uses chance-constraint ellipsoid (is_safe)
 NMAC_PROXIMITY_M = 50.0
@@ -165,7 +165,7 @@ class SpoofingAwareGcs:
 
         # Detection state: per-transmitter
         self._tx_power_samples: dict[int, list] = {}    # all joint TX estimates
-        self._pos_samples: dict[int, list] = {}         # all joint pos estimates
+        self._pos_samples: dict[int, list] = {}         # (time_s, joint pos estimate)
         self._mlat_error_kf_per_tx: dict[int, PositionErrorKF] = {}
         self._kf_detector = KfNisDetector()
 
@@ -194,6 +194,7 @@ class SpoofingAwareGcs:
         self._spoofer_containment_total = 0
         self._spoofer_containment_hits = 0
         self._spoofer_host: int | None = None
+        self._visual_spoofer_serial: int | None = None
         self._reports_time_total_s = 0.0
         self._reports_calls = 0
         self._tick_time_total_s = 0.0
@@ -209,6 +210,7 @@ class SpoofingAwareGcs:
     def _combined_detection_step(
         self,
         data: dict,
+        report_time: float,
         serial: int,
         rx_positions: np.ndarray,
         rssi_values: np.ndarray,
@@ -218,6 +220,7 @@ class SpoofingAwareGcs:
         kf_result = self._kf_detector.on_gcs_reports(data)
         kf_log = kf_result.get("log", {})
         kf_max_nis = float(kf_log.get("kf_max_nis", 0.0))
+        kf_has_data = bool(any(r.get("kf_nis") is not None for r in data.get("reports", [])))
 
         mlat_raw_error = 0.0
         mlat_score = 0.0
@@ -228,7 +231,9 @@ class SpoofingAwareGcs:
             if est_pos is not None and est_tx is not None:
                 mlat_raw_error = float(np.linalg.norm(est_pos - claimed_pos))
                 self._tx_power_samples.setdefault(serial, []).append(float(est_tx))
-                self._pos_samples.setdefault(serial, []).append(np.asarray(est_pos, dtype=float).copy())
+                self._pos_samples.setdefault(serial, []).append(
+                    (float(report_time), np.asarray(est_pos, dtype=float).copy())
+                )
                 if serial not in self._mlat_error_kf_per_tx:
                     self._mlat_error_kf_per_tx[serial] = PositionErrorKF(
                         process_noise=MLAT_SCORE_KF_PROCESS_NOISE,
@@ -237,12 +242,14 @@ class SpoofingAwareGcs:
                 _nis, mlat_score, _innov = self._mlat_error_kf_per_tx[serial].update(mlat_raw_error)
                 mlat_score = float(mlat_score)
 
-        combined_alert = (
+        combined_rule_alert = (
             (kf_max_nis > COMBINED_KF_THRESHOLD)
             or (mlat_score > COMBINED_MLAT_THRESHOLD)
         )
+        combined_alert = combined_rule_alert
         return {
             "kf_max_nis": kf_max_nis,
+            "kf_has_data": 1.0 if kf_has_data else 0.0,
             "mlat_score": float(mlat_score),
             "mlat_raw_error": float(mlat_raw_error),
             "combined_alert": 1.0 if combined_alert else 0.0,
@@ -260,7 +267,11 @@ class SpoofingAwareGcs:
         reports = data["reports"]
         self._first_seen_time_s.setdefault(int(serial), report_time)
 
-        self.rid_positions[serial] = tuple(claimed_pos)
+        # Once identified as spoofed, claimed positions are ignored for control.
+        if serial not in self.spoofers:
+            self.rid_positions[serial] = tuple(claimed_pos)
+        else:
+            self.rid_positions.pop(serial, None)
 
         rx_positions = np.array([r["pos"] for r in reports])
         rssi_values = np.array([r["rssi_dbm"] for r in reports])
@@ -271,13 +282,27 @@ class SpoofingAwareGcs:
         mlat_score = 0.0
         kf_max_nis = 0.0
         combined_alert = 0.0
+        kf_has_data = 0.0
         visualization = {}
         tx_oracle_dbm = 0.0
 
-        if serial in self.spoofers:
-            # ── Phase 2: localization (dynamic TX estimation) ──
+        # Keep exactly one claimed RID trail (red) for visual clarity.
+        # Use scenario convention: spoofer is max host id. host_ids are provided
+        # with each report so trail source is stable from the start.
+        report_host_ids = [int(h) for h in data.get("host_ids", [])]
+        if report_host_ids:
+            self._visual_spoofer_serial = max(report_host_ids)
+        elif self._spoofer_host is not None:
+            self._visual_spoofer_serial = int(self._spoofer_host)
+        show_claimed_trail = (
+            self._visual_spoofer_serial is not None
+            and int(serial) == int(self._visual_spoofer_serial)
+        )
+        if show_claimed_trail:
             visualization["claimed_pos"] = [float(c) for c in claimed_pos]
 
+        if serial in self.spoofers:
+            # ── Phase 2: localization (dynamic TX estimation) ──
             if len(rx_positions) >= 3:
                 imm = self._imm[serial]
                 if imm._initialized:
@@ -289,12 +314,10 @@ class SpoofingAwareGcs:
                     mlat_init = np.pad(mlat_init, (0, 3 - mlat_init.shape[0]), mode="constant")
                 # Guard against non-finite / runaway IMM priors destabilizing NLLS.
                 if not np.all(np.isfinite(mlat_init)):
-                    mlat_init = claimed_pos.copy()
+                    mlat_init = np.mean(rx_positions, axis=0)
                 mlat_init = np.clip(mlat_init,
                                     [-MLAT_INIT_CLIP_XY, -MLAT_INIT_CLIP_XY, -MLAT_INIT_CLIP_Z],
                                     [MLAT_INIT_CLIP_XY, MLAT_INIT_CLIP_XY, MLAT_INIT_CLIP_Z])
-                if np.linalg.norm(mlat_init - claimed_pos) > MLAT_INIT_MAX_FROM_CLAIMED:
-                    mlat_init = claimed_pos.copy()
 
                 tx_before = self._spoofer_tx_estimate_dbm[serial]
                 tx_after = tx_before
@@ -342,66 +365,32 @@ class SpoofingAwareGcs:
                 used_claimed_fallback = False
                 if est_pos is not None and np.all(np.isfinite(est_pos)):
                     est_pos_arr = np.asarray(est_pos, dtype=float).ravel()[:3]
-                    # Learn serial-specific claimed->true bias for fallback usage.
-                    bias_meas = est_pos_arr - claimed_pos
-                    if serial in self._claimed_bias:
-                        self._claimed_bias[serial] = (
-                            (1.0 - CLAIMED_BIAS_EMA) * self._claimed_bias[serial]
-                            + CLAIMED_BIAS_EMA * bias_meas
-                        )
-                    else:
-                        self._claimed_bias[serial] = bias_meas.copy()
+                    est_cov_arr = None if est_cov is None else np.asarray(est_cov, dtype=float)
+                    if est_cov_arr is None or est_cov_arr.shape != (3, 3):
+                        est_cov_arr = np.eye(3) * (CLAIMED_FALLBACK_STD_M ** 2)
 
                     # Tick path already handles propagation; measurement path only corrects.
                     imm.update(
                         est_pos_arr,
-                        meas_cov=est_cov,
+                        meas_cov=est_cov_arr,
                         do_predict=False,
                         measurement_time_s=report_time,
                     )
                     self._ticks_since_spoofer_meas[serial] = 0
-                elif serial in self._claimed_bias:
-                    # When multilateration is unavailable, follow claimed motion with
-                    # learned bias and high uncertainty so turn dynamics are retained.
-                    pseudo_pos = claimed_pos + self._claimed_bias[serial]
-                    pseudo_cov = np.eye(3) * (CLAIMED_FALLBACK_STD_M ** 2)
-                    imm.update(
-                        pseudo_pos,
-                        meas_cov=pseudo_cov,
-                        do_predict=False,
-                        measurement_time_s=report_time,
-                    )
-                    self._ticks_since_spoofer_meas[serial] = 0
-                    used_claimed_fallback = True
 
                 visualization["tx_est"] = float(self._spoofer_tx_estimate_dbm[serial])
                 visualization["tx_est_delta"] = float(tx_after - tx_before)
                 visualization["used_claimed_fallback"] = bool(used_claimed_fallback)
             else:
-                # Fallback even with <3 receivers: keep tracking via claimed motion + learned bias.
-                if serial in self._imm and self._imm[serial]._initialized:
-                    imm = self._imm[serial]
-                    if serial in self._claimed_bias:
-                        pseudo_pos = claimed_pos + self._claimed_bias[serial]
-                    else:
-                        pseudo_pos = claimed_pos.copy()
-                    pseudo_cov = np.eye(3) * (CLAIMED_FALLBACK_STD_M ** 2)
-                    imm.update(
-                        pseudo_pos,
-                        meas_cov=pseudo_cov,
-                        do_predict=False,
-                        measurement_time_s=report_time,
-                    )
-                    self._ticks_since_spoofer_meas[serial] = 0
-                    visualization["used_claimed_fallback"] = True
-                else:
-                    visualization["used_claimed_fallback"] = False
+                # With <3 receivers, skip measurement correction and rely on IMM prediction.
+                visualization["used_claimed_fallback"] = False
         else:
             # ── Phase 1: detection (optionally disabled after first detection) ──
             detection_enabled = (not STOP_DETECTION_AFTER_FIRST_SPOOFER) or (len(self.spoofers) == 0)
             if detection_enabled:
                 detect_diag = self._combined_detection_step(
                     data=data,
+                    report_time=report_time,
                     serial=serial,
                     rx_positions=rx_positions,
                     rssi_values=rssi_values,
@@ -410,6 +399,7 @@ class SpoofingAwareGcs:
                 mlat_raw_error = float(detect_diag["mlat_raw_error"])
                 mlat_score = float(detect_diag["mlat_score"])
                 kf_max_nis = float(detect_diag["kf_max_nis"])
+                kf_has_data = float(detect_diag["kf_has_data"])
                 combined_alert = float(detect_diag["combined_alert"])
 
                 if combined_alert > 0.5:
@@ -449,11 +439,19 @@ class SpoofingAwareGcs:
                     )
                     pos_samples = self._pos_samples.get(serial, [])
                     if pos_samples:
-                        for p in pos_samples:
+                        for sample in pos_samples:
+                            if (
+                                isinstance(sample, (tuple, list))
+                                and len(sample) == 2
+                                and np.isscalar(sample[0])
+                            ):
+                                p_time, p = float(sample[0]), np.asarray(sample[1], dtype=float)
+                            else:
+                                p_time, p = report_time, np.asarray(sample, dtype=float)
                             self._imm[serial].update(
                                 p,
                                 do_predict=False,
-                                measurement_time_s=report_time,
+                                measurement_time_s=p_time,
                             )
                     else:
                         self._imm[serial].update(
@@ -481,8 +479,8 @@ class SpoofingAwareGcs:
                 "mlat_raw_error": mlat_raw_error,
                 "spoofer_detected": 1.0 if serial in self.spoofers else 0.0,
                 "num_spoofers": float(len(self.spoofers)),
-                "hit_count": 0.0,
                 "kf_max_nis": float(kf_max_nis),
+                "kf_has_data": float(kf_has_data),
                 "mlat_score": float(mlat_score),
                 "combined_alert": float(combined_alert),
                 "tx_power_est_dbm": float(self._spoofer_tx_estimate_dbm.get(serial, 0.0)),
@@ -490,6 +488,10 @@ class SpoofingAwareGcs:
                 **_IMM_LOG_DEFAULTS,
             },
         }
+        if "claimed_pos" in visualization:
+            # Visualization cue: once spoofing is detected for this serial,
+            # claimed RID points switch color (handled by C++ OSG renderer).
+            visualization["claimed_detected"] = bool(serial in self.spoofers)
         if visualization:
             result["visualization"] = visualization
         self._reports_time_total_s += max(0.0, time.perf_counter() - t0)
@@ -709,6 +711,8 @@ class SpoofingAwareGcs:
         if self._spoofer_host is None and host_ids:
             # Sweep layouts convention: spoofer is last host index.
             self._spoofer_host = max(int(h) for h in host_ids)
+        if self._spoofer_host is not None:
+            self._visual_spoofer_serial = int(self._spoofer_host)
 
         unsafe_regions = []
         gt = data.get("ground_truth_positions") or {}
@@ -730,7 +734,7 @@ class SpoofingAwareGcs:
             if imm is not None and imm._initialized:
                 # Continuous motion between RID updates: propagate IMM on each tick.
                 max_steps = None if IMM_MAX_PREDICT_STEPS <= 0 else IMM_MAX_PREDICT_STEPS
-                imm.predict_only(max_predict_steps=max_steps)
+                imm.predict_only(max_predict_steps=max_steps, do_interaction=False)
                 self._ticks_since_spoofer_meas[serial] = self._ticks_since_spoofer_meas.get(serial, 0) + 1
                 mu, sigma = imm.get_state()
                 mu_pub, sigma_pub = self._smoothed_unsafe_state(serial, mu, sigma)

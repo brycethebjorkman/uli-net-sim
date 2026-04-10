@@ -48,7 +48,11 @@ class KalmanFilter3D:
         self.x = self.x + K @ y
         self.x = np.nan_to_num(self.x, nan=0.0, posinf=0.0, neginf=0.0)
         I = np.eye(len(self.x))
-        self.P = (I - K @ self.H) @ self.P
+        # Joseph-form covariance update is numerically safer and less likely to
+        # create non-PSD / overconfident covariance under finite precision.
+        IKH = I - K @ self.H
+        self.P = IKH @ self.P @ IKH.T + K @ R_eff @ K.T
+        self.P = 0.5 * (self.P + self.P.T)
         self.P = np.nan_to_num(self.P, nan=1e3, posinf=1e6, neginf=-1e6)
         return y, S
 
@@ -114,19 +118,25 @@ class IMMEstimator:
         # Use a more responsive process model so a maneuvering spoofer track
         # does not remain anchored after detection.
         self.dt = float(max(dt, 1e-3))
+        self._nominal_dt = float(self.dt)
+        self._cv_pos_noise = float(max(cv_pos_noise, 1e-9))
+        self._cv_vel_noise = float(max(cv_vel_noise, 1e-9))
+        self._ca_pos_noise = float(max(ca_pos_noise, 1e-9))
+        self._ca_vel_noise = float(max(ca_vel_noise, 1e-9))
+        self._ca_acc_noise = float(max(ca_acc_noise, 1e-9))
         cv_measurement_noise = float(max(cv_measurement_noise, 1e-6))
         ca_measurement_noise = float(max(ca_measurement_noise, 1e-6))
         self.kf_cv = KalmanFilter3D.create_cv(
             self.dt,
-            pos_noise=float(max(cv_pos_noise, 1e-9)),
-            vel_noise=float(max(cv_vel_noise, 1e-9)),
+            pos_noise=self._cv_pos_noise,
+            vel_noise=self._cv_vel_noise,
             measurement_noise=cv_measurement_noise,
         )
         self.kf_ca = KalmanFilter3D.create_ca(
             self.dt,
-            pos_noise=float(max(ca_pos_noise, 1e-9)),
-            vel_noise=float(max(ca_vel_noise, 1e-9)),
-            acc_noise=float(max(ca_acc_noise, 1e-9)),
+            pos_noise=self._ca_pos_noise,
+            vel_noise=self._ca_vel_noise,
+            acc_noise=self._ca_acc_noise,
             measurement_noise=ca_measurement_noise,
         )
         init_mode_cv = float(np.clip(init_mode_cv, 0.0, 1.0))
@@ -143,13 +153,195 @@ class IMMEstimator:
         self._initialized = False
         self._last_z: np.ndarray | None = None
         self._snap_distance_m = 15.0
-        self._min_pos_var = 1.0
+        self._min_pos_var = 4.0
         self._max_pos_var = 2500.0
+        self._min_meas_var = 4.0
+        self._max_meas_var = 6400.0
+        self._nis_gate = 11.34  # chi2_3 @ 99%
+        self._nis_reject_gate = 60.0
+        self._meas_downweight_max = 16.0
+        self._cov_inflate_gain = 0.25
+        self._cov_inflate_max = 8.0
+        self._cv_to_ca_acc_var = 64.0
         self._predicts_since_update = 0
         self._last_nis_cv = float("nan")
         self._last_nis_ca = float("nan")
         self._last_nis_mix = float("nan")
         self._last_meas_time_s = float("nan")
+        self._max_speed_mps = 120.0
+        self._max_acc_mps2 = 40.0
+        self._pos_bounds_lo = np.array([-2500.0, -2500.0, -300.0], dtype=float)
+        self._pos_bounds_hi = np.array([2500.0, 2500.0, 1200.0], dtype=float)
+
+    def _set_model_dt(self, dt_s: float) -> None:
+        """Update CV/CA transition matrices and Q for the provided timestep."""
+        dt = float(max(dt_s, 1e-3))
+        self.kf_cv.F = np.eye(6, dtype=float)
+        self.kf_cv.F[0, 3] = dt
+        self.kf_cv.F[1, 4] = dt
+        self.kf_cv.F[2, 5] = dt
+
+        self.kf_ca.F = np.eye(9, dtype=float)
+        self.kf_ca.F[0, 3] = dt
+        self.kf_ca.F[1, 4] = dt
+        self.kf_ca.F[2, 5] = dt
+        dt2 = dt * dt
+        self.kf_ca.F[0, 6] = 0.5 * dt2
+        self.kf_ca.F[1, 7] = 0.5 * dt2
+        self.kf_ca.F[2, 8] = 0.5 * dt2
+        self.kf_ca.F[3, 6] = dt
+        self.kf_ca.F[4, 7] = dt
+        self.kf_ca.F[5, 8] = dt
+
+        # Treat configured process noise as nominal per-step values at init dt,
+        # and scale by elapsed dynamics time to preserve per-second behavior.
+        dt_scale = float(max(dt / max(self._nominal_dt, 1e-3), 1e-3))
+        self.kf_cv.Q = np.diag(
+            [
+                self._cv_pos_noise * dt_scale,
+                self._cv_pos_noise * dt_scale,
+                self._cv_pos_noise * dt_scale,
+                self._cv_vel_noise * dt_scale,
+                self._cv_vel_noise * dt_scale,
+                self._cv_vel_noise * dt_scale,
+            ]
+        )
+        self.kf_ca.Q = np.diag(
+            [
+                self._ca_pos_noise * dt_scale,
+                self._ca_pos_noise * dt_scale,
+                self._ca_pos_noise * dt_scale,
+                self._ca_vel_noise * dt_scale,
+                self._ca_vel_noise * dt_scale,
+                self._ca_vel_noise * dt_scale,
+                self._ca_acc_noise * dt_scale,
+                self._ca_acc_noise * dt_scale,
+                self._ca_acc_noise * dt_scale,
+            ]
+        )
+
+    def _effective_measurement_dt(self, measurement_time_s: float | None) -> float:
+        """Use true measurement spacing when available; fall back to nominal dt."""
+        dt_eff = float(self.dt)
+        if (
+            measurement_time_s is not None
+            and np.isfinite(measurement_time_s)
+            and np.isfinite(self._last_meas_time_s)
+        ):
+            dt_candidate = float(measurement_time_s) - float(self._last_meas_time_s)
+            if dt_candidate > 1e-3:
+                dt_eff = dt_candidate
+        return float(max(dt_eff, 1e-3))
+
+    def _sanitize_states(self) -> None:
+        """Bound model states to physically plausible ranges."""
+        # CV: [x,y,z,vx,vy,vz]
+        self.kf_cv.x = np.nan_to_num(self.kf_cv.x, nan=0.0, posinf=0.0, neginf=0.0)
+        self.kf_cv.x[:3] = np.clip(self.kf_cv.x[:3], self._pos_bounds_lo, self._pos_bounds_hi)
+        self.kf_cv.x[3:6] = np.clip(self.kf_cv.x[3:6], -self._max_speed_mps, self._max_speed_mps)
+
+        # CA: [x,y,z,vx,vy,vz,ax,ay,az]
+        self.kf_ca.x = np.nan_to_num(self.kf_ca.x, nan=0.0, posinf=0.0, neginf=0.0)
+        self.kf_ca.x[:3] = np.clip(self.kf_ca.x[:3], self._pos_bounds_lo, self._pos_bounds_hi)
+        self.kf_ca.x[3:6] = np.clip(self.kf_ca.x[3:6], -self._max_speed_mps, self._max_speed_mps)
+        self.kf_ca.x[6:9] = np.clip(self.kf_ca.x[6:9], -self._max_acc_mps2, self._max_acc_mps2)
+
+    def _cv_to_ca_state_cov(self, x_cv: np.ndarray, P_cv: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        x9 = np.zeros(9, dtype=float)
+        x9[:6] = np.asarray(x_cv, dtype=float).ravel()[:6]
+        P9 = np.zeros((9, 9), dtype=float)
+        P6 = np.asarray(P_cv, dtype=float)[:6, :6]
+        P9[:6, :6] = P6
+        P9[6:, 6:] = np.eye(3) * self._cv_to_ca_acc_var
+        return x9, P9
+
+    @staticmethod
+    def _ca_to_cv_state_cov(x_ca: np.ndarray, P_ca: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        x6 = np.asarray(x_ca, dtype=float).ravel()[:6].copy()
+        P6 = np.asarray(P_ca, dtype=float)[:6, :6].copy()
+        return x6, P6
+
+    @staticmethod
+    def _mix_states_covariances(
+        weights: np.ndarray,
+        states: list[np.ndarray],
+        covariances: list[np.ndarray],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        w = np.asarray(weights, dtype=float).ravel()
+        s = float(np.sum(w))
+        if s <= 1e-12:
+            w = np.ones_like(w) / float(len(w))
+        else:
+            w = w / s
+        x_mix = np.zeros_like(states[0], dtype=float)
+        for wi, xi in zip(w, states):
+            x_mix = x_mix + float(wi) * np.asarray(xi, dtype=float)
+        P_mix = np.zeros_like(covariances[0], dtype=float)
+        for wi, xi, Pi in zip(w, states, covariances):
+            dx = (np.asarray(xi, dtype=float) - x_mix).reshape(-1, 1)
+            P_mix = P_mix + float(wi) * (np.asarray(Pi, dtype=float) + dx @ dx.T)
+        P_mix = 0.5 * (P_mix + P_mix.T)
+        return x_mix, P_mix
+
+    def _regularize_meas_cov(self, meas_cov: np.ndarray | None) -> np.ndarray | None:
+        if meas_cov is None:
+            return None
+        m = np.asarray(meas_cov, dtype=float)
+        if m.shape != (3, 3):
+            return np.eye(3) * self._max_meas_var
+        m = np.nan_to_num(m, nan=self._max_meas_var, posinf=self._max_meas_var, neginf=self._min_meas_var)
+        m = 0.5 * (m + m.T)
+        success = False
+        for k in range(6):
+            jitter = (10.0 ** k) * 1e-9
+            try:
+                eigvals, eigvecs = np.linalg.eigh(m + np.eye(3) * jitter)
+                eigvals = np.clip(eigvals, self._min_meas_var, self._max_meas_var)
+                m = eigvecs @ np.diag(eigvals) @ eigvecs.T
+                m = 0.5 * (m + m.T)
+                if np.all(np.isfinite(m)):
+                    success = True
+                    break
+            except np.linalg.LinAlgError:
+                continue
+        if not success:
+            d = np.diag(m)
+            d = np.nan_to_num(d, nan=self._min_meas_var, posinf=self._max_meas_var, neginf=self._min_meas_var)
+            d = np.clip(d, self._min_meas_var, self._max_meas_var)
+            m = np.diag(d)
+        return m
+
+    def _inflate_cov_from_nis(self, nis: float) -> float:
+        if not np.isfinite(nis):
+            return 1.0
+        gate = float(max(self._nis_gate, 1e-6))
+        if nis <= gate:
+            return 1.0
+        factor = 1.0 + self._cov_inflate_gain * (nis / gate - 1.0)
+        return float(np.clip(factor, 1.0, self._cov_inflate_max))
+
+    @staticmethod
+    def _nis_from_innovation(y: np.ndarray, S: np.ndarray) -> float:
+        yv = np.asarray(y, dtype=float).ravel()
+        Sm = np.asarray(S, dtype=float)
+        n = yv.shape[0]
+        if Sm.shape != (n, n):
+            return float("nan")
+        Sm = 0.5 * (Sm + Sm.T)
+        for k in range(6):
+            jitter = (10.0 ** k) * 1e-9
+            Sj = Sm + np.eye(n) * jitter
+            try:
+                Sinv = np.linalg.inv(Sj)
+            except np.linalg.LinAlgError:
+                try:
+                    Sinv = np.linalg.pinv(Sj)
+                except np.linalg.LinAlgError:
+                    continue
+            nis = float(yv @ Sinv @ yv)
+            if np.isfinite(nis):
+                return nis
+        return float("nan")
 
     def _clamp_pos_cov(self, P: np.ndarray) -> np.ndarray:
         """Clamp position covariance eigenvalues to avoid collapse/blow-up."""
@@ -185,13 +377,49 @@ class IMMEstimator:
             P[:3, :3] = np.diag(d)
         return P
 
-    def _propagate_modes(self) -> None:
-        self.mu = self.pi.T @ self.mu
+    def _interaction_and_mode_prediction(self) -> None:
+        """Standard IMM interaction + Markov mode probability prediction."""
+        mu_prev = np.asarray(self.mu, dtype=float).ravel()
+        c = self.pi.T @ mu_prev
+        c_safe = np.clip(c, 1e-12, None)
+        mixing = (self.pi * mu_prev[:, None]) / c_safe[None, :]
+
+        # Destination model j=0 (CV): mix CV and projected CA.
+        x_cv_from_cv = self.kf_cv.x.copy()
+        P_cv_from_cv = self.kf_cv.P.copy()
+        x_cv_from_ca, P_cv_from_ca = self._ca_to_cv_state_cov(self.kf_ca.x, self.kf_ca.P)
+        x_cv_mix, P_cv_mix = self._mix_states_covariances(
+            mixing[:, 0],
+            [x_cv_from_cv, x_cv_from_ca],
+            [P_cv_from_cv, P_cv_from_ca],
+        )
+
+        # Destination model j=1 (CA): mix CA and lifted CV.
+        x_ca_from_cv, P_ca_from_cv = self._cv_to_ca_state_cov(self.kf_cv.x, self.kf_cv.P)
+        x_ca_from_ca = self.kf_ca.x.copy()
+        P_ca_from_ca = self.kf_ca.P.copy()
+        x_ca_mix, P_ca_mix = self._mix_states_covariances(
+            mixing[:, 1],
+            [x_ca_from_cv, x_ca_from_ca],
+            [P_ca_from_cv, P_ca_from_ca],
+        )
+
+        self.kf_cv.x = x_cv_mix
+        self.kf_cv.P = P_cv_mix
+        self.kf_ca.x = x_ca_mix
+        self.kf_ca.P = P_ca_mix
+
+        self.mu = c
         s = float(self.mu.sum())
         if s > 1e-12:
             self.mu /= s
 
-    def predict_only(self, max_predict_steps: int | None = None) -> None:
+    def predict_only(
+        self,
+        max_predict_steps: int | None = None,
+        predict_dt_s: float | None = None,
+        do_interaction: bool = True,
+    ) -> None:
         """
         Propagate IMM state without a measurement update.
 
@@ -202,11 +430,14 @@ class IMMEstimator:
             return
         if max_predict_steps is not None and self._predicts_since_update >= max_predict_steps:
             return
+        if do_interaction:
+            self._interaction_and_mode_prediction()
+        self._set_model_dt(self.dt if predict_dt_s is None else predict_dt_s)
         self.kf_cv.predict()
         self.kf_ca.predict()
+        self._sanitize_states()
         self.kf_cv.P = self._clamp_pos_cov(self.kf_cv.P)
         self.kf_ca.P = self._clamp_pos_cov(self.kf_ca.P)
-        self._propagate_modes()
         self._predicts_since_update += 1
 
     def update(
@@ -218,15 +449,19 @@ class IMMEstimator:
     ):
         """Predict-then-update cycle, called when a new measurement arrives."""
         z = np.asarray(z, dtype=float).ravel()[:3]
+        dt_meas = self._effective_measurement_dt(measurement_time_s)
+        meas_cov_eff = self._regularize_meas_cov(meas_cov)
         if not self._initialized:
+            self._set_model_dt(dt_meas)
             self.kf_cv.x[:3] = z
             self.kf_ca.x[:3] = z
-            if meas_cov is not None:
-                m = np.asarray(meas_cov, dtype=float)
+            if meas_cov_eff is not None:
+                m = meas_cov_eff
                 self.kf_cv.P[:3, :3] = m
                 self.kf_ca.P[:3, :3] = m
             self.kf_cv.P = self._clamp_pos_cov(self.kf_cv.P)
             self.kf_ca.P = self._clamp_pos_cov(self.kf_ca.P)
+            self._sanitize_states()
             self._initialized = True
             self._last_z = z.copy()
             self._predicts_since_update = 0
@@ -234,21 +469,57 @@ class IMMEstimator:
                 self._last_meas_time_s = float(measurement_time_s)
             return
 
-        # Finite-difference velocity cue from multilateration positions.
-        vel_meas = None
-        if self._last_z is not None:
-            vel_meas = (z - self._last_z) / self.dt
-            self.kf_cv.x[3:6] = 0.5 * self.kf_cv.x[3:6] + 0.5 * vel_meas
-            self.kf_ca.x[3:6] = 0.5 * self.kf_ca.x[3:6] + 0.5 * vel_meas
-
         # Optional predict step right before measurement.
         if do_predict:
-            self.predict_only()
-        pred_pos = self.mu[0] * self.kf_cv.x[:3] + self.mu[1] * self.kf_ca.x[:3]
+            self.predict_only(predict_dt_s=dt_meas, do_interaction=True)
+
+        x_cv_pred = self.kf_cv.x.copy()
+        P_cv_pred = self.kf_cv.P.copy()
+        x_ca_pred = self.kf_ca.x.copy()
+        P_ca_pred = self.kf_ca.P.copy()
+
+        # Innovation pre-gating on predicted state to avoid pulling toward bad
+        # multilateration outliers.
+        y_cv_pred = z - self.kf_cv.H @ self.kf_cv.x
+        S_cv_pred = self.kf_cv.H @ self.kf_cv.P @ self.kf_cv.H.T + (
+            self.kf_cv.R if meas_cov_eff is None else meas_cov_eff
+        )
+        y_ca_pred = z - self.kf_ca.H @ self.kf_ca.x
+        S_ca_pred = self.kf_ca.H @ self.kf_ca.P @ self.kf_ca.H.T + (
+            self.kf_ca.R if meas_cov_eff is None else meas_cov_eff
+        )
+        nis_cv_pred = self._nis_from_innovation(y_cv_pred, S_cv_pred)
+        nis_ca_pred = self._nis_from_innovation(y_ca_pred, S_ca_pred)
+        nis_pred_mix = float(self.mu[0]) * nis_cv_pred + float(self.mu[1]) * nis_ca_pred
+
+        # Soft downweight: inflate measurement covariance for this update only.
+        meas_cov_update = meas_cov_eff
+        if np.isfinite(nis_pred_mix) and nis_pred_mix > self._nis_gate:
+            scale = float(np.clip(nis_pred_mix / self._nis_gate, 1.0, self._meas_downweight_max))
+            if meas_cov_update is None:
+                meas_cov_update = np.eye(3) * float(np.mean(np.diag(self.kf_cv.R)))
+            meas_cov_update = np.asarray(meas_cov_update, dtype=float) * scale
+            meas_cov_update = self._regularize_meas_cov(meas_cov_update)
+
+        # Hard reject: skip measurement update if innovation is implausibly large.
+        if np.isfinite(nis_pred_mix) and nis_pred_mix > self._nis_reject_gate:
+            self.kf_cv.x = x_cv_pred
+            self.kf_cv.P = self._clamp_pos_cov(P_cv_pred)
+            self.kf_ca.x = x_ca_pred
+            self.kf_ca.P = self._clamp_pos_cov(P_ca_pred)
+            self._last_nis_cv = float(nis_cv_pred)
+            self._last_nis_ca = float(nis_ca_pred)
+            self._last_nis_mix = float(nis_pred_mix)
+            self._last_z = z.copy()
+            self._predicts_since_update = 0
+            if measurement_time_s is not None:
+                self._last_meas_time_s = float(measurement_time_s)
+            return
 
         # Update step
-        y_cv, S_cv = self.kf_cv.update(z, meas_cov=meas_cov)
-        y_ca, S_ca = self.kf_ca.update(z, meas_cov=meas_cov)
+        y_cv, S_cv = self.kf_cv.update(z, meas_cov=meas_cov_update)
+        y_ca, S_ca = self.kf_ca.update(z, meas_cov=meas_cov_update)
+        self._sanitize_states()
         self.kf_cv.P = self._clamp_pos_cov(self.kf_cv.P)
         self.kf_ca.P = self._clamp_pos_cov(self.kf_ca.P)
 
@@ -264,23 +535,14 @@ class IMMEstimator:
         self._last_nis_mix = (
             float(self.mu[0]) * self._last_nis_cv + float(self.mu[1]) * self._last_nis_ca
         )
-
-        # If prediction is far from current multilateration, snap position to
-        # measurement to prevent a "stuck bubble" while preserving covariance.
-        if np.linalg.norm(z - pred_pos) > self._snap_distance_m:
-            self.kf_cv.x[:3] = z
-            self.kf_ca.x[:3] = z
-            if vel_meas is not None:
-                self.kf_cv.x[3:6] = vel_meas
-                self.kf_ca.x[3:6] = vel_meas
-            if meas_cov is not None:
-                m = np.asarray(meas_cov, dtype=float)
-                self.kf_cv.P[:3, :3] = m
-                self.kf_ca.P[:3, :3] = m
-            self.kf_cv.P = self._clamp_pos_cov(self.kf_cv.P)
-            self.kf_ca.P = self._clamp_pos_cov(self.kf_ca.P)
-            # Favor CA briefly after large jumps.
-            self.mu = np.array([0.35, 0.65], dtype=float)
+        inflate_cv = self._inflate_cov_from_nis(self._last_nis_cv)
+        inflate_ca = self._inflate_cov_from_nis(self._last_nis_ca)
+        if inflate_cv > 1.0:
+            self.kf_cv.P *= inflate_cv
+        if inflate_ca > 1.0:
+            self.kf_ca.P *= inflate_ca
+        self.kf_cv.P = self._clamp_pos_cov(self.kf_cv.P)
+        self.kf_ca.P = self._clamp_pos_cov(self.kf_ca.P)
 
         self._last_z = z.copy()
         self._predicts_since_update = 0
@@ -301,6 +563,26 @@ class IMMEstimator:
             self.mu[0] * (cov_cv + d_cv @ d_cv.T) +
             self.mu[1] * (cov_ca + d_ca @ d_ca.T)
         )
+        # Keep published merged covariance numerically stable.
+        cov_merged = 0.5 * (cov_merged + cov_merged.T)
+        success = False
+        for k in range(6):
+            jitter = (10.0 ** k) * 1e-9
+            try:
+                eigvals, eigvecs = np.linalg.eigh(cov_merged + np.eye(3) * jitter)
+                eigvals = np.clip(eigvals, self._min_pos_var, self._max_pos_var)
+                cov_merged = eigvecs @ np.diag(eigvals) @ eigvecs.T
+                cov_merged = 0.5 * (cov_merged + cov_merged.T)
+                if np.all(np.isfinite(cov_merged)):
+                    success = True
+                    break
+            except np.linalg.LinAlgError:
+                continue
+        if not success:
+            d = np.diag(cov_merged)
+            d = np.nan_to_num(d, nan=self._min_pos_var, posinf=self._max_pos_var, neginf=self._min_pos_var)
+            d = np.clip(d, self._min_pos_var, self._max_pos_var)
+            cov_merged = np.diag(d)
         return mu_merged, cov_merged
 
     def get_diagnostics(self) -> dict[str, float]:

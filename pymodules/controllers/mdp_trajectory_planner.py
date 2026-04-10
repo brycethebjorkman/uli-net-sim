@@ -14,12 +14,12 @@ peaks repel from intruder aircraft and spoofer unsafe regions.
 
 Each planning step:
   1. Forward-project candidate actions through simplified kinematics (~10s)
-  2. Sample 10 future states along each trajectory
-  3. Evaluate closed-form value at each sampled state
-  4. Select the action yielding the max value at any future state
+  2. Sample 10 future states along each trajectory (cf. neighboringStates.m + fwdProjectFast)
+  3. Evaluate closed-form value at each sampled state (valueFunction.m / valueOptimized.m)
+  4. Score each action by the maximum value among its samples; pick the highest-scoring action
+     (same as max(totalValues,[],'all') in Ownship.selectBestAction when one-step state is
+     per-column — i.e. argmax over actions of max over samples along that rollout)
   5. Execute only the one-step-ahead state (receding horizon)
-
-Low-level control uses cascaded PID (same as CascadedPidController).
 
 INI usage:
     *.host[*].mobility.pyClass = "pymodules.controllers.mdp_trajectory_planner.MdpTrajectoryPlanner"
@@ -45,7 +45,7 @@ SAMPLE_COUNT = 10
 ONE_STEP_INDEX = 1       # ~1s ahead, used as execution target
 CRUISE_SPEED = 8.0
 VERTICAL_SPEED = 3.0          # m/s climb/descend rate used in forward projection
-GOAL_REACHED_DIST = 30
+GOAL_REACHED_DIST = 10
 
 # ── Value function parameters (Table 1, scaled for ~500m domain) ─────────────
 # Paper uses κ_goal=0.999 for 15km world. For 500m we need steeper gradient:
@@ -53,11 +53,11 @@ GOAL_REACHED_DIST = 30
 GOAL_REWARD = 500.0
 GOAL_DISCOUNT = 0.997
 
-AGENT_REWARD = 1000.0
-AGENT_DISCOUNT = 0.97
-AGENT_LIMIT = 60.0       # negative peak radius (meters)
+AGENT_REWARD = 6000.0
+AGENT_DISCOUNT = 0.99
+AGENT_LIMIT = 120       # negative peak radius LIM (meters); GCS may override via agent_radius
 
-SPOOFER_REWARD = 1000.0
+SPOOFER_REWARD = 6000.0
 SPOOFER_DISCOUNT = 0.99
 SPOOFER_LIMIT = 120.0    # repulsion radius around unsafe region center (meters)
 ELLIPSOID_MARGIN = 1.0   # Mahalanobis-radius margin outside boundary for soft penalty
@@ -67,6 +67,9 @@ MIN_CYCLE = 2
 # ── Action space ─────────────────────────────────────────────────────────────
 NUM_HEADINGS = 16
 SPEED_LEVELS = [CRUISE_SPEED, 6.0, 4.0, 2.0, 0.0]
+# Allow explicit stop actions only when close enough to goal; otherwise
+# the optimizer can prefer early hover over continued goal progress.
+STOP_ACTION_GOAL_DIST = GOAL_REACHED_DIST
 
 
 def _clamp(v, lo, hi):
@@ -155,24 +158,27 @@ class MdpTrajectoryPlanner:
     # ── Action set ───────────────────────────────────────────────────────────
 
     def _build_actions(self, pos: np.ndarray) -> list[tuple[float, float]]:
-        """Build (heading, speed) action set. Headings are log-spaced near
-        the goal direction for fine control, plus uniform coverage."""
+        """Build (heading, speed) action set."""
         actions = []
+        goal = self._current_goal()
+        allow_stop = True
+        if goal is not None:
+            allow_stop = np.linalg.norm(goal - pos) <= STOP_ACTION_GOAL_DIST
+        speed_levels = SPEED_LEVELS if allow_stop else [s for s in SPEED_LEVELS if s > 1e-6]
 
         # Uniform headings at each speed level
         for k in range(NUM_HEADINGS):
             heading = 2.0 * math.pi * k / NUM_HEADINGS
-            for speed in SPEED_LEVELS:
+            for speed in speed_levels:
                 actions.append((heading, speed))
 
         # Goal-directed actions at multiple speeds
-        goal = self._current_goal()
         if goal is not None:
             to_goal = goal[:2] - pos[:2]
             d = np.linalg.norm(to_goal)
             if d > 1.0:
                 goal_heading = math.atan2(to_goal[1], to_goal[0])
-                for speed in SPEED_LEVELS:
+                for speed in speed_levels:
                     actions.append((goal_heading, speed))
                 # Flanking: ±15°, ±30° off goal heading
                 for offset_deg in [15, 30]:
@@ -216,15 +222,16 @@ class MdpTrajectoryPlanner:
             d_goal = np.linalg.norm(goal - pos)
             v_pos = self._goal_peak * (GOAL_DISCOUNT ** d_goal)
 
-        # ── Negative value: agent repulsion ──
-        v_neg = 0.0
+        # ── Negative value: agent repulsion (valueOptimized.m: mask d < LIM, then max over peaks)
+        agent_terms: list[float] = []
         for oid, op in self.other_positions.items():
             oid_int = int(oid) if isinstance(oid, str) else oid
             if self.host_id is not None and oid_int == self.host_id:
                 continue
             d_agent = np.linalg.norm(pos - np.asarray(op, dtype=float))
-            if d_agent < self.agent_radius:
-                v_neg += self._agent_peak * (AGENT_DISCOUNT ** d_agent)
+            if d_agent < float(self.agent_radius):
+                agent_terms.append(self._agent_peak * (AGENT_DISCOUNT ** d_agent))
+        v_neg = max(agent_terms) if agent_terms else 0.0
 
         # ── Negative value: chance-constraint boundary-aware spoofing risk ──
         # Penalize being inside the ellipsoid and softly penalize trajectories
@@ -291,16 +298,21 @@ class MdpTrajectoryPlanner:
         Actions whose trajectories enter the unsafe ellipsoid are rejected."""
         actions = self._build_actions(pos)
         sample_indices = np.linspace(0, FWD_STEPS - 1, SAMPLE_COUNT, dtype=int)
+        goal = self._current_goal()
+        d_goal_now = np.linalg.norm(goal - pos) if goal is not None else 0.0
 
         best_value = -float("inf")
         best_one_step = pos.copy()
         best_safe_value = -float("inf")
         best_safe_one_step = pos.copy()
+        best_safe_goal_dist = float("inf")
 
         for heading, speed in actions:
             traj = self._forward_project(pos, heading, speed)
             enters_unsafe = self._trajectory_enters_unsafe(traj)
 
+            # Ownship.selectBestAction: max over trajectory samples × actions; for a fixed
+            # action that is max over samples (same column in totalValues matrix).
             max_val = -float("inf")
             for idx in sample_indices:
                 v = self._value_at(traj[idx])
@@ -308,17 +320,36 @@ class MdpTrajectoryPlanner:
                     max_val = v
 
             step_idx = min(ONE_STEP_INDEX, len(traj) - 1)
+            one_step = traj[step_idx]
+            one_step_goal_dist = np.linalg.norm(goal - one_step) if goal is not None else 0.0
 
             if not enters_unsafe and max_val > best_safe_value:
                 best_safe_value = max_val
-                best_safe_one_step = traj[step_idx]
+                best_safe_one_step = one_step
+                best_safe_goal_dist = one_step_goal_dist
 
             if max_val > best_value:
                 best_value = max_val
-                best_one_step = traj[step_idx]
+                best_one_step = one_step
 
-        # Prefer safe trajectories; fall back to best-value if all are unsafe
+        # Prefer safe trajectories; when not near goal, require at least small
+        # progress toward the goal. If best-value safe action stalls, choose the
+        # safe action that gets closest in one step.
         if best_safe_value > -float("inf"):
+            if goal is not None and d_goal_now > GOAL_REACHED_DIST and best_safe_goal_dist >= d_goal_now - 0.2:
+                closest_safe_dist = float("inf")
+                closest_safe_step = best_safe_one_step
+                for heading, speed in actions:
+                    traj = self._forward_project(pos, heading, speed)
+                    if self._trajectory_enters_unsafe(traj):
+                        continue
+                    step_idx = min(ONE_STEP_INDEX, len(traj) - 1)
+                    step = traj[step_idx]
+                    d_step = np.linalg.norm(goal - step)
+                    if d_step < closest_safe_dist:
+                        closest_safe_dist = d_step
+                        closest_safe_step = step
+                return closest_safe_step
             return best_safe_one_step
         return best_one_step
 

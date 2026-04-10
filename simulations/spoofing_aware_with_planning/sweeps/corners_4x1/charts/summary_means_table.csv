@@ -1,7 +1,0 @@
-metric,spoofing_aware_mean,trust_rid_mean
-Total NMACs (real-position),0.0,0.0
-Benign-Benign NMACs,0.0,0.0
-Benign-Spoofer NMACs,0.0,0.0
-Min distance to true spoofer (m),58.961943099455,12.193252447201
-SpoofingAware: chance-constraint violations,3.0,
-SpoofingAware: spoofer containment percent,0.78205128205128,

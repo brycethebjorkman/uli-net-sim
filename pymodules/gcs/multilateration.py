@@ -284,6 +284,20 @@ def multilaterate_position_with_covariance(
         est_pos = result.x[:3]
         resid = residuals(est_pos)
         cov = multilateration_position_covariance(receivers, est_pos, tx_power, resid)
+        # Geometry inflation:
+        # Scale covariance up when receiver geometry is weak (nearly collinear/
+        # coplanar) or when target range is large relative to anchor spread.
+        rx_centered = receivers - np.mean(receivers, axis=0, keepdims=True)
+        try:
+            svals = np.linalg.svd(rx_centered, compute_uv=False)
+            s_max = float(max(svals[0], 1e-6))
+            s_min = float(max(svals[-1], 1e-6))
+            rank_ratio = float(np.clip(s_min / s_max, 0.0, 1.0))
+            geom_penalty = 1.0 + 2.0 * ((1.0 - rank_ratio) ** 2)
+            anchor_span_m = float(max(s_max, 1.0))
+        except np.linalg.LinAlgError:
+            geom_penalty = 3.0
+            anchor_span_m = 1.0
 
         # Model-mismatch inflation:
         # With fixed TX-power localization, TX lock bias and channel mismatch can
@@ -298,11 +312,16 @@ def multilaterate_position_with_covariance(
         gain = np.log(10.0) / 20.0
         sigma_from_noise_m = gain * d_med * sigma_rssi_db
         sigma_from_bias_m = gain * d_med * tx_bias_db
+        range_penalty = float(np.clip(d_med / anchor_span_m, 1.0, 3.0))
+        geom_penalty = float(np.clip(geom_penalty, 1.0, 3.0))
+        geom_scale = float(np.clip(0.5 * (geom_penalty + range_penalty), 1.0, 3.0))
         sigma_model_m = max(0.0, sigma_from_noise_m + sigma_from_bias_m)
+        sigma_model_m *= np.sqrt(geom_scale)
         sigma_model_m = min(sigma_model_m, 20.0)  # keep model-mismatch inflation bounded
 
         if sigma_model_m > 0.0:
             cov = cov + np.eye(3) * (sigma_model_m ** 2)
+        cov = cov * geom_scale
 
         # Final clamp to avoid pathological late-run bubble blow-up.
         cov = 0.5 * (cov + cov.T)
@@ -311,7 +330,7 @@ def multilaterate_position_with_covariance(
             jitter = (10.0 ** k) * 1e-9
             try:
                 eigvals, eigvecs = np.linalg.eigh(cov + np.eye(3) * jitter)
-                eigvals = np.clip(eigvals, 1.0, 2500.0)  # 1..2500 m^2 (std <= 50 m)
+                eigvals = np.clip(eigvals, 2.25, 2500.0)  # 2.25..2500 m^2 (std <= 50 m)
                 cov = eigvecs @ np.diag(eigvals) @ eigvecs.T
                 cov = 0.5 * (cov + cov.T)
                 success = np.all(np.isfinite(cov))
@@ -321,8 +340,8 @@ def multilaterate_position_with_covariance(
                 continue
         if not success:
             d = np.diag(cov)
-            d = np.nan_to_num(d, nan=1.0, posinf=2500.0, neginf=1.0)
-            d = np.clip(d, 1.0, 2500.0)
+            d = np.nan_to_num(d, nan=2.25, posinf=2500.0, neginf=2.25)
+            d = np.clip(d, 2.25, 2500.0)
             cov = np.diag(d)
 
         return est_pos, cov

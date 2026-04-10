@@ -259,12 +259,17 @@ void MultirotorMobility::drawWaypointPath()
 
         static const ::osg::Vec4 osgColors[] = {
             {66/255.0f, 133/255.0f, 244/255.0f, 1.0f},   // blue
-            {234/255.0f, 67/255.0f, 53/255.0f, 1.0f},    // red
             {52/255.0f, 168/255.0f, 83/255.0f, 1.0f},    // green
             {251/255.0f, 188/255.0f, 4/255.0f, 1.0f},    // amber
+            {171/255.0f, 71/255.0f, 188/255.0f, 1.0f},   // purple
         };
         int hostIdx = getParentModule()->getIndex();
         auto colorVec = osgColors[hostIdx % 4];
+        // Keep the spoofer trajectory red across scenarios (layout convention:
+        // spoofer is highest host index).
+        int numHosts = getSystemModule()->par("numHosts").intValue();
+        if (hostIdx == numHosts - 1)
+            colorVec = ::osg::Vec4(234/255.0f, 67/255.0f, 53/255.0f, 1.0f);
 
         // Polyline geometry for the path
         auto *geometry = new ::osg::Geometry();

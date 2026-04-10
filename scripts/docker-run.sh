@@ -4,7 +4,7 @@
 # Uses /opt/uli-venv from the image (no host .venv required).
 #
 # Usage:
-#   ./scripts/docker-run.sh python3 datagen/generate_spoofing_sweep.py --help
+#   ./scripts/docker-run.sh python3 datagen/spoofting_aware_trajectory_planning_datagen/generate_batch.py --help
 #   ./scripts/docker-run.sh python3 datagen/run_batch.py simulations/foo/ --parallel 4
 #
 set -e

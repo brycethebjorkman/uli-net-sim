@@ -71,7 +71,7 @@ Use **`./scripts/docker-run.sh …`** so **`pandas`**, **`pyarrow`**, and OMNeT-
 
 ```bash
 # 1) Generate seeded INI bundles (writes under simulations/.../batches/0001/generated/)
-./scripts/docker-run.sh python3 datagen/generate_spoofing_sweep.py \
+./scripts/docker-run.sh python3 datagen/spoofting_aware_trajectory_planning_datagen/generate_batch.py \
     --layout circle8 --seed-range 0 9 \
     --output-dir simulations/spoofing_aware_with_planning/batches/0001/generated
 

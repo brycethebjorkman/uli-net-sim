@@ -21,7 +21,7 @@ import time
 from pymodules.gcs.chance_constraint import is_safe
 
 NMAC_PROXIMITY_M = 50.0
-DEFAULT_AGENT_RADIUS = 60.0
+DEFAULT_AGENT_RADIUS = 120.0
 
 
 class TrustRidGcs:
@@ -53,6 +53,8 @@ class TrustRidGcs:
         self._tick_time_total_s = 0.0
         self._tick_calls = 0
         self._max_host_count = 0
+        # OSG claimed-position trail (red spheres): same convention as SpoofingAwareGcs.
+        self._visual_spoofer_serial: int | None = None
 
     def on_gcs_reports(self, data: dict) -> dict | None:
         t0 = time.perf_counter()
@@ -64,7 +66,20 @@ class TrustRidGcs:
         for r in reports:
             self.federate_ids.add(r["host_id"])
 
-        out = {
+        visualization: dict = {}
+        report_host_ids = [int(h) for h in data.get("host_ids", [])]
+        if report_host_ids:
+            self._visual_spoofer_serial = max(report_host_ids)
+        elif self._spoofer_host is not None:
+            self._visual_spoofer_serial = int(self._spoofer_host)
+        show_claimed_trail = (
+            self._visual_spoofer_serial is not None
+            and int(serial) == int(self._visual_spoofer_serial)
+        )
+        if show_claimed_trail:
+            visualization["claimed_pos"] = [float(c) for c in claimed_pos]
+
+        out: dict = {
             "log": {
                 "mlat_raw_error": 0.0,
                 "spoofer_detected": 0.0,
@@ -72,6 +87,8 @@ class TrustRidGcs:
                 "hit_count": 0.0,
             },
         }
+        if visualization:
+            out["visualization"] = visualization
         self._reports_time_total_s += max(0.0, time.perf_counter() - t0)
         self._reports_calls += 1
         return out

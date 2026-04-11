@@ -25,3 +25,6 @@ tests/__pycache__/
 tests/out/
 simulations/spoofing_aware_with_planning/batches/
 simulations/spoofing_aware_with_planning/sweeps/
+simulations/spoofing_aware_with_planning/batches_imm_grid_balanced
+logs
+simulations/spoofing_aware_with_planning/prev

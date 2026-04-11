@@ -183,8 +183,12 @@ def _score_trial(
 
 
 def _build_pipeline_args(args: argparse.Namespace) -> list[str]:
+    runner = Path("./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh")
+    if not runner.is_file():
+        raise FileNotFoundError(f"Batch runner not found: {runner}")
     cmd = [
-        "./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh",
+        "bash",
+        str(runner),
         "--batch-root", str(args.batch_root),
         "--seeds", args.seeds,
         "--parallel", str(args.parallel),
@@ -510,6 +514,18 @@ def main(argv: list[str] | None = None) -> int:
                 out = (e.stdout or "") if isinstance(e.stdout, str) else ""
                 err = (e.stderr or "") if isinstance(e.stderr, str) else ""
                 log_path.write_text(out + ("\n" + err if err else ""))
+            except OSError as e:
+                status = "failed"
+                error_msg = f"launch error: {e}"
+                log_path = log_dir / f"{run_name}.log"
+                with log_path.open("a", buffering=1) as lf:
+                    lf.write(f"[grid_search] launch error: {e}\n")
+            except Exception as e:  # keep long runs alive on unexpected per-trial errors
+                status = "failed"
+                error_msg = f"unexpected error: {e}"
+                log_path = log_dir / f"{run_name}.log"
+                with log_path.open("a", buffering=1) as lf:
+                    lf.write(f"[grid_search] unexpected error: {e}\n")
 
             if attempt < max_attempts:
                 print(f"  retrying {run_name} ({attempt}/{max_attempts-1} retries used)...")

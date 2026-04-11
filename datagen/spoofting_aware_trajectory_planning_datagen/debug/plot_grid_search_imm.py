@@ -52,6 +52,10 @@ def _status_ok(df: pd.DataFrame) -> pd.DataFrame:
     return df[df["status"].astype(str).str.lower() == "ok"].copy()
 
 
+def _has_cols(df: pd.DataFrame, cols: list[str]) -> bool:
+    return all(c in df.columns for c in cols)
+
+
 def _pareto_front(df: pd.DataFrame, maximize: list[str], minimize: list[str]) -> pd.Series:
     n = len(df)
     is_pareto = np.ones(n, dtype=bool)
@@ -128,45 +132,51 @@ def main() -> int:
     plt.close(fig)
 
     # 2) Containment vs RMSE (colored by score)
-    fig, ax = plt.subplots(figsize=(8, 6))
-    sc = ax.scatter(
-        ok["localization_rmse_mean_m"],
-        ok["containment_rate_mean"],
-        c=ok["score"],
-        cmap="viridis",
-        alpha=0.85,
-        s=38,
-        edgecolors="none",
-    )
-    ax.set_xlabel("Localization RMSE mean (m) [lower is better]")
-    ax.set_ylabel("Containment rate mean [higher is better]")
-    ax.set_title("Containment vs RMSE (color=score)")
-    cbar = fig.colorbar(sc, ax=ax)
-    cbar.set_label("Score")
-    fig.tight_layout()
-    fig.savefig(out_dir / "containment_vs_rmse_scatter.png")
-    plt.close(fig)
+    if _has_cols(ok, ["localization_rmse_mean_m", "containment_rate_mean", "score"]):
+        fig, ax = plt.subplots(figsize=(8, 6))
+        sc = ax.scatter(
+            ok["localization_rmse_mean_m"],
+            ok["containment_rate_mean"],
+            c=ok["score"],
+            cmap="viridis",
+            alpha=0.85,
+            s=38,
+            edgecolors="none",
+        )
+        ax.set_xlabel("Localization RMSE mean (m) [lower is better]")
+        ax.set_ylabel("Containment rate mean [higher is better]")
+        ax.set_title("Containment vs RMSE (color=score)")
+        cbar = fig.colorbar(sc, ax=ax)
+        cbar.set_label("Score")
+        fig.tight_layout()
+        fig.savefig(out_dir / "containment_vs_rmse_scatter.png")
+        plt.close(fig)
+    else:
+        print("Skipping containment_vs_rmse_scatter: required columns missing.")
 
     # 3) Consistency scatter (NEES95 vs NIS95)
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.scatter(
-        ok["imm_nees_in_95pct_fraction_mean"],
-        ok["imm_nis_in_95pct_fraction_mean"],
-        c=ok["containment_rate_mean"],
-        cmap="plasma",
-        alpha=0.85,
-        s=38,
-        edgecolors="none",
-    )
-    ax.set_xlabel("NEES in 95% fraction mean")
-    ax.set_ylabel("NIS in 95% fraction mean")
-    ax.set_xlim(0.0, 1.0)
-    ax.set_ylim(0.0, 1.0)
-    ax.plot([0, 1], [0, 1], "--", linewidth=1.0, color="gray", alpha=0.6)
-    ax.set_title("Consistency Diagnostics (color=containment)")
-    fig.tight_layout()
-    fig.savefig(out_dir / "consistency_nees95_vs_nis95.png")
-    plt.close(fig)
+    if _has_cols(ok, ["imm_nees_in_95pct_fraction_mean", "imm_nis_in_95pct_fraction_mean", "containment_rate_mean"]):
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.scatter(
+            ok["imm_nees_in_95pct_fraction_mean"],
+            ok["imm_nis_in_95pct_fraction_mean"],
+            c=ok["containment_rate_mean"],
+            cmap="plasma",
+            alpha=0.85,
+            s=38,
+            edgecolors="none",
+        )
+        ax.set_xlabel("NEES in 95% fraction mean")
+        ax.set_ylabel("NIS in 95% fraction mean")
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(0.0, 1.0)
+        ax.plot([0, 1], [0, 1], "--", linewidth=1.0, color="gray", alpha=0.6)
+        ax.set_title("Consistency Diagnostics (color=containment)")
+        fig.tight_layout()
+        fig.savefig(out_dir / "consistency_nees95_vs_nis95.png")
+        plt.close(fig)
+    else:
+        print("Skipping consistency_nees95_vs_nis95: required columns missing.")
 
     # 4) Parameter sensitivity via Spearman correlation to score
     param_cols = [c for c in ok.columns if c.startswith("ULI_IMM_")]
@@ -199,7 +209,11 @@ def main() -> int:
         plt.close(fig)
 
     # 5) Pareto front: maximize containment, minimize RMSE
-    pareto_df = ok.dropna(subset=["containment_rate_mean", "localization_rmse_mean_m"]).copy()
+    pareto_df = (
+        ok.dropna(subset=["containment_rate_mean", "localization_rmse_mean_m"]).copy()
+        if _has_cols(ok, ["containment_rate_mean", "localization_rmse_mean_m"])
+        else pd.DataFrame()
+    )
     if not pareto_df.empty:
         pareto_mask = _pareto_front(
             pareto_df,

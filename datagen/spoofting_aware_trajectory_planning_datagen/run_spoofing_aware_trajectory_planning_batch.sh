@@ -221,15 +221,30 @@ progress_pct_int() {
   echo $(( (100 * COMPLETED_RUN_JOBS) / TOTAL_RUN_JOBS ))
 }
 
+# `jobs -pr` counts every background job, including the heartbeat loop. Without
+# subtracting it, we cap at (PARALLEL-1) run_one workers and --parallel 1
+# deadlocks after the first job (only the heartbeat remains and wait -n blocks).
+count_running_worker_jobs() {
+  local n
+  n="$(jobs -pr | wc -l | tr -d ' ')"
+  if [[ -n "${HEARTBEAT_PID:-}" ]] && kill -0 "$HEARTBEAT_PID" 2>/dev/null; then
+    if (( n > 0 )); then
+      n=$((n - 1))
+    fi
+  fi
+  printf '%s\n' "$n"
+}
+
 heartbeat_loop() {
   while true; do
     sleep "$HEARTBEAT_SEC" || break
-    local now elapsed running pct
+    local now elapsed pct
     now="$(date +%s)"
     elapsed=$(( now - OVERALL_START_EPOCH ))
-    running="$(jobs -pr | wc -l | tr -d ' ')"
     pct="$(progress_pct_int)"
-    echo "[HEARTBEAT] phase=${CURRENT_PHASE} elapsed_s=${elapsed} completed_jobs=${COMPLETED_RUN_JOBS}/${TOTAL_RUN_JOBS} progress_pct=${pct} running_jobs=${running} failed_jobs=${FAILED_RUN_JOBS} run_root=${RUN_ROOT}"
+    # Forked subshell: phase/completed_jobs/progress_pct/failed_jobs are frozen
+    # at fork time; only elapsed_s and run_root stay meaningful. Use [PROGRESS] lines.
+    echo "[HEARTBEAT] phase=${CURRENT_PHASE} elapsed_s=${elapsed} completed_jobs=${COMPLETED_RUN_JOBS}/${TOTAL_RUN_JOBS} progress_pct=${pct} failed_jobs=${FAILED_RUN_JOBS} run_root=${RUN_ROOT}"
   done
 }
 
@@ -355,7 +370,7 @@ PY
     fi
 
     run_one "$scenario" "$seed" "$scen_tag" "$scen_dir" "$aware_cfg" "$trust_cfg" &
-    while (( $(jobs -pr | wc -l) >= PARALLEL )); do
+    while (( $(count_running_worker_jobs) >= PARALLEL )); do
       if ! wait -n; then
         FAILED_RUN_JOBS=$((FAILED_RUN_JOBS + 1))
         PIPELINE_FAILED=1
@@ -367,6 +382,9 @@ PY
   done
 done
 
+# Heartbeat runs as a background job too; `jobs -pr` includes it, so a naive
+# drain loop would block forever on `wait -n` after the last run_one exits.
+stop_heartbeat
 while (( $(jobs -pr | wc -l) > 0 )); do
   if ! wait -n; then
     FAILED_RUN_JOBS=$((FAILED_RUN_JOBS + 1))
@@ -376,6 +394,7 @@ while (( $(jobs -pr | wc -l) > 0 )); do
   COMPLETED_RUN_JOBS=$((COMPLETED_RUN_JOBS + 1))
   echo "[PROGRESS] phase=running_scenarios completed_jobs=${COMPLETED_RUN_JOBS}/${TOTAL_RUN_JOBS} progress_pct=$(progress_pct_int)"
 done
+start_heartbeat
 
 echo "== Writing combined scalar summary CSV =="
 CURRENT_PHASE="summary_csv"

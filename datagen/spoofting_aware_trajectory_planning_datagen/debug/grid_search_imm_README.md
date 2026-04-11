@@ -174,3 +174,77 @@ Preset defaults:
 - `quick`: medium sweep (auto-capped to 80 unless `--max-trials` is set)
 - `overnight`: broad sweep (auto-capped to 500 unless `--max-trials` is set)
 
+---
+
+## 7) Robustness findings and fixes (Apr 2026)
+
+### A) `run_spoofing_aware_trajectory_planning_batch.sh` could hang after `60/60`
+
+Observed behavior:
+
+- Batch log reached `completed_jobs=60/60`, then printed heartbeat lines for hours.
+- Downstream `summary.csv` / plotting stages never started.
+
+Root cause:
+
+- The heartbeat loop runs in background and was counted by `jobs -pr`.
+- A `wait -n` drain loop at the end could block forever waiting on heartbeat.
+
+Fix status:
+
+- The drain path now excludes heartbeat from blocking the scenario drain.
+- Inner parallel worker accounting also excludes heartbeat so `--parallel 1` cannot deadlock.
+
+### B) Wrapper arg forwarding edge case
+
+Observed behavior:
+
+- Wrapper help implied `$0 -- ARGS...`, but forwarding literal `--` can be confusing if not handled.
+
+Fix status:
+
+- `run_imm_grid_search.sh` now accepts optional leading `--` and shifts it before forwarding args.
+- Added preflight checks for `python3` and `grid_search_imm.py` existence.
+
+### C) Trial launch resilience in `grid_search_imm.py`
+
+Observed behavior:
+
+- If subprocess launch fails (missing script, permission, env issue), long runs could abort abruptly.
+
+Fix status:
+
+- Trial loop now catches `OSError` and generic per-trial exceptions, records failure in trial log, and continues/retries according to policy.
+- Batch runner is invoked via `bash <script>` to avoid executable-bit edge cases.
+
+### D) Plotting script resilience
+
+Observed behavior:
+
+- Plotting can fail if some expected metric columns are missing.
+
+Fix status:
+
+- `plot_grid_search_imm.py` now skips plots that require missing columns and continues generating what it can.
+
+### Recommended preflight before long run
+
+```bash
+# 1) Stop existing sessions/processes
+tmux kill-session -t imm_grid_balanced 2>/dev/null || true
+pkill -f 'grid_search_imm.py|run_spoofing_aware_trajectory_planning_batch.sh|datagen/run_batch.py' 2>/dev/null || true
+
+# 2) Quick syntax checks
+bash -n datagen/spoofting_aware_trajectory_planning_datagen/debug/run_imm_grid_search.sh
+python3 -m py_compile datagen/spoofting_aware_trajectory_planning_datagen/debug/grid_search_imm.py
+python3 -m py_compile datagen/spoofting_aware_trajectory_planning_datagen/debug/plot_grid_search_imm.py
+
+# 3) One-trial smoke test (full pipeline) before overnight run
+python3 datagen/spoofting_aware_trajectory_planning_datagen/debug/grid_search_imm.py \
+  --scenario-config Scenario_Corners_4x1 --seeds 0 --parallel 1 \
+  --batch-root simulations/spoofing_aware_with_planning/batches_imm_smoke_full \
+  --results-csv simulations/spoofing_aware_with_planning/batches_imm_smoke_full/imm_grid_smoke_results.csv \
+  --run-prefix imm_smoke_full --preset-grid single --max-trials 1 \
+  --skip-build --heartbeat-sec 30 --trial-timeout-sec 7200 --trial-retries 0
+```
+

@@ -64,6 +64,9 @@ GOAL_REACHED_DIST_M = 10.0
 
 # NMAC: pairwise proximity (m); spoofer unsafe uses chance-constraint ellipsoid (is_safe)
 NMAC_PROXIMITY_M = 50.0
+# Hosts within this distance of their assigned goal are treated as complete and
+# excluded from NMAC counting.
+NMAC_GOAL_REACHED_DIST_M = 10.0
 TX_EST_EMA = 0.2              # smoothing on dynamic TX estimate
 TX_EST_MAX_STEP_DB = 2.0      # max per-update TX change (dB)
 TX_EST_MIN_DBM = -50.0
@@ -135,6 +138,10 @@ def _env_int(name: str, default: int) -> int:
 
 
 NMAC_PROXIMITY_M = _env_float("ULI_IMM_NMAC_PROXIMITY_M", NMAC_PROXIMITY_M)
+NMAC_GOAL_REACHED_DIST_M = _env_float(
+    "ULI_IMM_NMAC_GOAL_REACHED_DIST_M",
+    NMAC_GOAL_REACHED_DIST_M,
+)
 IMM_DT = _env_float("ULI_IMM_DT", IMM_DT)
 IMM_MAX_PREDICT_STEPS = _env_int("ULI_IMM_MAX_PREDICT_STEPS", IMM_MAX_PREDICT_STEPS)
 IMM_INIT_MODE_CV = _env_float("ULI_IMM_INIT_MODE_CV", IMM_INIT_MODE_CV)
@@ -566,8 +573,25 @@ class SpoofingAwareGcs:
         self._reports_calls += 1
         return result
 
+    def _goal_reached_hosts_for_nmac(self, positions: dict[int, np.ndarray]) -> set[int]:
+        """Return hosts considered complete and excluded from NMAC metrics."""
+        reached: set[int] = set()
+        for hid, pos in positions.items():
+            goal = self.goals.get(int(hid))
+            if goal is None:
+                continue
+            goal_arr = np.asarray(goal, dtype=float).ravel()[:3]
+            if goal_arr.shape[0] < 3:
+                goal_arr = np.pad(goal_arr, (0, 3 - goal_arr.shape[0]), mode="constant")
+            if float(np.linalg.norm(pos - goal_arr)) <= float(NMAC_GOAL_REACHED_DIST_M):
+                reached.add(int(hid))
+        return reached
+
     def _benign_positions_for_nmac(self, ground_truth: dict | None) -> dict[int, np.ndarray]:
-        """Prefer simulation ground truth from GcsModule; fall back to RID."""
+        """Prefer simulation ground truth from GcsModule; fall back to RID.
+
+        Agents that have reached goal are excluded from NMAC counting.
+        """
         if ground_truth is not None and len(ground_truth) > 0:
             benign: dict[int, np.ndarray] = {}
             for k, v in ground_truth.items():
@@ -581,14 +605,17 @@ class SpoofingAwareGcs:
                 if hid in self.spoofers:
                     continue
                 benign[hid] = np.asarray(v, dtype=float).ravel()[:3]
-            return benign
-        return {
+            reached = self._goal_reached_hosts_for_nmac(benign)
+            return {hid: pos for hid, pos in benign.items() if hid not in reached}
+        benign = {
             int(s): np.array(p, dtype=float)
             for s, p in self.rid_positions.items()
             if int(s) not in self._goal_reached_hosts
             if (self._spoofer_host is None or int(s) != self._spoofer_host)
             if s not in self.spoofers
         }
+        reached = self._goal_reached_hosts_for_nmac(benign)
+        return {hid: pos for hid, pos in benign.items() if hid not in reached}
 
     def _update_nmac_metrics(
         self,

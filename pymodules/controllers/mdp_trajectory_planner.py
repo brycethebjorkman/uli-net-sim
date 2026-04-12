@@ -50,10 +50,10 @@ GOAL_REACHED_DIST = 10
 # Paper uses κ_goal=0.999 for 15km world. For 500m we need steeper gradient:
 # V(0)=166,917  V(200)=91,470  V(500)=37,223 — strong pull across whole field
 GOAL_REWARD = 500.0
-GOAL_DISCOUNT = 0.997
+GOAL_DISCOUNT = 0.999
 
-AGENT_REWARD = 9000.0
-AGENT_DISCOUNT = 0.99
+AGENT_REWARD = 11000.0
+AGENT_DISCOUNT = 0.985
 AGENT_LIMIT = 150.0       # negative peak radius LIM (meters); GCS may override via agent_radius
 
 SPOOFER_REWARD = 9000.0

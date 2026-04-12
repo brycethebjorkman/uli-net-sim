@@ -68,8 +68,7 @@ void PyBridge::initialize()
         if (!std::filesystem::exists(venvSitePackages)) {
             throw cRuntimeError(
                 "PyBridge: expected venv site-packages at %s — use the same Python as the "
-                "simulation binary (embedded: %d.%d). Recreate .venv with that interpreter and "
-                "pip install -r requirements.txt.",
+                "simulation binary (embedded: %d.%d). Run 'uv sync' to recreate .venv/.",
                 venvSitePackages.c_str(), pyMajor, pyMinor);
         }
         py::module_ site = py::module_::import("site");

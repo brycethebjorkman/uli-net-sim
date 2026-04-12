@@ -1,6 +1,12 @@
 # Additional flags for pybind11 / embedded Python
-PYTHON_CFLAGS := $(shell python3 -c "import sysconfig; print('-I' + sysconfig.get_path('include'))")
-PYTHON_LDFLAGS := $(shell python3-config --ldflags --embed 2>/dev/null || python3-config --ldflags)
+# Use the project venv's Python so the binary links against the same version
+# that the venv packages are compiled for (host and container both use uv).
+VENV_PYTHON := $(wildcard $(PROJ_DIR)/.venv/bin/python3)
+ifeq ($(VENV_PYTHON),)
+  VENV_PYTHON := python3
+endif
+PYTHON_CFLAGS := $(shell $(VENV_PYTHON) -c "import sysconfig; print('-I' + sysconfig.get_path('include'))")
+PYTHON_LDFLAGS := $(shell $(VENV_PYTHON) -c "import sysconfig; v=sysconfig.get_config_var('VERSION'); d=sysconfig.get_config_var('LIBDIR'); print(f'-L{d} -lpython{v}')")
 
 COPTS += $(PYTHON_CFLAGS)
 LIBS += $(PYTHON_LDFLAGS)

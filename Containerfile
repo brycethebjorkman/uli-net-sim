@@ -86,6 +86,12 @@ RUN tar xf eigen-5.0.0.tar \
 # Make OMNeT++/INET env available globally in every login shell
 COPY scripts/omnetpp-env.sh /etc/profile.d/omnetpp-env.sh
 
+# Install uv for Python dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 # build uli-net-sim
 WORKDIR /usr/uli-net-sim/uav_rid
 COPY . .
+
+# Create venv and install Python dependencies via uv
+RUN uv sync

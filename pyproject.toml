@@ -1,3 +1,51 @@
+[project]
+name = "uav-rid"
+version = "0.1.0"
+description = "UAV Remote ID spoofing detection simulator"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Core scientific
+    "numpy>=2.2",
+    "scipy>=1.15",
+    "pandas>=2.3",
+    "pyarrow>=23.0",
+    "scikit-learn>=1.7",
+
+    # ML
+    "torch>=2.10",
+
+    # C++ build bridge
+    "pybind11>=3.0",
+
+    # Visualization
+    "matplotlib>=3.10",
+    "plotly>=6.5",
+    "kaleido>=1.2",
+
+    # Jupyter / interactive notebooks
+    "ipykernel>=7.1",
+    "jupytext>=1.19",
+    "nbformat>=5.10",
+
+    # Testing
+    "pytest>=9.0",
+    "pytest-cov>=7.1",
+    "pytest-timeout>=2.4",
+    "coverage>=7.13",
+]
+
+# --- uv-specific configuration ---
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+# --- Tool configuration ---
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 timeout = 300

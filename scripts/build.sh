@@ -25,12 +25,23 @@ SRC_DIR="$PROJ_DIR"
 BUILD_DIR="$BASE_DIR/container-build"
 INET_DIR="$BASE_DIR/inet4.5"
 EIGEN_DIR="$BASE_DIR/eigen-5.0.0"
-# Always source environment to ensure omnetpp venv (with pybind11) is active
+# Source OMNeT++/INET env for opp_makemake on PATH
 . "$PROJ_DIR/scripts/omnetpp-env.sh"
 
-PYBIND11_DIR="$(python3 -c 'import pybind11; print(pybind11.get_include())')"
-PYTHON_INCLUDE="$(python3 -c 'import sysconfig; print(sysconfig.get_path("include"))')"
-PYTHON_LIBDIR="$(python3-config --configdir)"
+# Use the project venv's Python for pybind11 headers and libpython.
+# This ensures the simulation binary links against the same Python version
+# that the venv packages are compiled for (e.g. 3.12 via uv).
+VENV_PYTHON="$PROJ_DIR/.venv/bin/python3"
+if [ ! -x "$VENV_PYTHON" ]; then
+    echo "Error: project venv not found at $PROJ_DIR/.venv/"
+    echo "Run 'uv sync' in the project directory first."
+    exit 1
+fi
+
+PYBIND11_DIR="$($VENV_PYTHON -c 'import pybind11; print(pybind11.get_include())')"
+PYTHON_INCLUDE="$($VENV_PYTHON -c 'import sysconfig; print(sysconfig.get_path("include"))')"
+PYTHON_LIBDIR="$($VENV_PYTHON -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+PYTHON_LDLIB="$($VENV_PYTHON -c 'import sysconfig; v=sysconfig.get_config_var("VERSION"); print(f"python{v}")')"
 
 echo "=========================================="
 echo "Container Build (Out-of-Tree)"
@@ -67,7 +78,7 @@ opp_makemake -f --deep \
     -L'$(INET4_5_PROJ)/out/clang-release/src' \
     -L"$PYTHON_LIBDIR" \
     -lINET \
-    -lpython3.10 \
+    -l"$PYTHON_LDLIB" \
     -losg -losgDB -lOpenThreads
 
 # Build

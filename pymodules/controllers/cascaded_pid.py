@@ -129,6 +129,24 @@ class CascadedPidController:
             self._setup_segment()
             self._waypoints_changed = True
 
+        elif task == 'steer':
+            # Redirect toward a new target without resetting speed.
+            # Like goto but preserves carrot_speed so the drone doesn't
+            # decelerate and re-accelerate from rest each replan cycle.
+            target = (cmd['x'], cmd['y'], cmd['z'])
+            speed = cmd.get('speed', self.speed)
+            saved_speed = self.carrot_speed
+            self.waypoints = [pos, target]
+            self.speed = speed
+            self.seg_index = 1
+            self.carrot_s = 0.0
+            self.carrot_speed = min(saved_speed, speed)
+            self.track_dt_scalar = 1.0
+            self.vel_integral = [0.0, 0.0, 0.0]
+            self.hovering = False
+            self._setup_segment()
+            self._waypoints_changed = True
+
         elif task == 'waypoints':
             # Replace entire waypoint list (prepend current pos for smooth transition)
             wps = cmd['waypoints']

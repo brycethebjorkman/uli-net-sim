@@ -31,10 +31,10 @@ EXPECTED_DIR = Path(__file__).parent / "expected_hashes"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _run_sim(config: str, result_dir: Path):
-    """Run one multirotor_test config."""
+def _run_sim(config: str, result_dir: Path, ini: Path = SIM_INI):
+    """Run one simulation config."""
     result_dir.mkdir(parents=True, exist_ok=True)
-    args = [str(RUN_SH), "-f", str(SIM_INI), "-c", config,
+    args = [str(RUN_SH), "-f", str(ini), "-c", config,
             "-r", str(result_dir), "-q"]
     r = subprocess.run(args, capture_output=True, text=True)
     if r.returncode != 0:
@@ -886,3 +886,64 @@ def test_py_combined_detector_logs_alert(py_combined_detector_outputs):
 
     _times, alerts = _get_vector(vectors, "gcs[0]", "combined_alert")
     assert len(alerts) > 0, "No combined_alert log entries"
+
+
+# ===========================================================================
+# GP-tracking planner (GP-CUSUM detection + active trajectory planning)
+# ===========================================================================
+
+GP_TRACKING_INI = REPO_ROOT / "simulations" / "gp_tracking_test" / "omnetpp.ini"
+
+
+@pytest.fixture(scope="session")
+def py_gp_tracking_outputs():
+    """Run PyGpTrackingTest and export vectors."""
+    out = TEST_OUT / "gp_tracking"
+    if out.exists():
+        shutil.rmtree(out)
+    result_dir = out / "results"
+    vec_file = _run_sim("PyGpTrackingTest", result_dir, ini=GP_TRACKING_INI)
+    vectors = extract_our_vectors(vec_file)
+
+    return {
+        "vec_file": vec_file,
+        "vectors": vectors,
+    }
+
+
+def test_py_gp_tracking_vec_hashes(py_gp_tracking_outputs):
+    _check_hashes(py_gp_tracking_outputs["vectors"],
+                  "py_gp_tracking", "PyGpTrackingTest")
+
+
+def test_py_gp_tracking_logs_cusum(py_gp_tracking_outputs):
+    """GCS should log cusum_stat and standardized_error vectors."""
+    vectors = py_gp_tracking_outputs["vectors"]
+
+    _times, cusum = _get_vector(vectors, "gcs[0]", "cusum_stat")
+    assert len(cusum) > 0, "No cusum_stat log entries"
+
+    _times, s_k = _get_vector(vectors, "gcs[0]", "standardized_error")
+    assert len(s_k) > 0, "No standardized_error log entries"
+
+
+def test_py_gp_tracking_logs_gp(py_gp_tracking_outputs):
+    """GCS should log gp_pred_mean and gp_pred_var vectors."""
+    vectors = py_gp_tracking_outputs["vectors"]
+
+    _times, pred_mean = _get_vector(vectors, "gcs[0]", "gp_pred_mean")
+    assert len(pred_mean) > 0, "No gp_pred_mean log entries"
+
+    _times, pred_var = _get_vector(vectors, "gcs[0]", "gp_pred_var")
+    assert len(pred_var) > 0, "No gp_pred_var log entries"
+
+
+def test_py_gp_tracking_logs_planner(py_gp_tracking_outputs):
+    """GCS should log planned position and variance reduction vectors."""
+    vectors = py_gp_tracking_outputs["vectors"]
+
+    _times, px = _get_vector(vectors, "gcs[0]", "planned_x")
+    assert len(px) > 0, "No planned_x log entries"
+
+    _times, vr = _get_vector(vectors, "gcs[0]", "max_variance_reduction")
+    assert len(vr) > 0, "No max_variance_reduction log entries"

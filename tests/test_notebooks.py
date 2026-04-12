@@ -116,22 +116,20 @@ def test_evaluation_analysis_notebook(sim_outputs, eval_outputs):
     )
 
 
-def test_scenario_animation_notebook(sim_outputs, eval_outputs):
-    """Execute scenario_animation.py with test data."""
+def test_scenario_animation_notebook(sim_outputs):
+    """Execute datavis/scenario_animation.py with test data."""
     scenario = _find_spoofed_scenario(sim_outputs["test"])
-    scores_dir = eval_outputs["kf_scores.parquet"].parent
     env = {
         **HEADLESS_ENV,
         "NOTEBOOK_SCENARIO": str(scenario),
-        "NOTEBOOK_SCORES_DIR": str(scores_dir),
     }
 
     result = subprocess.run(
-        [PYTHON, str(REPO_ROOT / "evaluations/notebooks/scenario_animation.py")],
+        [PYTHON, str(REPO_ROOT / "datavis/scenario_animation.py")],
         capture_output=True, text=True,
-        cwd=str(REPO_ROOT / "evaluations/notebooks"),
+        cwd=str(REPO_ROOT / "datavis"),
         env=env, timeout=120,
     )
     assert result.returncode == 0, (
-        f"scenario_animation.py failed:\nstderr: {result.stderr[-3000:]}"
+        f"datavis/scenario_animation.py failed:\nstderr: {result.stderr[-3000:]}"
     )

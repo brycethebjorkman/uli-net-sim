@@ -10,6 +10,7 @@
 #include <set>
 #include <vector>
 #include <string>
+#include <array>
 
 using namespace omnetpp;
 
@@ -64,6 +65,8 @@ class GcsModule : public cSimpleModule, public cListener
 
     // Dynamic vector registry: Python "log" keys → cOutVector (always recorded)
     std::map<std::string, cOutVector*> logVectors;
+    // Cached per-host final goals parsed from mobility waypointScript (x,y,z).
+    std::map<int, std::array<double, 3>> hostGoalsByHost;
 
     // OSG visualization state (opaque pointers to avoid OSG in header)
     void *ellipsoidTransform = nullptr;

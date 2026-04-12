@@ -30,8 +30,6 @@ import math
 import numpy as np
 
 from pymodules.gcs.chance_constraint import (
-    is_safe,
-    mahalanobis_squared,
     ellipsoid_threshold,
 )
 
@@ -41,7 +39,8 @@ GRAVITY = 9.81
 REPLAN_DT = 0.5
 FWD_DT = 0.5
 FWD_STEPS = 20          # 20 × 0.5s = 10s lookahead
-SAMPLE_COUNT = 10
+# Fewer samples improves runtime while keeping good trajectory discrimination.
+SAMPLE_COUNT = 8
 ONE_STEP_INDEX = 1       # ~1s ahead, used as execution target
 CRUISE_SPEED = 8.0
 VERTICAL_SPEED = 3.0          # m/s climb/descend rate used in forward projection
@@ -53,13 +52,13 @@ GOAL_REACHED_DIST = 10
 GOAL_REWARD = 500.0
 GOAL_DISCOUNT = 0.997
 
-AGENT_REWARD = 6000.0
+AGENT_REWARD = 9000.0
 AGENT_DISCOUNT = 0.99
-AGENT_LIMIT = 120       # negative peak radius LIM (meters); GCS may override via agent_radius
+AGENT_LIMIT = 150.0       # negative peak radius LIM (meters); GCS may override via agent_radius
 
-SPOOFER_REWARD = 6000.0
+SPOOFER_REWARD = 9000.0
 SPOOFER_DISCOUNT = 0.99
-SPOOFER_LIMIT = 120.0    # repulsion radius around unsafe region center (meters)
+SPOOFER_LIMIT = 150.0    # repulsion radius around unsafe region center (meters)
 ELLIPSOID_MARGIN = 1.0   # Mahalanobis-radius margin outside boundary for soft penalty
 
 MIN_CYCLE = 2
@@ -67,6 +66,13 @@ MIN_CYCLE = 2
 # ── Action space ─────────────────────────────────────────────────────────────
 NUM_HEADINGS = 16
 SPEED_LEVELS = [CRUISE_SPEED, 6.0, 4.0, 2.0, 0.0]
+# Commanded flight-path angle set (deg), following the logarithmic spacing
+# used in Taye et al. (Eq. 3), mapped to multirotor kinematic projection.
+FLIGHT_PATH_ANGLES_DEG = [
+    -19.99, -16.24, -12.66, -9.26, -6.02, -2.94, -0.01,
+    0.0,
+    0.01, 2.94, 6.02, 9.26, 12.66, 16.24, 19.99,
+]
 # Allow explicit stop actions only when close enough to goal; otherwise
 # the optimizer can prefer early hover over continued goal progress.
 STOP_ACTION_GOAL_DIST = GOAL_REACHED_DIST
@@ -138,7 +144,7 @@ class MdpTrajectoryPlanner:
             new_others = cmd.get("other_positions", {})
             if new_others:
                 self.other_positions = new_others
-            self.agent_radius = cmd.get("agent_radius", AGENT_LIMIT)
+            # Agent-separation radius is MDP-owned (local constant/tuning), not GCS-overridden.
             if "host_id" in cmd:
                 self.host_id = cmd["host_id"]
             if "goal" in cmd:
@@ -157,116 +163,156 @@ class MdpTrajectoryPlanner:
 
     # ── Action set ───────────────────────────────────────────────────────────
 
-    def _build_actions(self, pos: np.ndarray) -> list[tuple[float, float]]:
-        """Build (heading, speed) action set."""
+    def _build_actions(self, pos: np.ndarray) -> list[tuple[float, float, float]]:
+        """Build (heading, speed, flight_path_angle_rad) action set."""
         actions = []
         goal = self._current_goal()
         allow_stop = True
         if goal is not None:
             allow_stop = np.linalg.norm(goal - pos) <= STOP_ACTION_GOAL_DIST
         speed_levels = SPEED_LEVELS if allow_stop else [s for s in SPEED_LEVELS if s > 1e-6]
+        gamma_levels = [math.radians(g) for g in FLIGHT_PATH_ANGLES_DEG]
 
-        # Uniform headings at each speed level
+        # Uniform headings at each speed and flight-path angle level
         for k in range(NUM_HEADINGS):
             heading = 2.0 * math.pi * k / NUM_HEADINGS
             for speed in speed_levels:
-                actions.append((heading, speed))
+                if speed <= 1e-6:
+                    # Stop action: keep level flight angle to avoid duplicates.
+                    actions.append((heading, speed, 0.0))
+                else:
+                    for gamma in gamma_levels:
+                        actions.append((heading, speed, gamma))
 
-        # Goal-directed actions at multiple speeds
+        # Goal-directed actions at multiple speeds and flight-path angles
         if goal is not None:
             to_goal = goal[:2] - pos[:2]
             d = np.linalg.norm(to_goal)
             if d > 1.0:
                 goal_heading = math.atan2(to_goal[1], to_goal[0])
                 for speed in speed_levels:
-                    actions.append((goal_heading, speed))
+                    if speed <= 1e-6:
+                        actions.append((goal_heading, speed, 0.0))
+                    else:
+                        for gamma in gamma_levels:
+                            actions.append((goal_heading, speed, gamma))
                 # Flanking: ±15°, ±30° off goal heading
                 for offset_deg in [15, 30]:
                     offset = math.radians(offset_deg)
                     for speed in [CRUISE_SPEED, CRUISE_SPEED * 0.5]:
-                        actions.append((goal_heading + offset, speed))
-                        actions.append((goal_heading - offset, speed))
+                        for gamma in gamma_levels:
+                            actions.append((goal_heading + offset, speed, gamma))
+                            actions.append((goal_heading - offset, speed, gamma))
 
         return actions
 
     # ── Forward projection ───────────────────────────────────────────────────
 
-    def _forward_project(self, pos: np.ndarray, heading: float, speed: float) -> list[np.ndarray]:
-        """Kinematic forward projection including vertical motion toward goal."""
-        dx = speed * math.cos(heading) * FWD_DT
-        dy = speed * math.sin(heading) * FWD_DT
+    def _forward_project(
+        self, pos: np.ndarray, heading: float, speed: float, flight_path_angle: float
+    ) -> list[np.ndarray]:
+        """Kinematic forward projection with explicit flight-path angle command.
 
-        goal = self._current_goal()
-        if goal is not None:
-            alt_err = goal[2] - pos[2]
-            dz = _clamp(alt_err / max(FWD_STEPS * FWD_DT, 1.0), -VERTICAL_SPEED, VERTICAL_SPEED) * FWD_DT
-        else:
-            dz = 0.0
+        Uses the simplified guidance kinematics from Taye et al.:
+            xdot = V cos(psi) cos(gamma)
+            ydot = V sin(psi) cos(gamma)
+            zdot = V sin(gamma)
+        """
+        action = np.array([[heading, speed, flight_path_angle]], dtype=float)
+        traj = self._forward_project_many(pos, action)[0]
+        return [p.copy() for p in traj]
 
-        traj = []
-        p = pos.copy()
-        for _ in range(FWD_STEPS):
-            p = p + np.array([dx, dy, dz])
-            traj.append(p.copy())
-        return traj
+    def _forward_project_many(self, pos: np.ndarray, actions: np.ndarray) -> np.ndarray:
+        """Vectorized rollout for all actions; returns [A, FWD_STEPS, 3]."""
+        actions_arr = np.asarray(actions, dtype=float)
+        if actions_arr.size == 0:
+            return np.empty((0, FWD_STEPS, 3), dtype=float)
+
+        heading = actions_arr[:, 0]
+        speed = actions_arr[:, 1]
+        flight_path_angle = actions_arr[:, 2]
+
+        speed_xy = speed * np.cos(flight_path_angle)
+        vz = np.clip(speed * np.sin(flight_path_angle), -VERTICAL_SPEED, VERTICAL_SPEED)
+        deltas = np.stack(
+            [
+                speed_xy * np.cos(heading) * FWD_DT,
+                speed_xy * np.sin(heading) * FWD_DT,
+                vz * FWD_DT,
+            ],
+            axis=1,
+        )
+        step_count = np.arange(1, FWD_STEPS + 1, dtype=float).reshape(1, FWD_STEPS, 1)
+        return pos.reshape(1, 1, 3) + deltas[:, None, :] * step_count
 
     # ── Value function (Eq. 6) ───────────────────────────────────────────────
 
-    def _value_at(self, pos: np.ndarray) -> float:
-        """Closed-form value at a state: V = V+ − V−"""
+    def _value_many(self, positions: np.ndarray) -> np.ndarray:
+        """Closed-form value for N states: V = V+ − V−."""
+        pts = np.asarray(positions, dtype=float)
+        if pts.ndim == 1:
+            pts = pts.reshape(1, -1)
+        n = pts.shape[0]
 
         # ── Positive value: goal attraction ──
-        v_pos = 0.0
+        v_pos = np.zeros(n, dtype=float)
         goal = self._current_goal()
         if goal is not None:
-            d_goal = np.linalg.norm(goal - pos)
-            v_pos = self._goal_peak * (GOAL_DISCOUNT ** d_goal)
+            d_goal = np.linalg.norm(pts - goal.reshape(1, 3), axis=1)
+            v_pos = self._goal_peak * np.power(GOAL_DISCOUNT, d_goal)
 
-        # ── Negative value: agent repulsion (valueOptimized.m: mask d < LIM, then max over peaks)
-        agent_terms: list[float] = []
+        # ── Negative value: agent repulsion ──
+        v_neg = np.zeros(n, dtype=float)
+        intruders = []
         for oid, op in self.other_positions.items():
             oid_int = int(oid) if isinstance(oid, str) else oid
             if self.host_id is not None and oid_int == self.host_id:
                 continue
-            d_agent = np.linalg.norm(pos - np.asarray(op, dtype=float))
-            if d_agent < float(self.agent_radius):
-                agent_terms.append(self._agent_peak * (AGENT_DISCOUNT ** d_agent))
-        v_neg = max(agent_terms) if agent_terms else 0.0
+            intruders.append(np.asarray(op, dtype=float))
+        if intruders:
+            intr_arr = np.asarray(intruders, dtype=float)
+            d_agent = np.linalg.norm(pts[:, None, :] - intr_arr[None, :, :], axis=2)
+            within = d_agent < float(self.agent_radius)
+            agent_terms = self._agent_peak * np.power(AGENT_DISCOUNT, d_agent)
+            agent_terms = np.where(within, agent_terms, 0.0)
+            v_neg += np.max(agent_terms, axis=1)
 
         # ── Negative value: chance-constraint boundary-aware spoofing risk ──
-        # Penalize being inside the ellipsoid and softly penalize trajectories
-        # near its boundary to treat the edge as plausible spoofer location.
         regions = self._regions_for_unsafe_test()
         for reg in regions:
             mu = np.asarray(reg["mu"], dtype=float)
             sigma = np.asarray(reg["sigma"], dtype=float)
             alpha = float(reg.get("alpha", 0.05))
 
-            # Keep center-based look-ahead repulsion for long-range behavior.
-            d_spoof = np.linalg.norm(pos - mu)
-            if d_spoof < SPOOFER_LIMIT:
-                v_neg += 0.35 * self._spoofer_peak * (SPOOFER_DISCOUNT ** d_spoof)
+            d_spoof = np.linalg.norm(pts - mu.reshape(1, 3), axis=1)
+            center_term = 0.35 * self._spoofer_peak * np.power(SPOOFER_DISCOUNT, d_spoof)
+            v_neg += np.where(d_spoof < SPOOFER_LIMIT, center_term, 0.0)
 
-            m2 = mahalanobis_squared(pos, mu, sigma)
             boundary = ellipsoid_threshold(alpha, ndim=3)
             if boundary <= 1e-9:
                 continue
 
-            r = math.sqrt(max(m2, 0.0))
+            # Vectorized Mahalanobis radius for all sampled states.
+            sigma_inv = np.linalg.pinv(sigma)
+            diff = pts - mu.reshape(1, 3)
+            m2 = np.einsum("ni,ij,nj->n", diff, sigma_inv, diff)
+            r = np.sqrt(np.maximum(m2, 0.0))
             rb = math.sqrt(boundary)
 
-            if r <= rb:
-                # Inside unsafe set: strong violation penalty.
-                violation = 1.0 + (rb - r) / max(rb, 1e-6)
-                v_neg += self._spoofer_peak * violation
-            else:
-                # Outside but near boundary: smoothly decaying penalty.
-                dr = r - rb
-                if dr <= ELLIPSOID_MARGIN:
-                    near_scale = math.exp(-2.5 * dr / max(ELLIPSOID_MARGIN, 1e-6))
-                    v_neg += 0.75 * self._spoofer_peak * near_scale
+            inside = r <= rb
+            violation = 1.0 + (rb - r) / max(rb, 1e-6)
+            v_neg += np.where(inside, self._spoofer_peak * violation, 0.0)
+
+            dr = r - rb
+            near = (~inside) & (dr <= ELLIPSOID_MARGIN)
+            near_scale = np.exp(-2.5 * dr / max(ELLIPSOID_MARGIN, 1e-6))
+            v_neg += np.where(near, 0.75 * self._spoofer_peak * near_scale, 0.0)
 
         return v_pos - v_neg
+
+    def _value_at(self, pos: np.ndarray) -> float:
+        """Closed-form value at a state: V = V+ − V−"""
+        return float(self._value_many(np.asarray(pos, dtype=float))[0])
 
     # ── MDP planning (Algorithm 2) ──────────────────────────────────────────
 
@@ -278,77 +324,96 @@ class MdpTrajectoryPlanner:
             return [self.unsafe_region]
         return []
 
+    def _trajectory_enters_unsafe_many(self, trajs: np.ndarray) -> np.ndarray:
+        """Vectorized hard constraint over trajectories; returns [A] bool mask."""
+        arr = np.asarray(trajs, dtype=float)
+        if arr.ndim != 3:
+            raise ValueError("Expected trajs shape [A, T, 3]")
+
+        regions = self._regions_for_unsafe_test()
+        if not regions or arr.shape[0] == 0:
+            return np.zeros(arr.shape[0], dtype=bool)
+
+        n_actions, n_steps, _ = arr.shape
+        flat = arr.reshape(-1, 3)
+        enters = np.zeros(n_actions, dtype=bool)
+
+        for reg in regions:
+            mu = np.asarray(reg["mu"], dtype=float)
+            sigma = np.asarray(reg["sigma"], dtype=float)
+            alpha = float(reg.get("alpha", 0.05))
+
+            boundary = ellipsoid_threshold(alpha, ndim=3)
+            if boundary <= 1e-9:
+                continue
+
+            sigma_inv = np.linalg.pinv(sigma)
+            diff = flat - mu.reshape(1, 3)
+            m2 = np.einsum("ni,ij,nj->n", diff, sigma_inv, diff)
+            inside = (m2 <= boundary).reshape(n_actions, n_steps)
+            enters |= np.any(inside, axis=1)
+            if np.all(enters):
+                break
+
+        return enters
+
     def _trajectory_enters_unsafe(self, traj: list[np.ndarray]) -> bool:
         """Hard constraint: reject trajectories that enter the chance-constraint ellipsoid."""
-        regions = self._regions_for_unsafe_test()
-        if not regions:
-            return False
-        for p in traj:
-            for reg in regions:
-                mu = np.asarray(reg["mu"], dtype=float)
-                sigma = np.asarray(reg["sigma"], dtype=float)
-                alpha = reg.get("alpha", 0.05)
-                if not is_safe(p, mu, sigma, alpha):
-                    return True
-        return False
+        arr = np.asarray(traj, dtype=float)
+        if arr.ndim == 2:
+            arr = arr.reshape(1, arr.shape[0], arr.shape[1])
+            return bool(self._trajectory_enters_unsafe_many(arr)[0])
+        if arr.ndim == 3:
+            return bool(np.any(self._trajectory_enters_unsafe_many(arr)))
+        raise ValueError("Expected trajectory shape [T,3] or [A,T,3]")
 
     def _plan(self, pos: np.ndarray) -> np.ndarray:
         """Forward-project each action, evaluate value at sampled states,
         pick action with max value (Algorithm 2, line 26).
         Actions whose trajectories enter the unsafe ellipsoid are rejected."""
         actions = self._build_actions(pos)
+        if not actions:
+            return pos.copy()
+
+        actions_arr = np.asarray(actions, dtype=float)
         sample_indices = np.linspace(0, FWD_STEPS - 1, SAMPLE_COUNT, dtype=int)
         goal = self._current_goal()
         d_goal_now = np.linalg.norm(goal - pos) if goal is not None else 0.0
 
-        best_value = -float("inf")
-        best_one_step = pos.copy()
-        best_safe_value = -float("inf")
-        best_safe_one_step = pos.copy()
-        best_safe_goal_dist = float("inf")
+        trajs = self._forward_project_many(pos, actions_arr)
+        unsafe_mask = self._trajectory_enters_unsafe_many(trajs)
 
-        for heading, speed in actions:
-            traj = self._forward_project(pos, heading, speed)
-            enters_unsafe = self._trajectory_enters_unsafe(traj)
+        # Ownship.selectBestAction: max over trajectory samples × actions.
+        sampled_states = trajs[:, sample_indices, :].reshape(-1, 3)
+        sampled_values = self._value_many(sampled_states).reshape(actions_arr.shape[0], -1)
+        max_vals = np.max(sampled_values, axis=1)
 
-            # Ownship.selectBestAction: max over trajectory samples × actions; for a fixed
-            # action that is max over samples (same column in totalValues matrix).
-            max_val = -float("inf")
-            for idx in sample_indices:
-                v = self._value_at(traj[idx])
-                if v > max_val:
-                    max_val = v
+        step_idx = min(ONE_STEP_INDEX, trajs.shape[1] - 1)
+        one_steps = trajs[:, step_idx, :]
+        if goal is not None:
+            one_step_goal_dists = np.linalg.norm(one_steps - goal.reshape(1, 3), axis=1)
+        else:
+            one_step_goal_dists = np.zeros(actions_arr.shape[0], dtype=float)
 
-            step_idx = min(ONE_STEP_INDEX, len(traj) - 1)
-            one_step = traj[step_idx]
-            one_step_goal_dist = np.linalg.norm(goal - one_step) if goal is not None else 0.0
+        best_idx = int(np.argmax(max_vals))
+        best_one_step = one_steps[best_idx]
 
-            if not enters_unsafe and max_val > best_safe_value:
-                best_safe_value = max_val
-                best_safe_one_step = one_step
-                best_safe_goal_dist = one_step_goal_dist
-
-            if max_val > best_value:
-                best_value = max_val
-                best_one_step = one_step
+        safe_mask = ~unsafe_mask
 
         # Prefer safe trajectories; when not near goal, require at least small
         # progress toward the goal. If best-value safe action stalls, choose the
         # safe action that gets closest in one step.
-        if best_safe_value > -float("inf"):
+        if np.any(safe_mask):
+            safe_vals = np.where(safe_mask, max_vals, -float("inf"))
+            best_safe_idx = int(np.argmax(safe_vals))
+            best_safe_one_step = one_steps[best_safe_idx]
+            best_safe_goal_dist = one_step_goal_dists[best_safe_idx]
+
+            safe_goal_dists = np.where(safe_mask, one_step_goal_dists, np.inf)
+            closest_safe_idx = int(np.argmin(safe_goal_dists))
+            closest_safe_step = one_steps[closest_safe_idx]
+
             if goal is not None and d_goal_now > GOAL_REACHED_DIST and best_safe_goal_dist >= d_goal_now - 0.2:
-                closest_safe_dist = float("inf")
-                closest_safe_step = best_safe_one_step
-                for heading, speed in actions:
-                    traj = self._forward_project(pos, heading, speed)
-                    if self._trajectory_enters_unsafe(traj):
-                        continue
-                    step_idx = min(ONE_STEP_INDEX, len(traj) - 1)
-                    step = traj[step_idx]
-                    d_step = np.linalg.norm(goal - step)
-                    if d_step < closest_safe_dist:
-                        closest_safe_dist = d_step
-                        closest_safe_step = step
                 return closest_safe_step
             return best_safe_one_step
         return best_one_step

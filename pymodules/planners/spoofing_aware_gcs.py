@@ -60,6 +60,7 @@ COMBINED_KF_THRESHOLD = 6.63
 COMBINED_MLAT_THRESHOLD = 50.0
 STOP_DETECTION_AFTER_FIRST_SPOOFER = True
 DEFAULT_AGENT_RADIUS = 120.0
+GOAL_REACHED_DIST_M = 10.0
 
 # NMAC: pairwise proximity (m); spoofer unsafe uses chance-constraint ellipsoid (is_safe)
 NMAC_PROXIMITY_M = 50.0
@@ -159,6 +160,16 @@ class SpoofingAwareGcs:
         self.alpha = alpha
         self.agent_radius = agent_radius
         self.goals = goals or {}
+        # Normalize goal keys so host id lookup works for int/str inputs.
+        self._goals_by_host: dict[int, np.ndarray] = {}
+        for k, v in self.goals.items():
+            try:
+                hid = int(k)
+            except (TypeError, ValueError):
+                continue
+            g = np.asarray(v, dtype=float).ravel()[:3]
+            if g.shape[0] == 3:
+                self._goals_by_host[hid] = g
 
         # Detection state: per-transmitter
         self._tx_power_samples: dict[int, list] = {}    # all joint TX estimates
@@ -205,6 +216,8 @@ class SpoofingAwareGcs:
         self._loc_err_sq_sum = 0.0
         self._loc_err_abs_sum = 0.0
         self._loc_samples = 0
+        # Hosts that reached goal and should be excluded from ongoing planning metrics.
+        self._goal_reached_hosts: set[int] = set()
         # Detection diagnostics: track when MLAT is skipped due to too few reports.
         self._detection_reports_total = 0
         self._detection_mlat_attempted = 0
@@ -255,6 +268,53 @@ class SpoofingAwareGcs:
     # ------------------------------------------------------------------
     # Per-transmission callback
     # ------------------------------------------------------------------
+
+    def _ingest_host_goals(self, host_goals: dict | None) -> None:
+        """Merge deterministic host goals from GCS tick payload."""
+        if not host_goals:
+            return
+        for k, v in host_goals.items():
+            try:
+                hid = int(k)
+            except (TypeError, ValueError):
+                continue
+            g = np.asarray(v, dtype=float).ravel()[:3]
+            if g.shape[0] == 3 and np.all(np.isfinite(g)):
+                self._goals_by_host[hid] = g
+
+    def _refresh_goal_reached_hosts(self, ground_truth: dict | None) -> None:
+        """Update host set considered complete and excluded from planning/NMAC."""
+        if not ground_truth:
+            return
+        reached: set[int] = set()
+        for k, v in ground_truth.items():
+            hid = int(k)
+            goal = self._goals_by_host.get(hid)
+            if goal is None:
+                g_raw = self.goals.get(hid, self.goals.get(str(hid)))
+                if g_raw is not None:
+                    g = np.asarray(g_raw, dtype=float).ravel()[:3]
+                    if g.shape[0] == 3:
+                        self._goals_by_host[hid] = g
+                        goal = g
+            if goal is None:
+                continue
+            pos = np.asarray(v, dtype=float).ravel()[:3]
+            if pos.shape[0] < 3:
+                continue
+            if float(np.linalg.norm(pos - goal)) <= GOAL_REACHED_DIST_M:
+                reached.add(hid)
+        # Never exclude spoofing tracks from localization/unsafe estimation.
+        if self._spoofer_host is not None:
+            reached.discard(int(self._spoofer_host))
+        for s in self.spoofers:
+            reached.discard(int(s))
+        # Latch completion: once reached, keep excluded even if hover drift occurs.
+        self._goal_reached_hosts |= reached
+        if self._spoofer_host is not None:
+            self._goal_reached_hosts.discard(int(self._spoofer_host))
+        for s in self.spoofers:
+            self._goal_reached_hosts.discard(int(s))
 
     def on_gcs_reports(self, data: dict) -> dict | None:
         t0 = time.perf_counter()
@@ -512,6 +572,8 @@ class SpoofingAwareGcs:
             benign: dict[int, np.ndarray] = {}
             for k, v in ground_truth.items():
                 hid = int(k)
+                if hid in self._goal_reached_hosts:
+                    continue
                 # Exclude true spoofer host from benign metrics even before
                 # spoofing detection declares the serial.
                 if self._spoofer_host is not None and hid == self._spoofer_host:
@@ -523,6 +585,7 @@ class SpoofingAwareGcs:
         return {
             int(s): np.array(p, dtype=float)
             for s, p in self.rid_positions.items()
+            if int(s) not in self._goal_reached_hosts
             if (self._spoofer_host is None or int(s) != self._spoofer_host)
             if s not in self.spoofers
         }
@@ -715,6 +778,8 @@ class SpoofingAwareGcs:
         t0 = time.perf_counter()
         host_ids = list(data.get("host_ids", []))
         sim_time = float(data.get("time", 0.0))
+        self._ingest_host_goals(data.get("host_goals"))
+        self._refresh_goal_reached_hosts(data.get("ground_truth_positions"))
         self._max_host_count = max(self._max_host_count, len(host_ids))
         if self._spoofer_host is None and host_ids:
             # Sweep layouts convention: spoofer is last host index.
@@ -828,12 +893,15 @@ class SpoofingAwareGcs:
         )
 
         commands = {}
-        for hid in host_ids:
+        active_host_ids = [int(h) for h in host_ids if int(h) not in self._goal_reached_hosts]
+        for hid in active_host_ids:
             if hid in self.spoofers:
                 continue
 
             other_positions = {}
             for serial, pos in self.rid_positions.items():
+                if int(serial) in self._goal_reached_hosts:
+                    continue
                 if serial not in self.spoofers and int(serial) != hid:
                     other_positions[int(serial)] = list(pos)
 
@@ -863,6 +931,7 @@ class SpoofingAwareGcs:
                 "has_unsafe_region": 1.0 if primary_unsafe else 0.0,
                 "using_stale_unsafe_region": 1.0 if stale_unsafe_used else 0.0,
                 "num_spoofers": float(len(self.spoofers)),
+                "num_goal_reached_hosts_excluded": float(len(self._goal_reached_hosts)),
                 "spoofer_ticks_since_measurement": float(
                     max([self._ticks_since_spoofer_meas.get(s, 0) for s in self.spoofers], default=0)
                 ),

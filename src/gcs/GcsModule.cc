@@ -562,8 +562,40 @@ void GcsModule::pyOnTick()
         auto *mobility = check_and_cast<IMobility *>(mobilityMod);
         Coord pos = mobility->getCurrentPosition();
         groundTruth[py::int_(hid)] = py::make_tuple(pos.getX(), pos.getY(), pos.getZ());
+
+        // Cache host final goal from waypoint script once (deterministic, no runtime inference).
+        if (hostGoalsByHost.find(hid) == hostGoalsByHost.end() && mobilityMod->hasPar("waypointScript")) {
+            cXMLElement *wpXml = mobilityMod->par("waypointScript").xmlValue();
+            if (wpXml) {
+                bool foundMoveto = false;
+                std::array<double, 3> goal = {NAN, NAN, NAN};
+                for (cXMLElement *child = wpXml->getFirstChild(); child; child = child->getNextSibling()) {
+                    const char *tag = child->getTagName();
+                    double x = atof(child->getAttribute("x") ? child->getAttribute("x") : "0");
+                    double y = atof(child->getAttribute("y") ? child->getAttribute("y") : "0");
+                    double z = atof(child->getAttribute("z") ? child->getAttribute("z") : "0");
+                    if (strcmp(tag, "set") == 0 && !foundMoveto) {
+                        goal = {x, y, z};
+                    }
+                    else if (strcmp(tag, "moveto") == 0) {
+                        goal = {x, y, z};
+                        foundMoveto = true;
+                    }
+                }
+                if (std::isfinite(goal[0]) && std::isfinite(goal[1]) && std::isfinite(goal[2])) {
+                    hostGoalsByHost[hid] = goal;
+                }
+            }
+        }
     }
     data["ground_truth_positions"] = groundTruth;
+    py::dict hostGoals;
+    for (const auto &it : hostGoalsByHost) {
+        int hid = it.first;
+        const auto &g = it.second;
+        hostGoals[py::int_(hid)] = py::make_tuple(g[0], g[1], g[2]);
+    }
+    data["host_goals"] = hostGoals;
 
     // Skip if method not defined
     py::object instance = impl->getInstance(pyHandle);

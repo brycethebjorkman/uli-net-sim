@@ -11,6 +11,7 @@ class GcsReport extends cMessage
     int receiverHostId;       // Index of the host that received the beacon
     int senderSerialNumber;   // Serial number from the received beacon
     int64_t ridTimestamp;     // RID message timestamp (ms since sim start)
+    int64_t packetId = -1;    // Radio medium tree ID (shared by TX and all RX events)
 
     // Receiver's actual position
     double rxPosX;

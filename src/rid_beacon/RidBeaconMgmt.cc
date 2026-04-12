@@ -310,7 +310,7 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
 
     // Forward report to GCS if configured
     if (gcsModule) {
-        forwardToGcs(beaconBody, rssiDbm);
+        forwardToGcs(beaconBody, rssiDbm, packetTreeId);
     }
 
     dropManagementFrame(packet);
@@ -333,7 +333,7 @@ void RidBeaconMgmt::stop()
 
 // ── GCS report forwarding ───────────────────────────────────────────────────
 
-void RidBeaconMgmt::forwardToGcs(const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm)
+void RidBeaconMgmt::forwardToGcs(const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm, int64_t packetId)
 {
     auto host = getContainingNode(this);
     auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
@@ -357,6 +357,7 @@ void RidBeaconMgmt::forwardToGcs(const Ptr<const RidBeaconFrame>& beaconBody, do
 
     report->setRssiDbm(rssiDbm);
     report->setKfNis(std::isnan(lastKfNis) ? -1.0 : lastKfNis);
+    report->setPacketId(packetId);
     lastKfNis = NAN;  // Reset for next RX event
 
     sendDirect(report, gcsModule, "directIn");

@@ -488,6 +488,7 @@ void GcsModule::pyOnReport(const BeaconKey& key,
     }
     txData["reports"] = reportList;
     txData["time"] = simTime().dbl();
+    txData["packet_id"] = first->getPacketId();
 
     // Call Python: on_gcs_reports(transmission_data) — skip if method not defined
     py::object instance = impl->getInstance(pyHandle);

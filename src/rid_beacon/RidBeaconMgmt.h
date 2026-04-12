@@ -132,7 +132,7 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     virtual void hookRidMsg(Packet *packet, const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm) {};
 
     /** Forward RX report to GCS module */
-    void forwardToGcs(const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm);
+    void forwardToGcs(const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm, int64_t packetId = -1);
 
     /** lifecycle support */
     //@{

@@ -401,8 +401,93 @@ def _generate_events(host_vectors):
     return events
 
 
+def _extract_gcs_vectors(vec_file: str) -> Dict[int, Dict[str, VectorData]]:
+    """Extract GCS module vectors from .vec file.
+
+    Returns {gcs_id: {vector_name: VectorData}} for all GCS modules found.
+    """
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+    tmp.close()
+    cmd = [
+        'opp_scavetool', 'export', '-F', 'CSV-R', '-x', 'columnNames=true',
+        '-f', 'type=~"vector" and module=~"*.gcs[*]"',
+        '-o', tmp.name, vec_file,
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        os.unlink(tmp.name)
+        return {}
+
+    gcs_vectors: Dict[int, Dict[str, VectorData]] = defaultdict(
+        lambda: defaultdict(lambda: VectorData([], [])))
+    try:
+        with open(tmp.name) as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get('type') != 'vector':
+                    continue
+                module = row['module']
+                if '.gcs[' not in module:
+                    continue
+                gcs_id = int(module.split('.gcs[')[1].split(']')[0])
+                name = row['name']
+                times_str = row.get('vectime', '')
+                values_str = row.get('vecvalue', '')
+                if times_str and values_str:
+                    times = [float(t) for t in times_str.split()]
+                    values = [float(v) for v in values_str.split()]
+                    gcs_vectors[gcs_id][name] = VectorData(times, values)
+    finally:
+        os.unlink(tmp.name)
+
+    return gcs_vectors
+
+
+def _generate_gcs_events(gcs_vectors):
+    """Generate GCS event rows keyed by packet_id.
+
+    Each GCS on_gcs_reports invocation produces one GCS event row.  The
+    ``packet_id`` vector (radio medium tree ID) ties GCS rows to the
+    corresponding TX/RX rows for the same transmission.
+
+    GCS log vector values are stored in columns named ``gcs_<vector_name>``.
+    """
+    events = []
+
+    for gcs_id, vecs in gcs_vectors.items():
+        pkt_id_vec = vecs.get('packet_id')
+        if not pkt_id_vec or not pkt_id_vec.times:
+            continue
+
+        n = len(pkt_id_vec.times)
+        for i in range(n):
+            event = {
+                'time': pkt_id_vec.times[i],
+                'event_type': 'GCS',
+                'host_id': None,
+                'packet_id': int(pkt_id_vec.values[i]),
+                'serial_number': None,
+                'rid_timestamp': None,
+            }
+            # Add all other GCS vectors as gcs_* columns
+            for name, vec in vecs.items():
+                if name == 'packet_id':
+                    continue
+                event[f'gcs_{name}'] = vec.get_value_at_index(i)
+            events.append(event)
+
+    return events
+
+
 def events_to_parquet(vec_file, output_path, spoofer_hosts=None):
     """Convert .vec to canonical event-per-row Parquet.
+
+    Event types:
+        TX  — beacon transmission (one per host per beacon interval)
+        RX  — beacon reception (one per receiver per transmission)
+        GCS — GCS processing result (one per transmission processed by a GCS)
+
+    All event types share ``packet_id`` (radio medium tree ID) as the join key.
 
     Args:
         vec_file: Path to .vec file
@@ -427,6 +512,12 @@ def events_to_parquet(vec_file, output_path, spoofer_hosts=None):
         os.unlink(tmp_csv)
 
     events = _generate_events(host_vectors)
+
+    # Generate GCS events (if any GCS modules present)
+    gcs_vectors = _extract_gcs_vectors(str(vec_file))
+    events.extend(_generate_gcs_events(gcs_vectors))
+    events.sort(key=lambda e: e['time'])
+
     df = pd.DataFrame(events)
 
     # Join RX is_spoofed from TX via packet_id (shared tree ID).
@@ -443,7 +534,8 @@ def events_to_parquet(vec_file, output_path, spoofer_hosts=None):
     if spoofer_hosts is not None:
         spoofer_hosts = set(int(h) for h in spoofer_hosts)
         df['host_type'] = df['host_id'].apply(
-            lambda h: 'spoofer' if int(h) in spoofer_hosts else 'benign')
+            lambda h: ('spoofer' if int(h) in spoofer_hosts else 'benign')
+            if pd.notna(h) else None)
 
     df.to_parquet(str(output_path), index=False)
     return len(events)

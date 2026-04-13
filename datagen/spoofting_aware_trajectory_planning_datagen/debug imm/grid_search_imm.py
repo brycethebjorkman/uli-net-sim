@@ -176,22 +176,23 @@ def _score_trial(
     w_total_nmac_real: float,
     w_nmac_spoofer_unsafe: float,
 ) -> float:
+    # Core terms must be present; IMM consistency terms can be missing and are then ignored.
     if any(
         v != v
         for v in [
             containment_rate_mean,
             localization_rmse_mean,
-            nees_in_95_mean,
-            nis_in_95_mean,
             total_nmac_real_mean,
             nmac_spoofer_unsafe_mean,
         ]
     ):
         return float("nan")
+    nees_term = nees_in_95_mean if nees_in_95_mean == nees_in_95_mean else 0.0
+    nis_term = nis_in_95_mean if nis_in_95_mean == nis_in_95_mean else 0.0
     return (
         w_containment * containment_rate_mean
-        + w_nees95 * nees_in_95_mean
-        + w_nis95 * nis_in_95_mean
+        + w_nees95 * nees_term
+        + w_nis95 * nis_term
         - w_rmse * localization_rmse_mean
         - w_total_nmac_real * total_nmac_real_mean
         - w_nmac_spoofer_unsafe * nmac_spoofer_unsafe_mean
@@ -218,6 +219,8 @@ def _build_pipeline_args(args: argparse.Namespace) -> list[str]:
         cmd.append("--no-export-vectors")
     if args.no_plot:
         cmd.append("--no-plot")
+    else:
+        cmd.extend(["--plot-profile", args.plot_profile])
 
     # Scenario selection (match run_spoofing_aware_trajectory_planning_batch.sh semantics).
     if args.paper_scenarios:
@@ -294,6 +297,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-keep-vec", action="store_true")
     ap.add_argument("--no-export-vectors", action="store_true")
     ap.add_argument("--no-plot", action="store_true")
+    ap.add_argument(
+        "--plot-profile",
+        type=str,
+        choices=["paper", "full"],
+        default="full",
+        help="Plot profile forwarded to batch runner; use full to retain IMM diagnostics.",
+    )
 
     ap.add_argument("--batch-root", type=Path, default=DEFAULT_BATCH_ROOT)
     ap.add_argument("--run-prefix", type=str, default="imm_grid")

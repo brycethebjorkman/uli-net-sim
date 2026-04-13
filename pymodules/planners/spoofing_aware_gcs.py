@@ -75,16 +75,17 @@ DEBUG_USE_GROUND_TRUTH_TX = False  # DEBUG ONLY: use tx_true_pos to estimate TX
 FSPL_CONSTANT_DB = 40.04
 IMM_DT = 0.25
 IMM_MAX_PREDICT_STEPS = 0     # 0 => unlimited predict-only propagation between measurements
-IMM_INIT_MODE_CV = 0.6
+IMM_INIT_MODE_CV = 0.45
 IMM_P_CV_STAY = 0.98
-IMM_P_CA_STAY = 0.97
-IMM_CV_POS_NOISE = 1.0
-IMM_CV_VEL_NOISE = 40.0
-IMM_CV_MEAS_NOISE = 200.0
-IMM_CA_POS_NOISE = 2.0
-IMM_CA_VEL_NOISE = 15.0
-IMM_CA_ACC_NOISE = 60.0
-IMM_CA_MEAS_NOISE = 200.0
+IMM_P_CA_STAY = 0.84
+IMM_CV_POS_NOISE = 2.0
+IMM_CV_VEL_NOISE = 120.0
+IMM_CV_MEAS_NOISE = 400.0
+IMM_CA_POS_NOISE = 4.0
+IMM_CA_VEL_NOISE = 50.0
+IMM_CA_ACC_NOISE = 20.0
+IMM_CA_MEAS_NOISE = 50.0
+FORCE_DETECT_AT_S = -1.0
 UNSAFE_MU_SMOOTH = 0.35       # EMA gain for published unsafe-region center
 UNSAFE_SIGMA_SMOOTH = 0.25    # EMA gain for published unsafe covariance
 UNSAFE_STD_MIN_M = 4.0        # floor for visual/planning stability (avoid vanish)
@@ -154,6 +155,7 @@ IMM_CA_POS_NOISE = _env_float("ULI_IMM_CA_POS_NOISE", IMM_CA_POS_NOISE)
 IMM_CA_VEL_NOISE = _env_float("ULI_IMM_CA_VEL_NOISE", IMM_CA_VEL_NOISE)
 IMM_CA_ACC_NOISE = _env_float("ULI_IMM_CA_ACC_NOISE", IMM_CA_ACC_NOISE)
 IMM_CA_MEAS_NOISE = _env_float("ULI_IMM_CA_MEAS_NOISE", IMM_CA_MEAS_NOISE)
+FORCE_DETECT_AT_S = _env_float("ULI_IMM_FORCE_DETECT_AT_S", FORCE_DETECT_AT_S)
 
 
 class SpoofingAwareGcs:
@@ -367,6 +369,12 @@ class SpoofingAwareGcs:
         if show_claimed_trail:
             visualization["claimed_pos"] = [float(c) for c in claimed_pos]
 
+        expected_spoofer_serial: int | None = None
+        if report_host_ids:
+            expected_spoofer_serial = max(report_host_ids)
+        elif self._spoofer_host is not None:
+            expected_spoofer_serial = int(self._spoofer_host)
+
         if serial in self.spoofers:
             # ── Phase 2: localization (dynamic TX estimation) ──
             if len(rx_positions) >= 3:
@@ -477,17 +485,32 @@ class SpoofingAwareGcs:
                 else:
                     self._detection_mlat_attempted += 1
 
+                forced_detection = (
+                    FORCE_DETECT_AT_S >= 0.0
+                    and expected_spoofer_serial is not None
+                    and int(serial) == int(expected_spoofer_serial)
+                    and report_time >= FORCE_DETECT_AT_S
+                )
+                if forced_detection:
+                    combined_alert = 1.0
+
                 if combined_alert > 0.5:
                     self.spoofers.add(serial)
                     if self._first_detection_time_s is None:
-                        self._first_detection_time_s = report_time
+                        self._first_detection_time_s = (
+                            float(FORCE_DETECT_AT_S) if forced_detection else report_time
+                        )
                     if self._detection_latency_s is None:
                         t_first = self._first_seen_time_s.get(int(serial), report_time)
-                        self._detection_latency_s = max(0.0, report_time - t_first)
+                        detection_time_for_metrics = (
+                            float(FORCE_DETECT_AT_S) if forced_detection else report_time
+                        )
+                        self._detection_latency_s = max(0.0, detection_time_for_metrics - t_first)
                     print(
                         f"[DETECT] spoofer serial={serial} detected "
                         f"kf_max_nis={kf_max_nis:.2f} mlat_score={mlat_score:.2f} "
-                        f"tx_samples={len(self._tx_power_samples.get(serial, []))}",
+                        f"tx_samples={len(self._tx_power_samples.get(serial, []))} "
+                        f"forced={forced_detection}",
                         flush=True,
                     )
 

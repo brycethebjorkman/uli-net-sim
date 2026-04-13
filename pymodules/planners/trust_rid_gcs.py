@@ -234,10 +234,11 @@ class TrustRidGcs:
             if spoofer_hid is not None and int(hid) == spoofer_hid:
                 continue
 
+            # TrustRID baseline should still drive cooperative avoidance against
+            # all claimed positions (including the spoofer's claimed RID track).
+            # MDP controller treats everything in other_positions as intruders.
             other_positions = {}
             for serial, pos in self.rid_positions.items():
-                if spoofer_hid is not None and int(serial) == spoofer_hid:
-                    continue
                 if int(serial) != hid:
                     other_positions[int(serial)] = list(pos)
 

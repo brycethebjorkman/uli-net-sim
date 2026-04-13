@@ -40,6 +40,17 @@ Paper scenario suite:
   --parallel 0
 ```
 
+Paper suite with spoofing detection forced at 5 seconds (Aware only; TrustRID unchanged):
+
+```bash
+./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh \
+  --paper-scenarios \
+  --include-steepz \
+  --seeds 0:29 \
+  --parallel 0 \
+  --force-detect-at-sec 5
+```
+
 Paper suite plus `Scenario_SteepZ_8x1`:
 
 ```bash
@@ -67,6 +78,23 @@ Each run writes:
 - `charts/` - summary and timeseries plots/tables
 - `run_timing.csv` - wall-clock timings per scenario-seed pair
 - `total_runtime_seconds.txt` - total batch runtime
+
+New paper-style table outputs under `charts/`:
+
+- `table_ii_nmac_summary_statistics.pdf`
+- `table_ii_nmac_summary_statistics.csv`
+- `table_iii_runtime_median_per_scenario_seconds.pdf`
+- `table_iii_runtime_median_per_scenario_seconds.csv`
+- `table_iv_effect_size_sa_vs_trustrid.pdf`
+- `table_iv_effect_size_sa_vs_trustrid.csv`
+- `table_v_containment_calibration.pdf`
+- `table_v_containment_calibration.csv`
+- `table_vi_compute_breakdown_by_scenario.pdf`
+- `table_vi_compute_breakdown_by_scenario.csv`
+- `table_vii_detection_quality_summary.pdf`
+- `table_vii_detection_quality_summary.csv`
+- `table_viii_mission_progress_summary.pdf`
+- `table_viii_mission_progress_summary.csv`
 
 KF/MLAT tracking highlights:
 
@@ -210,8 +238,11 @@ Common toggles:
 - `--skip-build` skip Docker rebuild
 - `--no-export-vectors` skip GCS vector export
 - `--no-plot` skip chart generation
+- `--plot-profile {paper,full}` select concise paper bundle vs full diagnostics
+- `--mission-goal-tol-m X` goal tolerance for mission-progress success summaries
 - `--no-keep-vec` do not retain `.vec` files
 - `--heartbeat-sec N` emit periodic progress lines in long detached runs (`0` disables)
+- `--force-detect-at-sec N` force spoofing detection event at simulation time `N` seconds in SpoofingAwareGcs
 
 ---
 

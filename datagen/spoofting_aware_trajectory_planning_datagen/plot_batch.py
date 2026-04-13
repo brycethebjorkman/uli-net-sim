@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import math
 import re
+import shutil
 from collections import defaultdict
 from pathlib import Path
 
@@ -147,6 +148,71 @@ def _write_distribution_table(df: pd.DataFrame, out_dir: Path) -> Path:
     out = out_dir / "summary_distribution_table.csv"
     pd.DataFrame(rows).to_csv(out, index=False)
     return out
+
+
+def _fmt_table_value(v: float | int | str | None) -> str:
+    if v is None or (isinstance(v, float) and not math.isfinite(v)):
+        return "N/A"
+    if isinstance(v, str):
+        return v
+    fv = float(v)
+    if abs(fv - round(fv)) < 1e-9:
+        return f"{int(round(fv))}"
+    return f"{fv:.3f}"
+
+
+def _save_table_pdf(
+    plt,
+    rows: list[list[str]],
+    headers: list[str],
+    title: str,
+    subtitle: str,
+    out_path: Path,
+) -> Path | None:
+    if not rows:
+        return None
+    fig_h = max(2.6, 1.6 + 0.42 * len(rows))
+    fig, ax = plt.subplots(figsize=(11.0, fig_h))
+    ax.axis("off")
+    table = ax.table(
+        cellText=rows,
+        colLabels=headers,
+        loc="center",
+        cellLoc="center",
+        colLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(10.5)
+    table.scale(1.0, 1.35)
+    for (r, c), cell in table.get_celld().items():
+        if r == 0:
+            cell.set_text_props(weight="bold")
+            cell.set_facecolor("#eeeeee")
+    fig.suptitle(f"{title}\n{subtitle}", y=0.98, fontsize=14)
+    fig.tight_layout(rect=[0.02, 0.02, 0.98, 0.93])
+    fig.savefig(out_path, dpi=260)
+    plt.close(fig)
+    return out_path
+
+
+def _delta_pct(sa: float, tr: float, lower_is_better: bool = True) -> float:
+    if not (math.isfinite(sa) and math.isfinite(tr)):
+        return float("nan")
+    denom = abs(tr) if abs(tr) > 1e-12 else 1.0
+    raw = 100.0 * (sa - tr) / denom
+    return raw if not lower_is_better else -raw
+
+
+def _bootstrap_ci_mean(values: np.ndarray, n_boot: int = 1000, alpha: float = 0.05) -> tuple[float, float]:
+    if values.size == 0:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(7)
+    means = np.empty(n_boot, dtype=float)
+    n = values.size
+    for i in range(n_boot):
+        sample = rng.choice(values, size=n, replace=True)
+        means[i] = float(np.mean(sample))
+    return float(np.quantile(means, alpha / 2.0)), float(np.quantile(means, 1.0 - alpha / 2.0))
 
 
 def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
@@ -342,6 +408,60 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
         mean_df.to_csv(p_csv, index=False)
         out_paths.append(p_csv)
 
+        # Paper-style NMAC summary statistics table figure (Table II style).
+        table2_rows: list[list[str]] = []
+        for _, rr in mean_df.iterrows():
+            table2_rows.append(
+                [
+                    str(rr["metric"]),
+                    "N/A",
+                    "N/A",
+                    _fmt_table_value(rr["spoofing_aware_median"]),
+                    _fmt_table_value(rr["trust_rid_median"] if pd.notna(rr["trust_rid_median"]) else float("nan")),
+                ]
+            )
+        # Replace first two columns with true means from source dataframe.
+        mean_lookup: dict[str, tuple[float, float]] = {}
+        for label, aware_col, trust_col in mean_specs:
+            if aware_col not in df.columns:
+                continue
+            aware_vals = pd.to_numeric(df[aware_col], errors="coerce").dropna().to_numpy(dtype=float)
+            if aware_vals.size == 0:
+                continue
+            aware_mean = float(np.mean(aware_vals))
+            trust_mean = float("nan")
+            if trust_col and trust_col in df.columns:
+                trust_vals = pd.to_numeric(df[trust_col], errors="coerce").dropna().to_numpy(dtype=float)
+                if trust_vals.size > 0:
+                    trust_mean = float(np.mean(trust_vals))
+            mean_lookup[label] = (aware_mean, trust_mean)
+        for r in table2_rows:
+            m = mean_lookup.get(r[0], (float("nan"), float("nan")))
+            r[1] = _fmt_table_value(m[0])
+            r[2] = _fmt_table_value(m[1])
+        p_table2_csv = out_dir / "table_ii_nmac_summary_statistics.csv"
+        pd.DataFrame(
+            table2_rows,
+            columns=[
+                "Metric",
+                "Mean (SA)",
+                "Mean (Trust-RID)",
+                "Median (SA)",
+                "Median (Trust-RID)",
+            ],
+        ).to_csv(p_table2_csv, index=False)
+        out_paths.append(p_table2_csv)
+        p_table2_pdf = _save_table_pdf(
+            plt=plt,
+            rows=table2_rows,
+            headers=["Metric", "Mean\n(SA)", "Mean\n(Trust-RID)", "Median\n(SA)", "Median\n(Trust-RID)"],
+            title="TABLE II",
+            subtitle="NMAC (real-position) summary statistics",
+            out_path=out_dir / "table_ii_nmac_summary_statistics.pdf",
+        )
+        if p_table2_pdf is not None:
+            out_paths.append(p_table2_pdf)
+
     stale_summary_means_png = out_dir / "summary_means.png"
     if stale_summary_means_png.exists():
         stale_summary_means_png.unlink()
@@ -428,6 +548,127 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 plt.close(fig)
                 out_paths.append(p)
 
+                # Paper-style runtime median table figure (Table III style).
+                runtime_rows: list[list[str]] = []
+                for i, label in enumerate(labels):
+                    runtime_rows.append(
+                        [
+                            label.replace(" ", "_").lower(),
+                            _fmt_table_value(aware_meds[i]),
+                            _fmt_table_value(trust_meds[i]),
+                        ]
+                    )
+                p_table3_csv = out_dir / "table_iii_runtime_median_per_scenario_seconds.csv"
+                pd.DataFrame(
+                    runtime_rows,
+                    columns=["Scenario", "Median (SA) [s]", "Median (Trust-RID) [s]"],
+                ).to_csv(p_table3_csv, index=False)
+                out_paths.append(p_table3_csv)
+                p_table3_pdf = _save_table_pdf(
+                    plt=plt,
+                    rows=runtime_rows,
+                    headers=["Scenario", "Median (SA) [s]", "Median (Trust-RID) [s]"],
+                    title="TABLE III",
+                    subtitle="Median runtime per scenario (seconds)",
+                    out_path=out_dir / "table_iii_runtime_median_per_scenario_seconds.pdf",
+                )
+                if p_table3_pdf is not None:
+                    out_paths.append(p_table3_pdf)
+
+                # Compute-breakdown table (scenario medians): runtime + GCS callback costs.
+                dd = df.copy()
+                if "tag" not in dd.columns:
+                    dd["tag"] = "all"
+                dd["scenario"] = dd["tag"].apply(_scenario_group_from_tag)
+                compute_rows: list[list[str]] = []
+                label_to_key = {s.replace("Scenario_", "").replace("_", " "): s for s in scenarios}
+                for lbl in labels:
+                    scen_key = label_to_key.get(lbl, lbl)
+                    scen_df = dd[dd["scenario"] == scen_key]
+                    sa_rt = aware_meds[labels.index(lbl)]
+                    tr_rt = trust_meds[labels.index(lbl)]
+                    sa_rep = float("nan")
+                    tr_rep = float("nan")
+                    sa_tick = float("nan")
+                    tr_tick = float("nan")
+                    sa_total = float("nan")
+                    tr_total = float("nan")
+                    if not scen_df.empty:
+                        if "gcs_reports_mean_ms_aware" in scen_df.columns:
+                            v = pd.to_numeric(scen_df["gcs_reports_mean_ms_aware"], errors="coerce").dropna().to_numpy(dtype=float)
+                            if v.size > 0:
+                                sa_rep = float(np.quantile(v, 0.5))
+                        if "gcs_reports_mean_ms_trust_rid" in scen_df.columns:
+                            v = pd.to_numeric(scen_df["gcs_reports_mean_ms_trust_rid"], errors="coerce").dropna().to_numpy(dtype=float)
+                            if v.size > 0:
+                                tr_rep = float(np.quantile(v, 0.5))
+                        if "gcs_tick_mean_ms_aware" in scen_df.columns:
+                            v = pd.to_numeric(scen_df["gcs_tick_mean_ms_aware"], errors="coerce").dropna().to_numpy(dtype=float)
+                            if v.size > 0:
+                                sa_tick = float(np.quantile(v, 0.5))
+                        if "gcs_tick_mean_ms_trust_rid" in scen_df.columns:
+                            v = pd.to_numeric(scen_df["gcs_tick_mean_ms_trust_rid"], errors="coerce").dropna().to_numpy(dtype=float)
+                            if v.size > 0:
+                                tr_tick = float(np.quantile(v, 0.5))
+                        if "gcs_compute_total_s_aware" in scen_df.columns:
+                            v = pd.to_numeric(scen_df["gcs_compute_total_s_aware"], errors="coerce").dropna().to_numpy(dtype=float)
+                            if v.size > 0:
+                                sa_total = float(np.quantile(v, 0.5))
+                        if "gcs_compute_total_s_trust_rid" in scen_df.columns:
+                            v = pd.to_numeric(scen_df["gcs_compute_total_s_trust_rid"], errors="coerce").dropna().to_numpy(dtype=float)
+                            if v.size > 0:
+                                tr_total = float(np.quantile(v, 0.5))
+                    compute_rows.append(
+                        [
+                            lbl.replace(" ", "_").lower(),
+                            _fmt_table_value(sa_rt),
+                            _fmt_table_value(tr_rt),
+                            _fmt_table_value(sa_rep),
+                            _fmt_table_value(tr_rep),
+                            _fmt_table_value(sa_tick),
+                            _fmt_table_value(tr_tick),
+                            _fmt_table_value(sa_total),
+                            _fmt_table_value(tr_total),
+                        ]
+                    )
+                if compute_rows:
+                    p_cb_csv = out_dir / "table_vi_compute_breakdown_by_scenario.csv"
+                    pd.DataFrame(
+                        compute_rows,
+                        columns=[
+                            "Scenario",
+                            "Runtime median SA (s)",
+                            "Runtime median Trust-RID (s)",
+                            "GCS report median SA (ms)",
+                            "GCS report median Trust-RID (ms)",
+                            "GCS tick median SA (ms)",
+                            "GCS tick median Trust-RID (ms)",
+                            "GCS total median SA (s)",
+                            "GCS total median Trust-RID (s)",
+                        ],
+                    ).to_csv(p_cb_csv, index=False)
+                    out_paths.append(p_cb_csv)
+                    p_cb_pdf = _save_table_pdf(
+                        plt=plt,
+                        rows=compute_rows,
+                        headers=[
+                            "Scenario",
+                            "Runtime\nSA (s)",
+                            "Runtime\nTR (s)",
+                            "Report\nSA (ms)",
+                            "Report\nTR (ms)",
+                            "Tick\nSA (ms)",
+                            "Tick\nTR (ms)",
+                            "GCS total\nSA (s)",
+                            "GCS total\nTR (s)",
+                        ],
+                        title="TABLE VI",
+                        subtitle="Compute breakdown by scenario (medians)",
+                        out_path=out_dir / "table_vi_compute_breakdown_by_scenario.pdf",
+                    )
+                    if p_cb_pdf is not None:
+                        out_paths.append(p_cb_pdf)
+
     # Detection MLAT coverage by scenario (aware only): median with IQR.
     if "tag" in df.columns and "detection_mlat_skipped_insufficient_receivers_fraction_aware" in df.columns:
         dd = df.copy()
@@ -482,6 +723,136 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
 
     out_paths.append(_write_distribution_table(df, out_dir))
 
+    # SA vs Trust-RID effect sizes for key paired metrics.
+    effect_specs = [
+        ("Total NMACs (real-position)", "nmac_total_real_aware", "nmac_total_real_trust_rid", True),
+        ("Benign-Benign NMACs", "nmac_proximity_aware", "nmac_proximity_trust_rid", True),
+        ("Benign-Spoofer NMACs", "nmac_benign_spoofer_aware", "nmac_benign_spoofer_trust_rid", True),
+        (
+            "Min distance to true spoofer (m)",
+            "min_benign_spoofer_distance_aware_m",
+            "min_benign_spoofer_distance_trust_rid_m",
+            False,
+        ),
+        ("GCS report callback mean time (ms)", "gcs_reports_mean_ms_aware", "gcs_reports_mean_ms_trust_rid", True),
+        ("GCS tick callback mean time (ms)", "gcs_tick_mean_ms_aware", "gcs_tick_mean_ms_trust_rid", True),
+        ("Total GCS compute time (s)", "gcs_compute_total_s_aware", "gcs_compute_total_s_trust_rid", True),
+    ]
+    effect_rows: list[list[str]] = []
+    for label, sa_col, tr_col, lower_better in effect_specs:
+        if sa_col not in df.columns or tr_col not in df.columns:
+            continue
+        sa_vals = pd.to_numeric(df[sa_col], errors="coerce").dropna().to_numpy(dtype=float)
+        tr_vals = pd.to_numeric(df[tr_col], errors="coerce").dropna().to_numpy(dtype=float)
+        if sa_vals.size == 0 or tr_vals.size == 0:
+            continue
+        sa_mean = float(np.mean(sa_vals))
+        tr_mean = float(np.mean(tr_vals))
+        sa_med = float(np.quantile(sa_vals, 0.5))
+        tr_med = float(np.quantile(tr_vals, 0.5))
+        imp = _delta_pct(sa_med, tr_med, lower_is_better=lower_better)
+        effect_rows.append(
+            [
+                label,
+                _fmt_table_value(sa_mean),
+                _fmt_table_value(tr_mean),
+                _fmt_table_value(sa_med),
+                _fmt_table_value(tr_med),
+                _fmt_table_value(imp),
+            ]
+        )
+    if effect_rows:
+        p_eff_csv = out_dir / "table_iv_effect_size_sa_vs_trustrid.csv"
+        pd.DataFrame(
+            effect_rows,
+            columns=[
+                "Metric",
+                "Mean (SA)",
+                "Mean (Trust-RID)",
+                "Median (SA)",
+                "Median (Trust-RID)",
+                "Improvement % (median-based)",
+            ],
+        ).to_csv(p_eff_csv, index=False)
+        out_paths.append(p_eff_csv)
+        p_eff_pdf = _save_table_pdf(
+            plt=plt,
+            rows=effect_rows,
+            headers=[
+                "Metric",
+                "Mean\n(SA)",
+                "Mean\n(Trust-RID)",
+                "Median\n(SA)",
+                "Median\n(Trust-RID)",
+                "Improvement\n%",
+            ],
+            title="TABLE IV",
+            subtitle="SA vs Trust-RID effect-size summary",
+            out_path=out_dir / "table_iv_effect_size_sa_vs_trustrid.pdf",
+        )
+        if p_eff_pdf is not None:
+            out_paths.append(p_eff_pdf)
+
+    # Containment calibration summary: expected = 1-alpha (default alpha=0.05).
+    if "spoofer_containment_rate_aware" in df.columns:
+        expected = 0.95
+        dd = df.copy()
+        if "tag" not in dd.columns:
+            dd["tag"] = "all"
+        dd["scenario"] = dd["tag"].apply(_scenario_group_from_tag)
+        calib_rows: list[list[str]] = []
+        for scen, g in dd.groupby("scenario"):
+            vals = pd.to_numeric(g["spoofer_containment_rate_aware"], errors="coerce").dropna().to_numpy(dtype=float)
+            if vals.size == 0:
+                continue
+            obs_mean = float(np.mean(vals))
+            obs_med = float(np.quantile(vals, 0.5))
+            ci_lo, ci_hi = _bootstrap_ci_mean(vals)
+            calib_rows.append(
+                [
+                    str(scen),
+                    _fmt_table_value(expected),
+                    _fmt_table_value(obs_mean),
+                    _fmt_table_value(obs_med),
+                    _fmt_table_value(obs_mean - expected),
+                    _fmt_table_value(ci_lo),
+                    _fmt_table_value(ci_hi),
+                ]
+            )
+        if calib_rows:
+            p_cal_csv = out_dir / "table_v_containment_calibration.csv"
+            pd.DataFrame(
+                calib_rows,
+                columns=[
+                    "Scenario",
+                    "Expected containment",
+                    "Observed mean",
+                    "Observed median",
+                    "Calibration error (mean-expected)",
+                    "Observed mean CI95 low",
+                    "Observed mean CI95 high",
+                ],
+            ).to_csv(p_cal_csv, index=False)
+            out_paths.append(p_cal_csv)
+            p_cal_pdf = _save_table_pdf(
+                plt=plt,
+                rows=calib_rows,
+                headers=[
+                    "Scenario",
+                    "Expected",
+                    "Observed\nmean",
+                    "Observed\nmedian",
+                    "Error",
+                    "CI95 low",
+                    "CI95 high",
+                ],
+                title="TABLE V",
+                subtitle="Containment calibration by scenario",
+                out_path=out_dir / "table_v_containment_calibration.pdf",
+            )
+            if p_cal_pdf is not None:
+                out_paths.append(p_cal_pdf)
+
     return out_paths
 
 
@@ -527,7 +898,7 @@ def _load_gcs_vector_long(gcs_vectors_dir: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
+def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: str = "paper") -> list[Path]:
     import matplotlib.pyplot as plt
     _apply_paper_style(plt)
 
@@ -943,95 +1314,181 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path) -> list[Path]:
     if p is not None:
         out_paths.append(p)
 
-    # NMAC-by-time charts (cumulative event counts).
-    nmac_timeseries_specs = [
-        (
-            "nmac_proximity_total",
-            "Benign-Benign NMACs Through Time (Median, by Scenario)",
-            "cumulative benign-benign NMAC count",
-            "timeseries_nmac_benign_benign_median.pdf",
-            ["SpoofingAware", "TrustRID"],
-        ),
-        (
-            "nmac_benign_spoofer_total",
-            "Benign-Spoofer NMACs Through Time (Median, by Scenario)",
-            "cumulative benign-spoofer NMAC count",
-            "timeseries_nmac_benign_spoofer_median.pdf",
-            ["SpoofingAware", "TrustRID"],
-        ),
-        (
-            "nmac_spoofer_unsafe_total",
-            "SpoofingAware Unsafe-Region NMACs Through Time (Median, by Scenario)",
-            "cumulative unsafe-region NMAC count",
-            "timeseries_nmac_spoofer_unsafe_median.pdf",
-            ["SpoofingAware"],
-        ),
-    ]
-    for metric_pattern, title, ylabel, out_name, variants in nmac_timeseries_specs:
-        p = _plot_by_scenario(
-            long_df,
-            metric_pattern=metric_pattern,
-            title=title,
-            ylabel=ylabel,
-            out_name=out_name,
-            variants=variants,
-        )
-        if p is not None:
-            out_paths.append(p)
+    # Detection quality summary (best-effort from available vectors).
+    aware = long_df[long_df["variant"] == "SpoofingAware"].copy()
+    if not aware.empty:
+        det_rows: list[list[str]] = []
+        scen_order = sorted(aware["scenario"].dropna().unique().tolist())
+        for scen in scen_order:
+            ss = aware[aware["scenario"] == scen]
+            a = ss[ss["name"] == "combined_alert"][["source_file", "time", "value"]].copy()
+            d = ss[ss["name"] == "spoofer_detected"][["source_file", "time", "value"]].copy()
+            if a.empty or d.empty:
+                continue
+            a["time"] = pd.to_numeric(a["time"], errors="coerce")
+            a["value"] = pd.to_numeric(a["value"], errors="coerce")
+            d["time"] = pd.to_numeric(d["time"], errors="coerce")
+            d["value"] = pd.to_numeric(d["value"], errors="coerce")
+            a = a.dropna()
+            d = d.dropna()
+            if a.empty or d.empty:
+                continue
+            runs = sorted(set(a["source_file"].astype(str).unique().tolist()) & set(d["source_file"].astype(str).unique().tolist()))
+            if not runs:
+                continue
+            detected_runs = 0
+            pre_detect_false_fracs: list[float] = []
+            first_alert_times: list[float] = []
+            for src in runs:
+                aa = a[a["source_file"] == src].sort_values("time")
+                dd = d[d["source_file"] == src].sort_values("time")
+                det_pos = dd[dd["value"] > 0.5]
+                alert_pos = aa[aa["value"] > 0.5]
+                if not det_pos.empty:
+                    detected_runs += 1
+                    t_det = float(det_pos["time"].iloc[0])
+                    pre = aa[aa["time"] < t_det]
+                    if not pre.empty:
+                        pre_detect_false_fracs.append(float((pre["value"] > 0.5).mean()))
+                if not alert_pos.empty:
+                    first_alert_times.append(float(alert_pos["time"].iloc[0]))
+            det_rate = float(detected_runs) / float(len(runs))
+            pre_false = float(np.mean(pre_detect_false_fracs)) if pre_detect_false_fracs else float("nan")
+            first_alert_med = float(np.median(first_alert_times)) if first_alert_times else float("nan")
+            det_rows.append(
+                [
+                    str(scen),
+                    _fmt_table_value(len(runs)),
+                    _fmt_table_value(det_rate),
+                    _fmt_table_value(first_alert_med),
+                    _fmt_table_value(pre_false),
+                    "FP/FN precision/recall require explicit per-report truth labels (not logged).",
+                ]
+            )
+        if det_rows:
+            p_det_csv = out_dir / "table_vii_detection_quality_summary.csv"
+            pd.DataFrame(
+                det_rows,
+                columns=[
+                    "Scenario",
+                    "Runs",
+                    "Detection success rate",
+                    "First alert median (s)",
+                    "False-alert fraction before detection (proxy)",
+                    "Notes",
+                ],
+            ).to_csv(p_det_csv, index=False)
+            out_paths.append(p_det_csv)
+            p_det_pdf = _save_table_pdf(
+                plt=plt,
+                rows=det_rows,
+                headers=[
+                    "Scenario",
+                    "Runs",
+                    "Detection\nsuccess",
+                    "First alert\nmedian (s)",
+                    "Pre-detect\nfalse-alert frac",
+                    "Notes",
+                ],
+                title="TABLE VII",
+                subtitle="Detection quality summary (SpoofingAware, vector-derived)",
+                out_path=out_dir / "table_vii_detection_quality_summary.pdf",
+            )
+            if p_det_pdf is not None:
+                out_paths.append(p_det_pdf)
 
-    p = _plot_imm_true_vs_estimated_xy(long_df)
-    if p is not None:
-        out_paths.append(p)
+    # NMAC-by-time charts (cumulative event counts) only in full profile.
+    if plot_profile == "full":
+        nmac_timeseries_specs = [
+            (
+                "nmac_proximity_total",
+                "Benign-Benign NMACs Through Time (Median, by Scenario)",
+                "cumulative benign-benign NMAC count",
+                "timeseries_nmac_benign_benign_median.pdf",
+                ["SpoofingAware", "TrustRID"],
+            ),
+            (
+                "nmac_benign_spoofer_total",
+                "Benign-Spoofer NMACs Through Time (Median, by Scenario)",
+                "cumulative benign-spoofer NMAC count",
+                "timeseries_nmac_benign_spoofer_median.pdf",
+                ["SpoofingAware", "TrustRID"],
+            ),
+            (
+                "nmac_spoofer_unsafe_total",
+                "SpoofingAware Unsafe-Region NMACs Through Time (Median, by Scenario)",
+                "cumulative unsafe-region NMAC count",
+                "timeseries_nmac_spoofer_unsafe_median.pdf",
+                ["SpoofingAware"],
+            ),
+        ]
+        for metric_pattern, title, ylabel, out_name, variants in nmac_timeseries_specs:
+            p = _plot_by_scenario(
+                long_df,
+                metric_pattern=metric_pattern,
+                title=title,
+                ylabel=ylabel,
+                out_name=out_name,
+                variants=variants,
+            )
+            if p is not None:
+                out_paths.append(p)
 
     p = _plot_detection_timing(long_df)
     if p is not None:
         out_paths.append(p)
 
-    p = _plot_imm_error_from_trajectory(long_df)
-    if p is not None:
-        out_paths.append(p)
+    if plot_profile == "full":
+        p = _plot_imm_true_vs_estimated_xy(long_df)
+        if p is not None:
+            out_paths.append(p)
 
-    p = _plot_imm_mode_probabilities(long_df)
-    if p is not None:
-        out_paths.append(p)
+        p = _plot_imm_error_from_trajectory(long_df)
+        if p is not None:
+            out_paths.append(p)
 
-    p = _plot_by_scenario(
-        long_df,
-        metric_pattern="imm_nis_mix",
-        title="SpoofingAware IMM NIS Through Time (Median, by Scenario)",
-        ylabel="NIS (3 dof)",
-        out_name="timeseries_imm_nis_median.pdf",
-        variants=["SpoofingAware"],
-        hlines=[
-            (CHI2_3DOF_95_LO, "--", "chi2 95% lower"),
-            (CHI2_3DOF_95_HI, "--", "chi2 95% upper"),
-        ],
-    )
-    if p is not None:
-        out_paths.append(p)
+        p = _plot_imm_mode_probabilities(long_df)
+        if p is not None:
+            out_paths.append(p)
 
-    p = _plot_by_scenario(
-        long_df,
-        metric_pattern="imm_nees",
-        title="SpoofingAware IMM NEES Through Time (Median, by Scenario)",
-        ylabel="NEES (3 dof)",
-        out_name="timeseries_imm_nees_median.pdf",
-        variants=["SpoofingAware"],
-        hlines=[
-            (CHI2_3DOF_95_LO, "--", "chi2 95% lower"),
-            (CHI2_3DOF_95_HI, "--", "chi2 95% upper"),
-        ],
-    )
-    if p is not None:
-        out_paths.append(p)
+        p = _plot_by_scenario(
+            long_df,
+            metric_pattern="imm_nis_mix",
+            title="SpoofingAware IMM NIS Through Time (Median, by Scenario)",
+            ylabel="NIS (3 dof)",
+            out_name="timeseries_imm_nis_median.pdf",
+            variants=["SpoofingAware"],
+            hlines=[
+                (CHI2_3DOF_95_LO, "--", "chi2 95% lower"),
+                (CHI2_3DOF_95_HI, "--", "chi2 95% upper"),
+            ],
+        )
+        if p is not None:
+            out_paths.append(p)
+
+        p = _plot_by_scenario(
+            long_df,
+            metric_pattern="imm_nees",
+            title="SpoofingAware IMM NEES Through Time (Median, by Scenario)",
+            ylabel="NEES (3 dof)",
+            out_name="timeseries_imm_nees_median.pdf",
+            variants=["SpoofingAware"],
+            hlines=[
+                (CHI2_3DOF_95_LO, "--", "chi2 95% lower"),
+                (CHI2_3DOF_95_HI, "--", "chi2 95% upper"),
+            ],
+        )
+        if p is not None:
+            out_paths.append(p)
 
     p = _plot_localization_and_bubble_by_scenario(long_df)
     if p is not None:
         out_paths.append(p)
 
-    p = _write_imm_diagnostics_table(long_df)
-    if p is not None:
-        out_paths.append(p)
+    if plot_profile == "full":
+        p = _write_imm_diagnostics_table(long_df)
+        if p is not None:
+            out_paths.append(p)
 
     # Cleanup stale redundant charts that are now intentionally removed.
     for stale_name in [
@@ -1212,6 +1669,269 @@ def _make_3d_overlay_charts(generated_dir: Path, out_dir: Path, sample_every: in
     return out_paths
 
 
+_MOVETO_RE = re.compile(r"<moveto x=['\"]([^'\"]+)['\"] y=['\"]([^'\"]+)['\"] z=['\"]([^'\"]+)['\"]")
+
+
+def _extract_run_metadata_from_sca(sca_path: Path) -> tuple[dict[int, np.ndarray], set[int]]:
+    """Return goals keyed by serial number, and the set of spoofer serials."""
+    goals_by_host: dict[int, np.ndarray] = {}
+    serial_by_host: dict[int, int] = {}
+    spoofer_hosts: set[int] = set()
+    try:
+        lines = sca_path.read_text().splitlines()
+    except Exception:
+        return {}, set()
+    for ln in lines:
+        s = ln.strip()
+        if (
+            s.startswith("config *.host[")
+            and ".mobility.waypointScript " in s
+            and 'xml(\\"' in s
+            and s.endswith('\\")"')
+        ):
+            try:
+                host = int(s.split("config *.host[", 1)[1].split("]", 1)[0])
+                xml = s.split('xml(\\"', 1)[1].rsplit('\\")"', 1)[0]
+            except Exception:
+                continue
+            movetos = _MOVETO_RE.findall(xml)
+            if not movetos:
+                continue
+            gx, gy, gz = movetos[-1]
+            try:
+                goals_by_host[host] = np.array([float(gx), float(gy), float(gz)], dtype=float)
+            except Exception:
+                continue
+            continue
+
+        if s.startswith("par BasicUav.host[") and ".wlan[0].mgmt serialNumber " in s:
+            try:
+                host = int(s.split("par BasicUav.host[", 1)[1].split("]", 1)[0])
+                serial = int(s.rsplit(" ", 1)[1])
+                serial_by_host[host] = serial
+            except Exception:
+                pass
+            continue
+
+        if s.startswith("par BasicUav.host[") and ".wlan[0].mgmt pyTxClass " in s and "Spoofer" in s:
+            try:
+                host = int(s.split("par BasicUav.host[", 1)[1].split("]", 1)[0])
+                spoofer_hosts.add(host)
+            except Exception:
+                pass
+            continue
+
+    goals_by_serial: dict[int, np.ndarray] = {}
+    for host, goal in goals_by_host.items():
+        serial = serial_by_host.get(host)
+        if serial is None:
+            continue
+        goals_by_serial[serial] = goal
+
+    spoofer_serials = {serial_by_host[h] for h in spoofer_hosts if h in serial_by_host}
+    return goals_by_serial, spoofer_serials
+
+
+def _variant_from_parquet_basename(name: str) -> str | None:
+    if "_Aware" in name:
+        return "SpoofingAware"
+    if "_TrustRid" in name:
+        return "TrustRID"
+    return None
+
+
+def _make_mission_progress_tables(generated_dir: Path, out_dir: Path, goal_tol_m: float = 10.0) -> list[Path]:
+    import matplotlib.pyplot as plt
+
+    out_paths: list[Path] = []
+    if not generated_dir.is_dir():
+        return out_paths
+
+    run_rows: list[dict] = []
+    for scen_dir in sorted(generated_dir.iterdir()):
+        if not scen_dir.is_dir():
+            continue
+        scen_group = _scenario_group_from_tag(scen_dir.name)
+        for pq in sorted(scen_dir.glob("*.parquet")):
+            variant = _variant_from_parquet_basename(pq.name)
+            if variant is None:
+                continue
+            sca = pq.with_suffix(".sca")
+            goals, spoofer_serials = _extract_run_metadata_from_sca(sca)
+            if not goals:
+                continue
+            try:
+                df = pd.read_parquet(pq)
+            except Exception:
+                continue
+            need = {"event_type", "time", "serial_number", "pos_x", "pos_y", "pos_z"}
+            if not need.issubset(set(df.columns)):
+                continue
+            tx = df[df["event_type"] == "TX"].copy()
+            if tx.empty:
+                continue
+            tx["serial_number"] = pd.to_numeric(tx["serial_number"], errors="coerce")
+            tx["time"] = pd.to_numeric(tx["time"], errors="coerce")
+            tx = tx.dropna(subset=["serial_number", "time", "pos_x", "pos_y", "pos_z"])
+            if tx.empty:
+                continue
+            tx["serial_number"] = tx["serial_number"].astype(int)
+            serials = sorted(tx["serial_number"].unique().tolist())
+            if not serials:
+                continue
+            benign_serials = [s for s in serials if s not in spoofer_serials]
+            if not benign_serials:
+                # Fallback for malformed metadata: preserve previous assumption.
+                benign_serials = [s for s in serials if s != max(serials)]
+            eligible_serials = [s for s in benign_serials if s in goals]
+            if not eligible_serials:
+                continue
+            success_count = 0
+            per_host_ttg: list[float] = []
+            per_host_final_dist: list[float] = []
+            for s in eligible_serials:
+                g = tx[tx["serial_number"] == s].sort_values("time")
+                if g.empty:
+                    continue
+                goal = goals[s]
+                pxyz = g[["pos_x", "pos_y", "pos_z"]].to_numpy(dtype=float)
+                dists = np.linalg.norm(pxyz - goal.reshape(1, 3), axis=1)
+                per_host_final_dist.append(float(dists[-1]))
+                reached_idx = np.where(dists <= goal_tol_m)[0]
+                if reached_idx.size > 0:
+                    success_count += 1
+                    per_host_ttg.append(float(g["time"].iloc[int(reached_idx[0])]))
+            denom = max(1, len(eligible_serials))
+            run_rows.append(
+                {
+                    "scenario": scen_group,
+                    "run_tag": scen_dir.name,
+                    "variant": variant,
+                    "mission_success_rate": float(success_count) / float(denom),
+                    "time_to_goal_median_s": (float(np.median(per_host_ttg)) if per_host_ttg else float("nan")),
+                    "final_goal_distance_median_m": (
+                        float(np.median(per_host_final_dist)) if per_host_final_dist else float("nan")
+                    ),
+                }
+            )
+
+    if not run_rows:
+        return out_paths
+
+    runs_df = pd.DataFrame(run_rows)
+    p_runs = out_dir / "mission_progress_by_run.csv"
+    runs_df.to_csv(p_runs, index=False)
+    out_paths.append(p_runs)
+
+    table_rows: list[list[str]] = []
+    for scen in sorted(runs_df["scenario"].dropna().unique().tolist()):
+        sa = runs_df[(runs_df["scenario"] == scen) & (runs_df["variant"] == "SpoofingAware")]
+        tr = runs_df[(runs_df["scenario"] == scen) & (runs_df["variant"] == "TrustRID")]
+        if sa.empty and tr.empty:
+            continue
+        sa_sr = float(np.median(sa["mission_success_rate"])) if not sa.empty else float("nan")
+        tr_sr = float(np.median(tr["mission_success_rate"])) if not tr.empty else float("nan")
+        sa_ttg = float(np.median(pd.to_numeric(sa["time_to_goal_median_s"], errors="coerce").dropna())) if not sa.empty else float("nan")
+        tr_ttg = float(np.median(pd.to_numeric(tr["time_to_goal_median_s"], errors="coerce").dropna())) if not tr.empty else float("nan")
+        sa_fd = float(np.median(pd.to_numeric(sa["final_goal_distance_median_m"], errors="coerce").dropna())) if not sa.empty else float("nan")
+        tr_fd = float(np.median(pd.to_numeric(tr["final_goal_distance_median_m"], errors="coerce").dropna())) if not tr.empty else float("nan")
+        table_rows.append(
+            [
+                scen,
+                _fmt_table_value(sa_sr),
+                _fmt_table_value(tr_sr),
+                _fmt_table_value(sa_ttg),
+                _fmt_table_value(tr_ttg),
+                _fmt_table_value(sa_fd),
+                _fmt_table_value(tr_fd),
+            ]
+        )
+    if table_rows:
+        p_csv = out_dir / "table_viii_mission_progress_summary.csv"
+        pd.DataFrame(
+            table_rows,
+            columns=[
+                "Scenario",
+                "Mission success rate median (SA)",
+                "Mission success rate median (Trust-RID)",
+                "Time-to-goal median SA (s)",
+                "Time-to-goal median Trust-RID (s)",
+                "Final distance-to-goal median SA (m)",
+                "Final distance-to-goal median Trust-RID (m)",
+            ],
+        ).to_csv(p_csv, index=False)
+        out_paths.append(p_csv)
+        p_pdf = _save_table_pdf(
+            plt=plt,
+            rows=table_rows,
+            headers=[
+                "Scenario",
+                "Success\nSA",
+                "Success\nTR",
+                "TTG\nSA (s)",
+                "TTG\nTR (s)",
+                "Final dist\nSA (m)",
+                "Final dist\nTR (m)",
+            ],
+            title="TABLE VIII",
+            subtitle=f"Mission-progress summary (goal tolerance = {goal_tol_m:g} m)",
+            out_path=out_dir / "table_viii_mission_progress_summary.pdf",
+        )
+        if p_pdf is not None:
+            out_paths.append(p_pdf)
+    return out_paths
+
+
+def _export_keycharts(out_dir: Path, written: list[Path]) -> list[Path]:
+    """
+    Copy core paper artifacts into charts/keycharts for quick access.
+    """
+    key_dir = out_dir / "keycharts"
+    key_dir.mkdir(parents=True, exist_ok=True)
+
+    key_names = {
+        "summary_boxplots.pdf",
+        "summary_means_table.csv",
+        "summary_distribution_table.csv",
+        "runtime_compare_scenarios_aware_vs_trustrid.pdf",
+        "timeseries_min_distance_median.pdf",
+        "timeseries_containment_localization_unsafe_bubble_median.pdf",
+        "detection_first_time_by_scenario.pdf",
+        "table_ii_nmac_summary_statistics.pdf",
+        "table_ii_nmac_summary_statistics.csv",
+        "table_iii_runtime_median_per_scenario_seconds.pdf",
+        "table_iii_runtime_median_per_scenario_seconds.csv",
+        "table_iv_effect_size_sa_vs_trustrid.pdf",
+        "table_iv_effect_size_sa_vs_trustrid.csv",
+        "table_v_containment_calibration.pdf",
+        "table_v_containment_calibration.csv",
+        "table_vi_compute_breakdown_by_scenario.pdf",
+        "table_vi_compute_breakdown_by_scenario.csv",
+        "table_vii_detection_quality_summary.pdf",
+        "table_vii_detection_quality_summary.csv",
+        "table_viii_mission_progress_summary.pdf",
+        "table_viii_mission_progress_summary.csv",
+        "mission_progress_by_run.csv",
+    }
+
+    copied: list[Path] = []
+    for p in written:
+        if p.parent != out_dir:
+            continue
+        if p.name in key_names:
+            dst = key_dir / p.name
+            shutil.copy2(p, dst)
+            copied.append(dst)
+
+    # Include all generated 3D trajectory overlays as key artifacts.
+    for p in sorted(out_dir.glob("trajectory_overlay_3d_*.pdf")):
+        dst = key_dir / p.name
+        shutil.copy2(p, dst)
+        copied.append(dst)
+
+    return copied
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generate batch charts from summary and GCS vectors.")
     ap.add_argument(
@@ -1255,6 +1975,18 @@ def main() -> int:
         action="store_true",
         help="Disable 3D trajectory overlay generation.",
     )
+    ap.add_argument(
+        "--plot-profile",
+        choices=["paper", "full"],
+        default="paper",
+        help="paper: concise core figures/tables, full: include all detailed diagnostics.",
+    )
+    ap.add_argument(
+        "--mission-goal-tol-m",
+        type=float,
+        default=10.0,
+        help="Goal distance threshold (m) for mission-progress success summaries.",
+    )
     args = ap.parse_args()
 
     batch_root = args.batch_root.resolve()
@@ -1274,9 +2006,13 @@ def main() -> int:
 
     if gcs_vectors_dir.is_dir():
         long_df = _load_gcs_vector_long(gcs_vectors_dir)
-        written.extend(_make_timeseries_charts(long_df, out_dir))
+        written.extend(_make_timeseries_charts(long_df, out_dir, plot_profile=args.plot_profile))
+    written.extend(_make_mission_progress_tables(generated_dir, out_dir, goal_tol_m=float(args.mission_goal_tol_m)))
     if not args.no_3d and args.sample_every_3d >= 1:
         written.extend(_make_3d_overlay_charts(generated_dir, out_dir, sample_every=args.sample_every_3d))
+
+    keycharts = _export_keycharts(out_dir, written)
+    written.extend(keycharts)
 
     print("Wrote files:")
     for p in written:

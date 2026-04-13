@@ -34,7 +34,10 @@ Options:
   --no-keep-vec                    Do not keep results/*.vec (disables vector export)
   --no-export-vectors              Skip GCS vector CSV export
   --no-plot                        Skip chart generation
+  --plot-profile MODE              Plot set: paper|full (default: paper)
+  --mission-goal-tol-m X           Goal tolerance (m) for mission-progress summary (default: 10)
   --heartbeat-sec N                Emit heartbeat every N seconds (0 disables; default: 60)
+  --force-detect-at-sec N          Force spoofing detection at N seconds in SpoofingAwareGcs (default: disabled)
   -h, --help                       Show this help
 EOF
 }
@@ -50,6 +53,9 @@ KEEP_VEC="1"
 EXPORT_VECTORS="1"
 DO_PLOT="1"
 HEARTBEAT_SEC="60"
+PLOT_PROFILE="paper"
+MISSION_GOAL_TOL_M="10"
+FORCE_DETECT_AT_SEC=""
 
 SINGLE_SCENARIO=""
 SCENARIOS_CSV=""
@@ -105,8 +111,14 @@ while [[ $# -gt 0 ]]; do
       EXPORT_VECTORS="0"; shift ;;
     --no-plot)
       DO_PLOT="0"; shift ;;
+    --plot-profile)
+      PLOT_PROFILE="${2:-}"; shift 2 ;;
+    --mission-goal-tol-m)
+      MISSION_GOAL_TOL_M="${2:-}"; shift 2 ;;
     --heartbeat-sec)
       HEARTBEAT_SEC="${2:-}"; shift 2 ;;
+    --force-detect-at-sec)
+      FORCE_DETECT_AT_SEC="${2:-}"; shift 2 ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -200,6 +212,16 @@ if ! [[ "$HEARTBEAT_SEC" =~ ^[0-9]+$ ]] || (( HEARTBEAT_SEC < 0 )); then
   echo "Invalid --heartbeat-sec value: $HEARTBEAT_SEC" >&2
   exit 2
 fi
+if [[ "$PLOT_PROFILE" != "paper" && "$PLOT_PROFILE" != "full" ]]; then
+  echo "Invalid --plot-profile value: $PLOT_PROFILE (expected: paper or full)" >&2
+  exit 2
+fi
+if [[ -n "$FORCE_DETECT_AT_SEC" ]]; then
+  if ! [[ "$FORCE_DETECT_AT_SEC" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "Invalid --force-detect-at-sec value: $FORCE_DETECT_AT_SEC (expected non-negative number)" >&2
+    exit 2
+  fi
+fi
 
 echo "== Config =="
 echo "Scenarios:     ${SCENARIOS[*]}"
@@ -207,6 +229,13 @@ echo "Seeds:         ${SEEDS[*]}"
 echo "Run root:      $RUN_ROOT"
 echo "Parallel jobs: $PARALLEL"
 echo "Heartbeat sec: $HEARTBEAT_SEC"
+echo "Plot profile:  $PLOT_PROFILE"
+echo "Goal tol (m):  $MISSION_GOAL_TOL_M"
+if [[ -n "$FORCE_DETECT_AT_SEC" ]]; then
+  echo "Force detect s: $FORCE_DETECT_AT_SEC"
+else
+  echo "Force detect s: disabled"
+fi
 
 TOTAL_RUN_JOBS=$(( ${#SCENARIOS[@]} * ${#SEEDS[@]} ))
 COMPLETED_RUN_JOBS=0
@@ -305,6 +334,9 @@ run_one() {
   run_start_epoch="$(date +%s)"
   RUN_CMD_AWARE=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$aware_cfg" --parallel 1)
   RUN_CMD_TRUST=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$trust_cfg" --parallel 1)
+  if [[ -n "$FORCE_DETECT_AT_SEC" ]]; then
+    RUN_CMD_AWARE=(env ULI_IMM_FORCE_DETECT_AT_S="$FORCE_DETECT_AT_SEC" "${RUN_CMD_AWARE[@]}")
+  fi
   if [[ "$KEEP_VEC" == "1" ]]; then
     RUN_CMD_AWARE+=(--keep-vec)
     RUN_CMD_TRUST+=(--keep-vec)
@@ -433,7 +465,9 @@ if [[ "$DO_PLOT" == "1" ]]; then
   echo "== Generating charts and distribution tables =="
   CURRENT_PHASE="plotting"
   if ! ./scripts/docker-run.sh python3 datagen/spoofting_aware_trajectory_planning_datagen/plot_batch.py \
-    --batch-root "$RUN_ROOT"; then
+    --batch-root "$RUN_ROOT" \
+    --plot-profile "$PLOT_PROFILE" \
+    --mission-goal-tol-m "$MISSION_GOAL_TOL_M"; then
     PIPELINE_FAILED=1
     echo "[WARN] Chart generation failed."
   fi

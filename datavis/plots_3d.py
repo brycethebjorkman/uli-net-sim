@@ -53,13 +53,31 @@ def _score_hover(row, sd: ScenarioData) -> str:
 # Score values for colorscale
 # ---------------------------------------------------------------------------
 
-def _get_score_vals(spoof_tx, sd: ScenarioData):
-    """Return (values_array, colorbar_title, cmax) for the primary score."""
+def _get_score_display(spoof_tx, sd: ScenarioData) -> dict:
+    """Return colorscale display parameters for the primary score.
+
+    Returns dict with keys: vals, label, cmin, cmax, colorscale, and
+    optionally cmid (when a detection threshold is available).
+    """
     if sd.primary_score is None or sd.primary_score.column not in spoof_tx.columns:
-        return np.zeros(len(spoof_tx)), 'Score', 1.0
+        return dict(vals=np.zeros(len(spoof_tx)), label='Score',
+                    cmin=0.0, cmax=1.0, colorscale='RdYlGn_r')
+
     vals = spoof_tx[sd.primary_score.column].fillna(0).values
-    cmax = max(vals.max(), 1.0) if len(vals) > 0 else 1.0
-    return vals, sd.primary_score.label, cmax
+    threshold = sd.primary_score.threshold
+
+    if threshold is not None:
+        # Diverging colorscale centered at threshold:
+        # below threshold → blue (cool), above → red (hot)
+        vmin, vmax = (vals.min(), vals.max()) if len(vals) > 0 else (0.0, 0.0)
+        delta = max(threshold - vmin, vmax - threshold, 0.1)
+        return dict(vals=vals, label=sd.primary_score.label,
+                    cmin=threshold - delta, cmax=threshold + delta,
+                    cmid=threshold, colorscale='RdBu_r')
+    else:
+        cmax = max(vals.max(), 1.0) if len(vals) > 0 else 1.0
+        return dict(vals=vals, label=sd.primary_score.label,
+                    cmin=0.0, cmax=cmax, colorscale='RdYlGn_r')
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +97,11 @@ def build_animation(sd: ScenarioData, frame_dt: float = 0.5) -> go.Figure:
     frame_times = np.arange(sd.t_min, sd.t_max + frame_dt, frame_dt)
     N = len(sd.host_ids)
 
-    all_score_vals, score_label, color_max = _get_score_vals(sd.spoof_tx, sd)
+    sd_display = _get_score_display(sd.spoof_tx, sd)
+    marker_color_kw = dict(colorscale=sd_display['colorscale'],
+                           cmin=sd_display['cmin'], cmax=sd_display['cmax'])
+    if 'cmid' in sd_display:
+        marker_color_kw['cmid'] = sd_display['cmid']
 
     def empty(**kwargs):
         return go.Scatter3d(x=[], y=[], z=[], **kwargs)
@@ -103,9 +125,8 @@ def build_animation(sd: ScenarioData, frame_dt: float = 0.5) -> go.Figure:
     # 2N: spoofed claimed markers
     traces.append(go.Scatter3d(
         x=[], y=[], z=[], mode='markers',
-        marker=dict(size=4, color=[], colorscale='RdYlGn_r',
-                    cmin=0, cmax=color_max,
-                    colorbar=dict(title=score_label, x=1.0),
+        marker=dict(size=4, color=[], **marker_color_kw,
+                    colorbar=dict(title=sd_display['label'], x=1.05),
                     symbol='diamond', opacity=0.8),
         name='Spoofed RID', showlegend=True, hoverinfo='text',
     ))
@@ -145,8 +166,8 @@ def build_animation(sd: ScenarioData, frame_dt: float = 0.5) -> go.Figure:
             data.append(dict(
                 x=vis['rid_pos_x'].tolist(), y=vis['rid_pos_y'].tolist(),
                 z=vis['rid_pos_z'].tolist(),
-                marker=dict(size=4, color=sv, colorscale='RdYlGn_r',
-                            cmin=0, cmax=color_max, symbol='diamond', opacity=0.8),
+                marker=dict(size=4, color=sv, **marker_color_kw,
+                            symbol='diamond', opacity=0.8),
                 hovertext=[_score_hover(row, sd) for _, row in vis.iterrows()],
             ))
         else:
@@ -191,6 +212,7 @@ def build_animation(sd: ScenarioData, frame_dt: float = 0.5) -> go.Figure:
         scene=dict(xaxis_title='X (m)', yaxis_title='Y (m)', zaxis_title='Z (m)',
                    aspectmode='data'),
         width=900, height=700,
+        legend=dict(x=0.01, y=0.99, bgcolor='rgba(255,255,255,0.7)'),
         updatemenus=[dict(
             type='buttons', showactive=False, x=0.05, y=0.02,
             buttons=[
@@ -229,14 +251,17 @@ def build_static_overview(sd: ScenarioData) -> go.Figure:
     # Spoofed beacons
     spoof_tx = sd.spoof_tx
     if len(spoof_tx) > 0:
-        score_vals, score_label, color_max = _get_score_vals(spoof_tx, sd)
+        sd_display = _get_score_display(spoof_tx, sd)
+        marker_kw = dict(colorscale=sd_display['colorscale'],
+                         cmin=sd_display['cmin'], cmax=sd_display['cmax'])
+        if 'cmid' in sd_display:
+            marker_kw['cmid'] = sd_display['cmid']
 
         fig.add_trace(go.Scatter3d(
             x=spoof_tx['rid_pos_x'], y=spoof_tx['rid_pos_y'], z=spoof_tx['rid_pos_z'],
             mode='markers',
-            marker=dict(size=3, color=score_vals, colorscale='RdYlGn_r',
-                        cmin=0, cmax=color_max,
-                        colorbar=dict(title=score_label, x=1.0),
+            marker=dict(size=3, color=sd_display['vals'], **marker_kw,
+                        colorbar=dict(title=sd_display['label'], x=1.05),
                         symbol='diamond', opacity=0.7),
             name='Spoofed RID (claimed)',
             hovertext=[_score_hover(row, sd) for _, row in spoof_tx.iterrows()],

@@ -24,6 +24,7 @@ class ScoreColumn:
     label: str          # Human-readable label for plots
     event_type: str     # Which event type carries this score ('TX', 'RX', 'GCS')
     higher_is_worse: bool = True  # Score direction (for colorscale orientation)
+    threshold: float | None = None  # Detection threshold for diverging colorscale
 
 
 # ---------------------------------------------------------------------------
@@ -80,13 +81,37 @@ _KNOWN_SCORES = [
 ]
 
 
+def _detect_threshold(gcs: pd.DataFrame, score_col: str) -> float | None:
+    """Estimate detection threshold from gcs_spoofing_declared transition.
+
+    Returns the midpoint between the last pre-detection and first post-detection
+    score values, or None if no detection occurred.
+    """
+    if 'gcs_spoofing_declared' not in gcs.columns or score_col not in gcs.columns:
+        return None
+    gcs_sorted = gcs.sort_values('time')
+    declared = gcs_sorted[gcs_sorted['gcs_spoofing_declared'] == 1]
+    if declared.empty:
+        return None
+    det_time = declared.iloc[0]['time']
+    det_score = float(declared.iloc[0][score_col])
+    before = gcs_sorted[
+        (gcs_sorted['time'] < det_time) & (gcs_sorted['gcs_spoofing_declared'] != 1)
+    ]
+    if before.empty:
+        return det_score
+    prev_score = float(before.iloc[-1][score_col])
+    return (prev_score + det_score) / 2
+
+
 def _detect_scores(df: pd.DataFrame, gcs: pd.DataFrame) -> list[ScoreColumn]:
     """Auto-detect available score columns from the data."""
     scores = []
     for col, label, event_type, higher_is_worse in _KNOWN_SCORES:
         source = gcs if event_type == 'GCS' else df
         if col in source.columns and source[col].notna().any():
-            scores.append(ScoreColumn(col, label, event_type, higher_is_worse))
+            threshold = _detect_threshold(gcs, col) if event_type == 'GCS' else None
+            scores.append(ScoreColumn(col, label, event_type, higher_is_worse, threshold))
 
     # Discover unknown gcs_* columns not in the known list
     known_cols = {col for col, _, _, _ in _KNOWN_SCORES}
@@ -99,7 +124,8 @@ def _detect_scores(df: pd.DataFrame, gcs: pd.DataFrame) -> list[ScoreColumn]:
                        'gcs_max_variance_reduction'):
                 continue
             label = col.replace('gcs_', '').replace('_', ' ').title()
-            scores.append(ScoreColumn(col, label, 'GCS', True))
+            threshold = _detect_threshold(gcs, col)
+            scores.append(ScoreColumn(col, label, 'GCS', True, threshold))
 
     return scores
 
@@ -163,6 +189,11 @@ def load_scenario(parquet_path: str | Path) -> ScenarioData:
     if not gcs.empty and not spoof_tx.empty and 'packet_id' in gcs.columns:
         gcs_score_cols = [c for c in gcs.columns if c.startswith('gcs_')]
         if gcs_score_cols:
+            # Drop pre-existing gcs_* columns from spoof_tx (all NaN for TX events)
+            # to prevent pandas merge creating _x/_y suffixed duplicates
+            existing = [c for c in spoof_tx.columns if c.startswith('gcs_')]
+            if existing:
+                spoof_tx = spoof_tx.drop(columns=existing)
             gcs_for_merge = gcs[['packet_id'] + gcs_score_cols].copy()
             spoof_tx = spoof_tx.merge(gcs_for_merge, on='packet_id', how='left')
 

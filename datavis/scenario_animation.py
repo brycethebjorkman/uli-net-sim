@@ -24,7 +24,7 @@ import os
 
 SCENARIO_PATH = os.environ.get(
     'NOTEBOOK_SCENARIO',
-    '../datasets/current/test/e9897d1b-o.parquet',
+    '../o.parquet',
 )
 FRAME_DT = 0.5
 

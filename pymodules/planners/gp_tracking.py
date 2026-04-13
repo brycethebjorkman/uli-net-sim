@@ -50,9 +50,10 @@ class GpTrackingPlanner:
     def __init__(
         self,
         beta: float = 2.0,
-        h: float = 20.0,
+        h: float = 25.0,
         k_min: int = 8,
-        reoptimize_interval: int = 20,
+        s_k_cap: float = 8.0,
+        reoptimize_interval: int = 1,
         planner_speed: float = 10.0,
         beacon_interval: float = 1.0,
         grid_log_d_range: tuple[float, float] = (0.5, 2.7),
@@ -64,6 +65,7 @@ class GpTrackingPlanner:
         self.beta = beta
         self.h = h
         self.k_min = k_min
+        self.s_k_cap = s_k_cap
         self.reoptimize_interval = reoptimize_interval
         self.planner_speed = planner_speed
         self.beacon_interval = beacon_interval
@@ -139,6 +141,7 @@ class GpTrackingPlanner:
             gp_pred_mean, gp_pred_var = self.prop_gp.predict(feat)
             if gp_pred_var > 1e-10:
                 s_k = (rssi - gp_pred_mean) ** 2 / gp_pred_var
+                s_k = min(s_k, self.s_k_cap)
                 self.cusum = max(0.0, self.cusum + s_k - self.beta)
                 if self.cusum > self.h and not self.spoofing_declared:
                     self.spoofing_declared = True
@@ -148,9 +151,8 @@ class GpTrackingPlanner:
         self.prop_gp.add_observation(feat, rssi)
         self.obs_count += 1
 
-        # Periodic hyperparameter reoptimization
-        if (self.obs_count % self.reoptimize_interval == 0
-                and self.obs_count >= self.reoptimize_interval):
+        # Hyperparameter reoptimization
+        if self.obs_count % self.reoptimize_interval == 0:
             self.prop_gp.optimize_hyperparameters()
 
         # --- Declaration GP update ---

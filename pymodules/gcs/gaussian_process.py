@@ -67,7 +67,7 @@ class PropagationGP:
         "sigma_f_sq": (1.0, 100.0),
         "ell_logd":   (0.05, 5.0),
         "ell_dz":     (1.0, 200.0),
-        "sigma_n_sq": (1.0, 50.0),
+        "sigma_n_sq": (4.0, 50.0),
     }
 
     def __init__(

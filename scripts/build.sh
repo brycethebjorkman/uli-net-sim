@@ -25,8 +25,11 @@ SRC_DIR="$PROJ_DIR"
 BUILD_DIR="$BASE_DIR/container-build"
 INET_DIR="$BASE_DIR/inet4.5"
 EIGEN_DIR="$BASE_DIR/eigen-5.0.0"
-# Source OMNeT++/INET env for opp_makemake on PATH
-. "$PROJ_DIR/scripts/omnetpp-env.sh"
+# Source environment if not already sourced (for opp_makemake on PATH)
+if [ -z "$INET_ROOT" ]; then
+    unset __uav_rid_env_loaded  # reset guard so setenv re-sources from bash
+    . "$PROJ_DIR/setenv"
+fi
 
 # Use the project venv's Python for pybind11 headers and libpython.
 # This ensures the simulation binary links against the same Python version

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#
+# setenv - OMNeT++, INET, and project environment setup
+#
+# Installed to /etc/profile.d/ in the container so that OMNeT++, INET,
+# and the project venv are available globally in every login shell.
+# Can also be sourced manually:
+#
+#   . setenv
+#
+
+# Guard: skip if already fully loaded (prevents duplicate omnetpp/inet warnings)
+[ -n "$__uav_rid_env_loaded" ] && return 0
+__uav_rid_env_loaded=1
+
+# OMNeT++/INET setenvs require bash (they use BASH_SOURCE). Skip if not bash
+# — in that case, build.sh will re-source from bash automatically.
+if [ -n "$BASH_VERSION" ]; then
+    # Only source if not already loaded (check their sentinel variables)
+    [ -z "$__omnetpp_root_dir" ] && . /usr/uli-net-sim/omnetpp-6.2.0/setenv -q 2>/dev/null
+    [ -z "$INET_ROOT" ] && . /usr/uli-net-sim/inet4.5/setenv -q 2>/dev/null
+fi
+export EIGEN_DIR=/usr/uli-net-sim/eigen-5.0.0
+
+# Activate the project venv, taking precedence over the OMNeT++ venv.
+# We set PATH directly instead of sourcing bin/activate because activate's
+# deactivate() restores _OLD_VIRTUAL_PATH set by the omnetpp venv, which
+# wipes the omnetpp/bin and inet/bin PATH entries we just added.
+if [ -d /usr/uli-net-sim/uav_rid/.venv/bin ]; then
+    export VIRTUAL_ENV=/usr/uli-net-sim/uav_rid/.venv
+    export PATH="$VIRTUAL_ENV/bin:$PATH"
+    unset _OLD_VIRTUAL_PATH
+fi
+
+# Project-relative prompt. Uses PROMPT_COMMAND so it survives .bashrc
+# and venv activate overwriting PS1.
+_proj_prompt_cmd() {
+    local proj="/usr/uli-net-sim/uav_rid"
+    local rel
+    if [[ "$PWD" == "$proj" ]]; then rel=""
+    elif [[ "$PWD" == "$proj"/* ]]; then rel="/${PWD#$proj/}"
+    else rel="$PWD"
+    fi
+    PS1="(uav-rid)${rel}# "
+}
+PROMPT_COMMAND="_proj_prompt_cmd"

@@ -83,15 +83,17 @@ RUN wget https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.tar
 RUN tar xf eigen-5.0.0.tar \
     && rm eigen-5.0.0.tar
 
-# Make OMNeT++/INET env available globally in every login shell
-COPY scripts/omnetpp-env.sh /etc/profile.d/omnetpp-env.sh
-
 # Install uv for Python dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Make OMNeT++/INET/project env available in every shell
+COPY setenv /etc/profile.d/setenv.sh
+RUN echo '. /etc/profile.d/setenv.sh' >> /root/.bashrc
+
 # build uli-net-sim
 WORKDIR /usr/uli-net-sim/uav_rid
-COPY . .
-
-# Create venv and install Python dependencies via uv
+COPY pyproject.toml ./
+COPY uv.lock ./
 RUN uv sync
+COPY . .
+RUN ./scripts/build.sh

@@ -31,7 +31,8 @@ BASE_DIR="$(cd "$PROJ_DIR/.." && pwd)"
 
 # Source environment if not already sourced
 if [ -z "$INET_ROOT" ]; then
-    . "$PROJ_DIR/scripts/omnetpp-env.sh"
+    unset __uav_rid_env_loaded  # reset guard so setenv re-sources from bash
+    . "$PROJ_DIR/setenv"
 fi
 
 UAV_RID_BIN="$BASE_DIR/container-build/out/clang-release/uav_rid"

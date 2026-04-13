@@ -228,9 +228,10 @@ def detect_host_types(vec_path) -> dict[int, str]:
             m = _RE_HOST_IDX.match(key)
             if m:
                 host_id = int(m.group(1))
-                if key.endswith('.typename'):
+                suffix = key[m.end():]  # part after "*.host[N]."
+                if suffix == 'typename':
                     per_host_typename[host_id] = value
-                elif key.endswith('.wlan[0].mgmt.pyTxClass'):
+                elif suffix == 'wlan[0].mgmt.pyTxClass':
                     py_tx_hosts.add(host_id)
 
     if num_hosts is None:

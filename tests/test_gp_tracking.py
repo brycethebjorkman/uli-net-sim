@@ -240,6 +240,64 @@ class TestVarianceReduction:
         assert vr >= 0.0
         assert np.isfinite(vr)
 
+    def test_batch_matches_individual(self):
+        """variance_reduction_batch matches individual calls."""
+        gp = self._make_trained_gp()
+        U_ref = np.array([[1.0, 0.0], [1.5, 50.0], [2.0, -50.0]])
+        U_new = np.array([[1.2, 20.0], [0.8, -30.0], [2.5, 0.0]])
+
+        batch_scores = gp.variance_reduction_batch(U_new, U_ref)
+        individual_scores = [gp.variance_reduction(u, U_ref) for u in U_new]
+
+        np.testing.assert_allclose(batch_scores, individual_scores, rtol=1e-10)
+
+    def test_batch_works_with_no_data(self):
+        """Batch variance reduction from prior matches individual."""
+        gp = PropagationGP()
+        U_ref = np.array([[1.0, 0.0], [2.0, 0.0]])
+        U_new = np.array([[1.5, 0.0], [0.8, 10.0]])
+
+        batch_scores = gp.variance_reduction_batch(U_new, U_ref)
+        individual_scores = [gp.variance_reduction(u, U_ref) for u in U_new]
+
+        np.testing.assert_allclose(batch_scores, individual_scores, rtol=1e-10)
+
+
+class TestPropagationGPWindow:
+    def test_window_limits_observations(self):
+        """With a window, old observations are dropped."""
+        gp = PropagationGP(window=10)
+        rng = np.random.default_rng(42)
+        for i in range(25):
+            u = np.array([rng.uniform(0.5, 2.5), rng.uniform(-80, 80)])
+            y = -35.0 - 20.0 * u[0] + rng.normal(0, 3)
+            gp.add_observation(u, y)
+
+        assert gp.n == 10
+
+    def test_window_none_keeps_all(self):
+        """With window=None, all observations are retained."""
+        gp = PropagationGP(window=None)
+        rng = np.random.default_rng(42)
+        for i in range(25):
+            u = np.array([rng.uniform(0.5, 2.5), rng.uniform(-80, 80)])
+            gp.add_observation(u, -50.0)
+
+        assert gp.n == 25
+
+    def test_window_prediction_valid(self):
+        """Prediction still works correctly after window truncation."""
+        gp = PropagationGP(window=15)
+        rng = np.random.default_rng(42)
+        for i in range(30):
+            u = np.array([rng.uniform(0.5, 2.5), rng.uniform(-80, 80)])
+            y = -35.0 - 20.0 * u[0] + rng.normal(0, 3)
+            gp.add_observation(u, y)
+
+        m, v = gp.predict(np.array([1.5, 0.0]))
+        assert np.isfinite(m)
+        assert v > 0
+
 
 # ---------------------------------------------------------------------------
 # CUSUM logic (standalone, not yet in a class)

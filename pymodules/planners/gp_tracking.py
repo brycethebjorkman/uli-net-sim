@@ -11,8 +11,8 @@ detection.
 Planning happens in on_gcs_reports (per-transmission): after receiving a
 beacon and updating the GP, the planner picks the best position for
 receiving the *next* beacon and steers the detector drone there.  The
-``steer`` command preserves the drone's current speed to avoid losing
-momentum on every replan.
+``steer`` command directs the drone toward the planned position at
+cruise speed without decelerating to a stop between replans.
 
 The detector drone must use a controller that accepts ``steer`` commands
 (CascadedPidController).
@@ -59,6 +59,7 @@ class GpTrackingPlanner:
         grid_dz_range: tuple[float, float] = (-100.0, 100.0),
         grid_resolution: int = 7,
         altitude_offsets: tuple[float, ...] = (0.0, 20.0, -20.0),
+        gp_window: int | None = 200,
     ):
         self.beta = beta
         self.h = h
@@ -72,7 +73,7 @@ class GpTrackingPlanner:
         self.delta_max = planner_speed * beacon_interval
 
         # GPs
-        self.prop_gp = PropagationGP()
+        self.prop_gp = PropagationGP(window=gp_window)
         self.decl_gp = DeclarationGP()
 
         # CUSUM state
@@ -208,21 +209,25 @@ class GpTrackingPlanner:
         # Generate candidate positions within reachable ball
         candidates = self._generate_candidates(detector_pos)
 
-        # Score each candidate by variance reduction at the predicted geometry
-        best_score = -1.0
-        best_pos = detector_pos.copy()
-
-        for cand in candidates:
+        # Compute GP features for all candidates, filtering out invalid ones
+        feats = []
+        valid_indices = []
+        for i, cand in enumerate(candidates):
             feat = _compute_feature(decl_mean, cand)
-            if feat is None:
-                continue
-            score = self.prop_gp.variance_reduction(feat, self.reference_grid)
+            if feat is not None:
+                feats.append(feat)
+                valid_indices.append(i)
 
-            if score > best_score:
-                best_score = score
-                best_pos = cand
+        if not feats:
+            return detector_pos.copy(), 0.0
 
-        return best_pos, best_score
+        # Batch variance reduction (shared reference-grid solve computed once)
+        scores = self.prop_gp.variance_reduction_batch(
+            np.array(feats), self.reference_grid
+        )
+
+        best_idx = int(np.argmax(scores))
+        return candidates[valid_indices[best_idx]], float(scores[best_idx])
 
     def _generate_candidates(self, current_pos: np.ndarray) -> list[np.ndarray]:
         """Generate candidate positions within delta_max of current position."""

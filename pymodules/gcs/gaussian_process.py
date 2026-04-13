@@ -78,12 +78,14 @@ class PropagationGP:
         ell_logd: float = 0.3,
         ell_dz: float = 50.0,
         sigma_n_sq: float = 16.0,
+        window: int | None = None,
     ):
         self.P0 = P0
         self.gamma = gamma
         self.sigma_f_sq = sigma_f_sq
         self.ell = np.array([ell_logd, ell_dz])
         self.sigma_n_sq = sigma_n_sq
+        self.window = window
 
         # Training data
         self._U: list[np.ndarray] = []   # list of 2D feature vectors
@@ -103,6 +105,9 @@ class PropagationGP:
         """Append a training point and invalidate the cache."""
         self._U.append(np.asarray(u, dtype=float).ravel())
         self._y.append(float(y))
+        if self.window is not None and len(self._y) > self.window:
+            self._U.pop(0)
+            self._y.pop(0)
         self._cho = None
         self._alpha = None
 
@@ -191,7 +196,6 @@ class PropagationGP:
         k_ref_new = matern52(U_ref, u_new, self.sigma_f_sq, self.ell) # (M, 1)
 
         Ainv_k_new = cho_solve(self._cho, k_train_new)   # (n, 1)
-        Ainv_k_ref = cho_solve(self._cho, k_train_ref)   # (n, M)
 
         # Posterior covariance: c(u*, u_new) = k(u*, u_new) - k_*^T A^{-1} k_new
         c = k_ref_new.ravel() - (k_train_ref.T @ Ainv_k_new).ravel()  # (M,)
@@ -202,6 +206,50 @@ class PropagationGP:
         v_new = max(v_new, 1e-10)
 
         return float(np.sum(c**2) / v_new)
+
+    def variance_reduction_batch(
+        self, U_new: np.ndarray, U_ref: np.ndarray
+    ) -> np.ndarray:
+        """Integrated variance reduction for multiple candidate points.
+
+        Like variance_reduction() but precomputes shared reference-grid terms
+        once, then vectorizes across all candidates.
+
+        Parameters:
+            U_new: (C, 2) candidate observation locations
+            U_ref: (M, 2) reference grid
+
+        Returns:
+            (C,) array of variance reduction scores
+        """
+        U_new = np.atleast_2d(U_new)
+        U_ref = np.atleast_2d(U_ref)
+
+        if self.n == 0:
+            k_ref_new = matern52(U_ref, U_new, self.sigma_f_sq, self.ell)
+            v_new = self.sigma_f_sq + self.sigma_n_sq
+            return np.sum(k_ref_new**2, axis=0) / v_new
+
+        self._ensure_cache()
+        U = np.array(self._U)
+
+        # Reference-grid kernel (shared across all candidates, computed once)
+        k_train_ref = matern52(U, U_ref, self.sigma_f_sq, self.ell)  # (n, M)
+
+        # Candidate kernels (vectorized over C candidates)
+        k_train_new = matern52(U, U_new, self.sigma_f_sq, self.ell)   # (n, C)
+        k_ref_new = matern52(U_ref, U_new, self.sigma_f_sq, self.ell) # (M, C)
+        Ainv_k_new = cho_solve(self._cho, k_train_new)                # (n, C)
+
+        # Posterior covariance: c = k(ref, new) - k_ref^T A^{-1} k_new
+        c = k_ref_new - k_train_ref.T @ Ainv_k_new  # (M, C)
+
+        # Posterior variance at each candidate
+        k_ss = self.sigma_f_sq + self.sigma_n_sq
+        v_new = k_ss - np.einsum("ij,ij->j", k_train_new, Ainv_k_new)  # (C,)
+        v_new = np.maximum(v_new, 1e-10)
+
+        return np.sum(c**2, axis=0) / v_new
 
     # -- hyperparameter optimization ----------------------------------------
 

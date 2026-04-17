@@ -389,6 +389,7 @@ for scenario in "${SCENARIOS[@]}"; do
     echo "== Writing isolated INI: $ini_out =="
     python3 - "$BASE_INI" "$ini_out" "$scenario" "$aware_cfg" "$aware_instant_cfg" "$trust_cfg" "$seed" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 base_ini = Path(sys.argv[1])
@@ -400,6 +401,10 @@ trust = sys.argv[6]
 seed = int(sys.argv[7])
 
 text = base_ini.read_text()
+match = re.search(r"Scenario_DepotCity_(\d+)x1$", scenario)
+if not match:
+    raise SystemExit(f"Unsupported scenario format for TrustRid override: {scenario}")
+spoofer_host = int(match.group(1))
 append = f"""
 
 # ---- Auto-added by datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh ----
@@ -417,6 +422,7 @@ seed-set = {seed}
 extends = {scenario}
 seed-set = {seed}
 *.gcs[0].pyClass = "pymodules.planners.trust_rid_gcs.TrustRidGcs"
+*.host[{spoofer_host}].wlan[0].mgmt.pyTxClass = "pymodules.spoofers.position_offset.PositionOffsetSpooferTrustRidCollisionBias"
 """
 out_ini.write_text(text + append)
 print(f"Wrote {out_ini}")

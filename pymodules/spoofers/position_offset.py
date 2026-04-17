@@ -32,3 +32,20 @@ class PositionOffsetSpooferNegZ(PositionOffsetSpoofer):
     def __init__(self):
         # Downward-only spoof in local ENU frame: east=0, north=0, up=-50 m.
         self.offset = (0.0, 50, -50.0)
+
+
+class PositionOffsetSpooferTrustRidCollisionBias(PositionOffsetSpoofer):
+    """
+    Moderate constant offset intended for TrustRID collision stress tests.
+
+    Biases the claimed RID broadcast toward busy shared corridors so baseline
+    TrustRID is more likely to induce unsafe separation decisions.
+    """
+
+    def __init__(self):
+        # Fixed ENU bias: east=+140 m, north=+140 m, up=-50 m.
+        self.offset = (140.0, 140.0, -50.0)
+
+
+class PositionOffsetSpooferTrustRidAggressive(PositionOffsetSpooferTrustRidCollisionBias):
+    """Backward-compatible alias for older config names."""

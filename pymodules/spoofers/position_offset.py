@@ -31,4 +31,4 @@ class PositionOffsetSpooferNegZ(PositionOffsetSpoofer):
 
     def __init__(self):
         # Downward-only spoof in local ENU frame: east=0, north=0, up=-50 m.
-        self.offset = (0.0, 0.0, -50.0)
+        self.offset = (0.0, 50, -50.0)

@@ -74,12 +74,26 @@ PRESET_GRIDS: dict[str, dict[str, list[float]]] = {
         "ULI_IMM_CA_ACC_NOISE": [20.0, 40.0, 60.0, 100.0, 160.0],
         "ULI_IMM_CA_MEAS_NOISE": [30.0, 50.0, 100.0, 200.0, 400.0],
     },
+    # Focused follow-up around containment-capable and low-center-error regimes from broad sweeps.
+    "containment_refine": {
+        "ULI_IMM_INIT_MODE_CV": [0.45, 0.55, 0.65, 0.75],
+        "ULI_IMM_P_CV_STAY": [0.92, 0.95, 0.98],
+        "ULI_IMM_P_CA_STAY": [0.9, 0.95, 0.98],
+        "ULI_IMM_CV_POS_NOISE": [1.0, 2.0, 4.0],
+        "ULI_IMM_CV_VEL_NOISE": [20.0, 40.0, 80.0, 120.0],
+        "ULI_IMM_CV_MEAS_NOISE": [100.0, 200.0, 400.0],
+        "ULI_IMM_CA_POS_NOISE": [0.5, 1.0, 2.0],
+        "ULI_IMM_CA_VEL_NOISE": [20.0, 30.0, 50.0],
+        "ULI_IMM_CA_ACC_NOISE": [20.0, 40.0, 60.0, 100.0],
+        "ULI_IMM_CA_MEAS_NOISE": [30.0, 50.0, 100.0, 200.0],
+    },
 }
 
 PRESET_MAX_TRIALS_DEFAULT = {
     "single": 0,
     "quick": 80,
     "overnight": 500,
+    "containment_refine": 320,
 }
 
 
@@ -165,11 +179,13 @@ def _metric(rows: list[dict[str, str]], key: str, agg: str = "mean") -> float:
 def _score_trial(
     containment_rate_mean: float,
     localization_rmse_mean: float,
+    center_error_mean: float,
     nees_in_95_mean: float,
     nis_in_95_mean: float,
     total_nmac_real_mean: float,
     nmac_spoofer_unsafe_mean: float,
     w_containment: float,
+    w_center_error: float,
     w_nees95: float,
     w_nis95: float,
     w_rmse: float,
@@ -187,10 +203,13 @@ def _score_trial(
         ]
     ):
         return float("nan")
+    if center_error_mean != center_error_mean:
+        center_error_mean = localization_rmse_mean
     nees_term = nees_in_95_mean if nees_in_95_mean == nees_in_95_mean else 0.0
     nis_term = nis_in_95_mean if nis_in_95_mean == nis_in_95_mean else 0.0
     return (
         w_containment * containment_rate_mean
+        - w_center_error * center_error_mean
         + w_nees95 * nees_term
         + w_nis95 * nis_term
         - w_rmse * localization_rmse_mean
@@ -331,6 +350,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--top-k", type=int, default=10,
                     help="How many top runs to print/summarize")
     ap.add_argument("--weight-containment", type=float, default=2.0)
+    ap.add_argument(
+        "--weight-center-error",
+        type=float,
+        default=0.03,
+        help="Penalty weight for unsafe-center error (localization_mae_m_aware).",
+    )
     ap.add_argument("--weight-nees95", type=float, default=0.8)
     ap.add_argument("--weight-nis95", type=float, default=0.8)
     ap.add_argument("--weight-rmse", type=float, default=0.02)
@@ -437,7 +462,7 @@ def main(argv: list[str] | None = None) -> int:
     fieldnames: list[str] = [
         "trial_index", "combo_key", "status", "error", "elapsed_sec",
         "run_name", "run_root", "score", "containment_rate_mean",
-        "localization_rmse_mean_m", "imm_nees_in_95pct_fraction_mean",
+        "localization_rmse_mean_m", "center_error_mean_m", "imm_nees_in_95pct_fraction_mean",
         "imm_nis_in_95pct_fraction_mean", "containment_rate_std",
         "containment_rate_min", "containment_rate_max",
         "localization_rmse_median_m", "localization_rmse_std_m",
@@ -575,6 +600,7 @@ def main(argv: list[str] | None = None) -> int:
 
         containment = _safe_mean(_to_floats(summary_rows, "spoofer_containment_rate_aware"))
         loc_rmse = _safe_mean(_to_floats(summary_rows, "localization_rmse_m_aware"))
+        localization_mae = _metric(summary_rows, "localization_mae_m_aware", "mean")
         nees_in95 = _safe_mean(_to_floats(imm_rows, "imm_nees_in_95pct_fraction"))
         nis_in95 = _safe_mean(_to_floats(imm_rows, "imm_nis_in_95pct_fraction"))
         nmac_proximity_mean = _safe_mean(_to_floats(summary_rows, "nmac_proximity_aware"))
@@ -588,11 +614,13 @@ def main(argv: list[str] | None = None) -> int:
         score = _score_trial(
             containment,
             loc_rmse,
+            localization_mae,
             nees_in95,
             nis_in95,
             total_nmac_real_mean,
             nmac_spoofer_unsafe_mean,
             args.weight_containment,
+            args.weight_center_error,
             args.weight_nees95,
             args.weight_nis95,
             args.weight_rmse,
@@ -607,7 +635,6 @@ def main(argv: list[str] | None = None) -> int:
         loc_rmse_med = _metric(summary_rows, "localization_rmse_m_aware", "median")
         loc_rmse_std = _metric(summary_rows, "localization_rmse_m_aware", "std")
         detection_latency = _metric(summary_rows, "detection_latency_s_aware", "mean")
-        localization_mae = _metric(summary_rows, "localization_mae_m_aware", "mean")
         detection_reports_total = _metric(summary_rows, "detection_reports_total_aware", "mean")
         detection_mlat_attempted = _metric(summary_rows, "detection_mlat_attempted_aware", "mean")
         detection_mlat_skipped = _metric(
@@ -639,6 +666,7 @@ def main(argv: list[str] | None = None) -> int:
             "score": score,
             "containment_rate_mean": containment,
             "localization_rmse_mean_m": loc_rmse,
+            "center_error_mean_m": localization_mae,
             "imm_nees_in_95pct_fraction_mean": nees_in95,
             "imm_nis_in_95pct_fraction_mean": nis_in95,
             "containment_rate_std": containment_std,
@@ -670,7 +698,8 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"[{i}/{total_trials}] {run_name} done: "
             f"status={status} score={score:.4f} containment={containment:.4f} "
-            f"rmse={loc_rmse:.4f} nees95={nees_in95:.4f} nis95={nis_in95:.4f} "
+            f"rmse={loc_rmse:.4f} center_err={localization_mae:.4f} "
+            f"nees95={nees_in95:.4f} nis95={nis_in95:.4f} "
             f"nmac_real={total_nmac_real_mean:.2f} nmac_unsafe={nmac_spoofer_unsafe_mean:.2f} "
             f"lat={detection_latency:.3f}s "
             f"overall_progress={completed_after}/{total_trials} ({progress_after:.1f}%)"
@@ -707,6 +736,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"  {r['run_name']}: score={float(r['score']):.4f} "
                 f"contain={float(r['containment_rate_mean']):.4f} "
                 f"rmse={float(r['localization_rmse_mean_m']):.4f} "
+                f"center_err={float(r['center_error_mean_m']):.4f} "
                 f"nees95={float(r['imm_nees_in_95pct_fraction_mean']):.4f} "
                 f"nis95={float(r['imm_nis_in_95pct_fraction_mean']):.4f} "
                 f"nmac_real={float(r['total_nmac_real_mean_aware']):.2f} "
@@ -726,6 +756,7 @@ def main(argv: list[str] | None = None) -> int:
             f"- Score: `{best['score']}`",
             f"- Containment mean: `{best['containment_rate_mean']}`",
             f"- RMSE mean (m): `{best['localization_rmse_mean_m']}`",
+            f"- Center error mean (m): `{best['center_error_mean_m']}`",
             f"- NEES95 mean: `{best['imm_nees_in_95pct_fraction_mean']}`",
             f"- NIS95 mean: `{best['imm_nis_in_95pct_fraction_mean']}`",
             f"- Total NMAC (real) mean: `{best['total_nmac_real_mean_aware']}`",
@@ -733,14 +764,15 @@ def main(argv: list[str] | None = None) -> int:
             "",
             "## Top Configurations",
             "",
-            "| Run | Score | Containment | RMSE m | NEES95 | NIS95 | NMAC real | NMAC unsafe |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|",
+            "| Run | Score | Containment | RMSE m | Center err m | NEES95 | NIS95 | NMAC real | NMAC unsafe |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
         for r in top_k:
             lines.append(
                 f"| {r['run_name']} | {float(r['score']):.4f} | "
                 f"{float(r['containment_rate_mean']):.4f} | "
                 f"{float(r['localization_rmse_mean_m']):.4f} | "
+                f"{float(r['center_error_mean_m']):.4f} | "
                 f"{float(r['imm_nees_in_95pct_fraction_mean']):.4f} | "
                 f"{float(r['imm_nis_in_95pct_fraction_mean']):.4f} | "
                 f"{float(r['total_nmac_real_mean_aware']):.2f} | "

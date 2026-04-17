@@ -22,6 +22,17 @@ import pandas as pd
 NMAC_THRESHOLD_M = 50.0
 CHI2_3DOF_95_LO = 0.21579528262389785
 CHI2_3DOF_95_HI = 9.348403604496148
+VARIANT_ORDER = ["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"]
+VARIANT_COLORS = {
+    "SpoofingAware": "#4c78a8",
+    "SpoofingAwareInstantDetect": "#54a24b",
+    "TrustRID": "#f58518",
+}
+VARIANT_LINESTYLES = {
+    "SpoofingAware": "-",
+    "SpoofingAwareInstantDetect": "-.",
+    "TrustRID": "--",
+}
 
 
 def _apply_paper_style(plt) -> None:
@@ -81,42 +92,46 @@ def _bootstrap_ci_median(values: np.ndarray, n_boot: int = 1000, alpha: float = 
 
 def _write_distribution_table(df: pd.DataFrame, out_dir: Path) -> Path:
     metric_specs = [
-        ("total_nmac_real", "Total NMACs (real-position)", "nmac_total_real_aware", "nmac_total_real_trust_rid"),
-        ("benign_benign_nmac", "Benign-Benign NMACs", "nmac_proximity_aware", "nmac_proximity_trust_rid"),
-        ("benign_spoofer_nmac", "Benign-Spoofer NMACs", "nmac_benign_spoofer_aware", "nmac_benign_spoofer_trust_rid"),
-        ("min_distance_true_spoofer_m", "Min distance to true spoofer (m)", "min_benign_spoofer_distance_aware_m", "min_benign_spoofer_distance_trust_rid_m"),
-        ("gcs_reports_mean_ms", "GCS report callback mean time (ms)", "gcs_reports_mean_ms_aware", "gcs_reports_mean_ms_trust_rid"),
-        ("gcs_tick_mean_ms", "GCS tick callback mean time (ms)", "gcs_tick_mean_ms_aware", "gcs_tick_mean_ms_trust_rid"),
-        ("gcs_compute_total_s", "Total GCS compute time (s)", "gcs_compute_total_s_aware", "gcs_compute_total_s_trust_rid"),
-        ("chance_constraint_violations", "SpoofingAware: chance-constraint violations", "nmac_spoofer_unsafe_aware", None),
-        ("spoofer_containment_percent", "SpoofingAware: spoofer containment percent", "spoofer_containment_rate_aware", None),
-        ("detection_latency_s", "SpoofingAware: detection latency (s)", "detection_latency_s_aware", None),
+        ("total_nmac_real", "Total NMACs (real-position)", "nmac_total_real_aware", "nmac_total_real_aware_instant_detect", "nmac_total_real_trust_rid"),
+        ("benign_benign_nmac", "Benign-Benign NMACs", "nmac_proximity_aware", "nmac_proximity_aware_instant_detect", "nmac_proximity_trust_rid"),
+        ("benign_spoofer_nmac", "Benign-Spoofer NMACs", "nmac_benign_spoofer_aware", "nmac_benign_spoofer_aware_instant_detect", "nmac_benign_spoofer_trust_rid"),
+        ("min_distance_true_spoofer_m", "Min distance to true spoofer (m)", "min_benign_spoofer_distance_aware_m", "min_benign_spoofer_distance_aware_instant_detect_m", "min_benign_spoofer_distance_trust_rid_m"),
+        ("gcs_reports_mean_ms", "GCS report callback mean time (ms)", "gcs_reports_mean_ms_aware", "gcs_reports_mean_ms_aware_instant_detect", "gcs_reports_mean_ms_trust_rid"),
+        ("gcs_tick_mean_ms", "GCS tick callback mean time (ms)", "gcs_tick_mean_ms_aware", "gcs_tick_mean_ms_aware_instant_detect", "gcs_tick_mean_ms_trust_rid"),
+        ("gcs_compute_total_s", "Total GCS compute time (s)", "gcs_compute_total_s_aware", "gcs_compute_total_s_aware_instant_detect", "gcs_compute_total_s_trust_rid"),
+        ("chance_constraint_violations", "SpoofingAware: chance-constraint violations", "nmac_spoofer_unsafe_aware", "nmac_spoofer_unsafe_aware_instant_detect", "nmac_spoofer_unsafe_trust_rid"),
+        ("spoofer_containment_percent", "SpoofingAware: spoofer containment percent", "spoofer_containment_rate_aware", "spoofer_containment_rate_aware_instant_detect", "spoofer_containment_rate_trust_rid"),
+        ("detection_latency_s", "SpoofingAware: detection latency (s)", "detection_latency_s_aware", "detection_latency_s_aware_instant_detect", None),
         (
             "detection_reports_total",
             "SpoofingAware: detection reports processed",
             "detection_reports_total_aware",
+            "detection_reports_total_aware_instant_detect",
             None,
         ),
         (
             "detection_mlat_attempted",
             "SpoofingAware: detection callbacks with MLAT attempted",
             "detection_mlat_attempted_aware",
+            "detection_mlat_attempted_aware_instant_detect",
             None,
         ),
         (
             "detection_mlat_skipped_insufficient_receivers",
             "SpoofingAware: detection callbacks skipped (receivers < 4)",
             "detection_mlat_skipped_insufficient_receivers_aware",
+            "detection_mlat_skipped_insufficient_receivers_aware_instant_detect",
             None,
         ),
         (
             "detection_mlat_skip_fraction",
             "SpoofingAware: skipped MLAT fraction during detection",
             "detection_mlat_skipped_insufficient_receivers_fraction_aware",
+            "detection_mlat_skipped_insufficient_receivers_fraction_aware_instant_detect",
             None,
         ),
-        ("localization_mae_m", "SpoofingAware: localization MAE (m)", "localization_mae_m_aware", None),
-        ("localization_rmse_m", "SpoofingAware: localization RMSE (m)", "localization_rmse_m_aware", None),
+        ("localization_mae_m", "SpoofingAware: localization MAE (m)", "localization_mae_m_aware", "localization_mae_m_aware_instant_detect", None),
+        ("localization_rmse_m", "SpoofingAware: localization RMSE (m)", "localization_rmse_m_aware", "localization_rmse_m_aware_instant_detect", None),
     ]
     if "tag" not in df.columns:
         df = df.copy()
@@ -125,8 +140,12 @@ def _write_distribution_table(df: pd.DataFrame, out_dir: Path) -> Path:
     dd["scenario"] = dd["tag"].apply(_scenario_group_from_tag)
     rows: list[dict] = []
     for scen, g in dd.groupby("scenario"):
-        for key, label, aware_col, trust_col in metric_specs:
-            for variant, col in [("SpoofingAware", aware_col), ("TrustRID", trust_col)]:
+        for key, label, aware_col, instant_col, trust_col in metric_specs:
+            for variant, col in [
+                ("SpoofingAware", aware_col),
+                ("SpoofingAwareInstantDetect", instant_col),
+                ("TrustRID", trust_col),
+            ]:
                 if col is None or col not in g.columns:
                     continue
                 vals = pd.to_numeric(g[col], errors="coerce").dropna().to_numpy(dtype=float)
@@ -167,6 +186,36 @@ def _fmt_table_value(v: float | int | str | None) -> str:
     return f"{fv:.3f}"
 
 
+def _figure_output_paths(out_path: Path) -> tuple[Path, Path]:
+    base_dir = out_path.parent
+    pdf_dir = base_dir / "pdfs"
+    png_dir = base_dir / "pngs"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    png_dir.mkdir(parents=True, exist_ok=True)
+    stem = out_path.stem
+    return pdf_dir / f"{stem}.pdf", png_dir / f"{stem}.png"
+
+
+def _save_figure_dual(fig, out_path: Path, dpi: int = 220) -> Path:
+    pdf_path, png_path = _figure_output_paths(out_path)
+    fig.savefig(pdf_path, dpi=dpi)
+    fig.savefig(png_path, dpi=dpi)
+    return pdf_path
+
+
+def _safe_axis_limits(values: list[float], pad_frac: float = 0.06) -> tuple[float, float] | None:
+    finite = np.asarray([v for v in values if math.isfinite(v)], dtype=float)
+    if finite.size == 0:
+        return None
+    vmin = float(np.min(finite))
+    vmax = float(np.max(finite))
+    if abs(vmax - vmin) < 1e-12:
+        span = max(abs(vmax), 1.0) * 0.05
+        return vmin - span, vmax + span
+    pad = (vmax - vmin) * pad_frac
+    return vmin - pad, vmax + pad
+
+
 def _save_table_pdf(
     plt,
     rows: list[list[str]],
@@ -196,9 +245,9 @@ def _save_table_pdf(
             cell.set_facecolor("#eeeeee")
     fig.suptitle(f"{title}\n{subtitle}", y=0.98, fontsize=14)
     fig.tight_layout(rect=[0.02, 0.02, 0.98, 0.93])
-    fig.savefig(out_path, dpi=260)
+    out_pdf = _save_figure_dual(fig, out_path, dpi=260)
     plt.close(fig)
-    return out_path
+    return out_pdf
 
 
 def _delta_pct(sa: float, tr: float, lower_is_better: bool = True) -> float:
@@ -255,67 +304,120 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             pd.to_numeric(df["nmac_proximity_trust_rid"], errors="coerce").fillna(0.0)
             + pd.to_numeric(df["nmac_benign_spoofer_trust_rid"], errors="coerce").fillna(0.0)
         )
+    if (
+        "nmac_proximity_aware_instant_detect" in df.columns
+        and "nmac_benign_spoofer_aware_instant_detect" in df.columns
+    ):
+        df["nmac_total_real_aware_instant_detect"] = (
+            pd.to_numeric(df["nmac_proximity_aware_instant_detect"], errors="coerce").fillna(0.0)
+            + pd.to_numeric(df["nmac_benign_spoofer_aware_instant_detect"], errors="coerce").fillna(0.0)
+        )
 
-    paired_metrics = [
+    metric_specs = [
         (
-            "nmac_total_real_aware",
-            "nmac_total_real_trust_rid",
             "Total NMACs (real-position)\n= benign-benign + benign-spoofer",
+            {
+                "SpoofingAware": "nmac_total_real_aware",
+                "SpoofingAwareInstantDetect": "nmac_total_real_aware_instant_detect",
+                "TrustRID": "nmac_total_real_trust_rid",
+            },
         ),
-        ("nmac_proximity_aware", "nmac_proximity_trust_rid", "Benign-Benign NMACs"),
         (
-            "nmac_benign_spoofer_aware",
-            "nmac_benign_spoofer_trust_rid",
+            "Benign-Benign NMACs",
+            {
+                "SpoofingAware": "nmac_proximity_aware",
+                "SpoofingAwareInstantDetect": "nmac_proximity_aware_instant_detect",
+                "TrustRID": "nmac_proximity_trust_rid",
+            },
+        ),
+        (
             "Benign-Spoofer NMACs\n(true spoofer position)",
+            {
+                "SpoofingAware": "nmac_benign_spoofer_aware",
+                "SpoofingAwareInstantDetect": "nmac_benign_spoofer_aware_instant_detect",
+                "TrustRID": "nmac_benign_spoofer_trust_rid",
+            },
         ),
         (
-            "min_benign_spoofer_distance_aware_m",
-            "min_benign_spoofer_distance_trust_rid_m",
             "Min distance to true spoofer (m)",
-        ),
-    ]
-    aware_only_metrics = [
-        ("nmac_spoofer_unsafe_aware", "SpoofingAware: chance-constraint violations"),
-        ("spoofer_containment_rate_aware", "SpoofingAware: spoofer containment percent"),
-        ("detection_reports_total_aware", "SpoofingAware: detection reports processed"),
-        ("detection_mlat_attempted_aware", "SpoofingAware: detection callbacks with MLAT attempted"),
-        (
-            "detection_mlat_skipped_insufficient_receivers_aware",
-            "SpoofingAware: detection callbacks skipped (receivers < 4)",
+            {
+                "SpoofingAware": "min_benign_spoofer_distance_aware_m",
+                "SpoofingAwareInstantDetect": "min_benign_spoofer_distance_aware_instant_detect_m",
+                "TrustRID": "min_benign_spoofer_distance_trust_rid_m",
+            },
         ),
         (
-            "detection_mlat_skipped_insufficient_receivers_fraction_aware",
-            "SpoofingAware: skipped MLAT fraction during detection",
+            "Chance-constraint violations",
+            {
+                "SpoofingAware": "nmac_spoofer_unsafe_aware",
+                "SpoofingAwareInstantDetect": "nmac_spoofer_unsafe_aware_instant_detect",
+                "TrustRID": "nmac_spoofer_unsafe_trust_rid",
+            },
+        ),
+        (
+            "Spoofer containment percent",
+            {
+                "SpoofingAware": "spoofer_containment_rate_aware",
+                "SpoofingAwareInstantDetect": "spoofer_containment_rate_aware_instant_detect",
+                "TrustRID": "spoofer_containment_rate_trust_rid",
+            },
+        ),
+        (
+            "Detection reports processed",
+            {
+                "SpoofingAware": "detection_reports_total_aware",
+                "SpoofingAwareInstantDetect": "detection_reports_total_aware_instant_detect",
+            },
+        ),
+        (
+            "Detection callbacks with MLAT attempted",
+            {
+                "SpoofingAware": "detection_mlat_attempted_aware",
+                "SpoofingAwareInstantDetect": "detection_mlat_attempted_aware_instant_detect",
+            },
+        ),
+        (
+            "Detection callbacks skipped (receivers < 4)",
+            {
+                "SpoofingAware": "detection_mlat_skipped_insufficient_receivers_aware",
+                "SpoofingAwareInstantDetect": "detection_mlat_skipped_insufficient_receivers_aware_instant_detect",
+            },
+        ),
+        (
+            "Skipped MLAT fraction during detection",
+            {
+                "SpoofingAware": "detection_mlat_skipped_insufficient_receivers_fraction_aware",
+                "SpoofingAwareInstantDetect": "detection_mlat_skipped_insufficient_receivers_fraction_aware_instant_detect",
+            },
         ),
     ]
 
-    # Boxplots across seeds: paired + SpoofingAware-only metrics.
-    n_plots = len(paired_metrics) + len(aware_only_metrics)
+    # Boxplots across seeds for all available variants on each metric.
+    n_plots = len(metric_specs)
     n_cols = 3
     n_rows = max(1, int(math.ceil(float(n_plots) / float(n_cols))))
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.0 * n_cols, 4.0 * n_rows))
     axes = axes.ravel()
     idx = 0
-    for aware_col, trust_col, title in paired_metrics:
+    for title, variant_cols in metric_specs:
         ax = axes[idx]
         idx += 1
-        if aware_col not in df.columns or trust_col not in df.columns:
+        data: list[np.ndarray] = []
+        labels: list[str] = []
+        for variant in VARIANT_ORDER:
+            col = variant_cols.get(variant)
+            if not col or col not in df.columns:
+                continue
+            vals = pd.to_numeric(df[col], errors="coerce").dropna().to_numpy(dtype=float)
+            if vals.size == 0:
+                continue
+            data.append(vals)
+            labels.append(variant)
+        if not data:
             ax.axis("off")
-            ax.set_title(f"{title} (missing columns)")
+            ax.set_title(f"{title} (missing data)")
             continue
-        ax.boxplot(
-            [df[aware_col].dropna(), df[trust_col].dropna()],
-            labels=["SpoofingAware", "TrustRID"],
-        )
-        ax.set_title(title)
-    for aware_col, title in aware_only_metrics:
-        ax = axes[idx]
-        idx += 1
-        if aware_col not in df.columns:
-            ax.axis("off")
-            ax.set_title(f"{title} (missing column)")
-            continue
-        ax.boxplot([df[aware_col].dropna()], labels=["SpoofingAware"])
+        ax.boxplot(data, tick_labels=labels)
         ax.set_title(title)
     while idx < len(axes):
         axes[idx].axis("off")
@@ -323,7 +425,7 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
     fig.suptitle("Safety Metrics Across Seeds")
     fig.tight_layout()
     p = out_dir / "summary_boxplots.pdf"
-    fig.savefig(p, dpi=220)
+    p = _save_figure_dual(fig, p, dpi=220)
     plt.close(fig)
     out_paths.append(p)
 
@@ -333,52 +435,66 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
         (
             "Total NMACs (real-position)",
             "nmac_total_real_aware",
+            "nmac_total_real_aware_instant_detect",
             "nmac_total_real_trust_rid",
         ),
-        ("Benign-Benign NMACs", "nmac_proximity_aware", "nmac_proximity_trust_rid"),
+        (
+            "Benign-Benign NMACs",
+            "nmac_proximity_aware",
+            "nmac_proximity_aware_instant_detect",
+            "nmac_proximity_trust_rid",
+        ),
         (
             "Benign-Spoofer NMACs",
             "nmac_benign_spoofer_aware",
+            "nmac_benign_spoofer_aware_instant_detect",
             "nmac_benign_spoofer_trust_rid",
         ),
         (
             "Min distance to true spoofer (m)",
             "min_benign_spoofer_distance_aware_m",
+            "min_benign_spoofer_distance_aware_instant_detect_m",
             "min_benign_spoofer_distance_trust_rid_m",
         ),
         (
             "SpoofingAware: chance-constraint violations",
             "nmac_spoofer_unsafe_aware",
+            "nmac_spoofer_unsafe_aware_instant_detect",
             None,
         ),
         (
             "SpoofingAware: spoofer containment percent",
             "spoofer_containment_rate_aware",
+            "spoofer_containment_rate_aware_instant_detect",
             None,
         ),
         (
             "SpoofingAware: detection reports processed",
             "detection_reports_total_aware",
+            "detection_reports_total_aware_instant_detect",
             None,
         ),
         (
             "SpoofingAware: detection callbacks with MLAT attempted",
             "detection_mlat_attempted_aware",
+            "detection_mlat_attempted_aware_instant_detect",
             None,
         ),
         (
             "SpoofingAware: detection callbacks skipped (receivers < 4)",
             "detection_mlat_skipped_insufficient_receivers_aware",
+            "detection_mlat_skipped_insufficient_receivers_aware_instant_detect",
             None,
         ),
         (
             "SpoofingAware: skipped MLAT fraction during detection",
             "detection_mlat_skipped_insufficient_receivers_fraction_aware",
+            "detection_mlat_skipped_insufficient_receivers_fraction_aware_instant_detect",
             None,
         ),
     ]
     rows = []
-    for label, aware_col, trust_col in mean_specs:
+    for label, aware_col, instant_col, trust_col in mean_specs:
         if aware_col not in df.columns:
             continue
         aware_vals = pd.to_numeric(df[aware_col], errors="coerce").dropna().to_numpy(dtype=float)
@@ -387,6 +503,15 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
         aware_med = float(np.quantile(aware_vals, 0.5))
         aware_q1 = float(np.quantile(aware_vals, 0.25))
         aware_q3 = float(np.quantile(aware_vals, 0.75))
+        instant_med = float("nan")
+        instant_q1 = float("nan")
+        instant_q3 = float("nan")
+        if instant_col and instant_col in df.columns:
+            instant_vals = pd.to_numeric(df[instant_col], errors="coerce").dropna().to_numpy(dtype=float)
+            if instant_vals.size > 0:
+                instant_med = float(np.quantile(instant_vals, 0.5))
+                instant_q1 = float(np.quantile(instant_vals, 0.25))
+                instant_q3 = float(np.quantile(instant_vals, 0.75))
         trust_med = float("nan")
         trust_q1 = float("nan")
         trust_q3 = float("nan")
@@ -396,7 +521,18 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 trust_med = float(np.quantile(trust_vals, 0.5))
                 trust_q1 = float(np.quantile(trust_vals, 0.25))
                 trust_q3 = float(np.quantile(trust_vals, 0.75))
-        rows.append((label, aware_med, aware_q1, aware_q3, trust_med, trust_q1, trust_q3))
+        rows.append((
+            label,
+            aware_med,
+            aware_q1,
+            aware_q3,
+            instant_med,
+            instant_q1,
+            instant_q3,
+            trust_med,
+            trust_q1,
+            trust_q3,
+        ))
     if rows:
         mean_df = pd.DataFrame(
             rows,
@@ -405,6 +541,9 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 "spoofing_aware_median",
                 "spoofing_aware_q1",
                 "spoofing_aware_q3",
+                "spoofing_aware_instant_detect_median",
+                "spoofing_aware_instant_detect_q1",
+                "spoofing_aware_instant_detect_q3",
                 "trust_rid_median",
                 "trust_rid_q1",
                 "trust_rid_q3",
@@ -422,37 +561,51 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                     str(rr["metric"]),
                     "N/A",
                     "N/A",
+                    "N/A",
                     _fmt_table_value(rr["spoofing_aware_median"]),
+                    _fmt_table_value(
+                        rr["spoofing_aware_instant_detect_median"]
+                        if pd.notna(rr["spoofing_aware_instant_detect_median"])
+                        else float("nan")
+                    ),
                     _fmt_table_value(rr["trust_rid_median"] if pd.notna(rr["trust_rid_median"]) else float("nan")),
                 ]
             )
         # Replace first two columns with true means from source dataframe.
-        mean_lookup: dict[str, tuple[float, float]] = {}
-        for label, aware_col, trust_col in mean_specs:
+        mean_lookup: dict[str, tuple[float, float, float]] = {}
+        for label, aware_col, instant_col, trust_col in mean_specs:
             if aware_col not in df.columns:
                 continue
             aware_vals = pd.to_numeric(df[aware_col], errors="coerce").dropna().to_numpy(dtype=float)
             if aware_vals.size == 0:
                 continue
             aware_mean = float(np.mean(aware_vals))
+            instant_mean = float("nan")
+            if instant_col and instant_col in df.columns:
+                instant_vals = pd.to_numeric(df[instant_col], errors="coerce").dropna().to_numpy(dtype=float)
+                if instant_vals.size > 0:
+                    instant_mean = float(np.mean(instant_vals))
             trust_mean = float("nan")
             if trust_col and trust_col in df.columns:
                 trust_vals = pd.to_numeric(df[trust_col], errors="coerce").dropna().to_numpy(dtype=float)
                 if trust_vals.size > 0:
                     trust_mean = float(np.mean(trust_vals))
-            mean_lookup[label] = (aware_mean, trust_mean)
+            mean_lookup[label] = (aware_mean, instant_mean, trust_mean)
         for r in table2_rows:
-            m = mean_lookup.get(r[0], (float("nan"), float("nan")))
+            m = mean_lookup.get(r[0], (float("nan"), float("nan"), float("nan")))
             r[1] = _fmt_table_value(m[0])
             r[2] = _fmt_table_value(m[1])
+            r[3] = _fmt_table_value(m[2])
         p_table2_csv = out_dir / "table_ii_nmac_summary_statistics.csv"
         pd.DataFrame(
             table2_rows,
             columns=[
                 "Metric",
                 "Mean (SA)",
+                "Mean (SA InstantDetect)",
                 "Mean (Trust-RID)",
                 "Median (SA)",
+                "Median (SA InstantDetect)",
                 "Median (Trust-RID)",
             ],
         ).to_csv(p_table2_csv, index=False)
@@ -460,7 +613,15 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
         p_table2_pdf = _save_table_pdf(
             plt=plt,
             rows=table2_rows,
-            headers=["Metric", "Mean\n(SA)", "Mean\n(Trust-RID)", "Median\n(SA)", "Median\n(Trust-RID)"],
+            headers=[
+                "Metric",
+                "Mean\n(SA)",
+                "Mean\n(SA-ID)",
+                "Mean\n(Trust-RID)",
+                "Median\n(SA)",
+                "Median\n(SA-ID)",
+                "Median\n(Trust-RID)",
+            ],
             title="TABLE II",
             subtitle="NMAC (real-position) summary statistics",
             out_path=out_dir / "table_ii_nmac_summary_statistics.pdf",
@@ -472,7 +633,7 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
     if stale_summary_means_png.exists():
         stale_summary_means_png.unlink()
 
-    # Runtime comparison across scenarios: SpoofingAware vs TrustRID.
+    # Runtime comparison across scenarios: SpoofingAware vs InstantDetect vs TrustRID.
     # Uses full wall-clock per-variant runtime from run_timing.csv.
     rt = None
     runtime_label = "Wall-clock runtime per run (s)"
@@ -483,6 +644,7 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             if (
                 "scenario" in rt_file.columns
                 and "elapsed_aware_seconds" in rt_file.columns
+                and "elapsed_aware_instant_detect_seconds" in rt_file.columns
                 and "elapsed_trust_rid_seconds" in rt_file.columns
             ):
                 rt = rt_file.copy()
@@ -495,6 +657,9 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             aware_meds: list[float] = []
             aware_err_lo: list[float] = []
             aware_err_hi: list[float] = []
+            instant_meds: list[float] = []
+            instant_err_lo: list[float] = []
+            instant_err_hi: list[float] = []
             trust_meds: list[float] = []
             trust_err_lo: list[float] = []
             trust_err_hi: list[float] = []
@@ -502,12 +667,18 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             for scen in scenarios:
                 ss = rt[rt["scenario"] == scen]
                 aware_vals = pd.to_numeric(ss["elapsed_aware_seconds"], errors="coerce").dropna().to_numpy(dtype=float)
+                instant_vals = pd.to_numeric(
+                    ss["elapsed_aware_instant_detect_seconds"], errors="coerce"
+                ).dropna().to_numpy(dtype=float)
                 trust_vals = pd.to_numeric(ss["elapsed_trust_rid_seconds"], errors="coerce").dropna().to_numpy(dtype=float)
-                if aware_vals.size == 0 or trust_vals.size == 0:
+                if aware_vals.size == 0 or instant_vals.size == 0 or trust_vals.size == 0:
                     continue
                 a_q1 = float(np.quantile(aware_vals, 0.25))
                 a_med = float(np.quantile(aware_vals, 0.5))
                 a_q3 = float(np.quantile(aware_vals, 0.75))
+                i_q1 = float(np.quantile(instant_vals, 0.25))
+                i_med = float(np.quantile(instant_vals, 0.5))
+                i_q3 = float(np.quantile(instant_vals, 0.75))
                 t_q1 = float(np.quantile(trust_vals, 0.25))
                 t_med = float(np.quantile(trust_vals, 0.5))
                 t_q3 = float(np.quantile(trust_vals, 0.75))
@@ -516,41 +687,53 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 aware_meds.append(a_med)
                 aware_err_lo.append(a_med - a_q1)
                 aware_err_hi.append(a_q3 - a_med)
+                instant_meds.append(i_med)
+                instant_err_lo.append(i_med - i_q1)
+                instant_err_hi.append(i_q3 - i_med)
                 trust_meds.append(t_med)
                 trust_err_lo.append(t_med - t_q1)
                 trust_err_hi.append(t_q3 - t_med)
 
             if labels:
                 x = np.arange(len(labels))
-                width = 0.38
+                width = 0.25
                 fig, ax = plt.subplots(figsize=(12.5, 5.5))
                 ax.bar(
-                    x - width / 2,
+                    x - width,
                     aware_meds,
                     width=width,
                     yerr=[aware_err_lo, aware_err_hi],
                     capsize=3,
                     label="SpoofingAware",
-                    color="#4c78a8",
+                    color=VARIANT_COLORS["SpoofingAware"],
                 )
                 ax.bar(
-                    x + width / 2,
+                    x,
+                    instant_meds,
+                    width=width,
+                    yerr=[instant_err_lo, instant_err_hi],
+                    capsize=3,
+                    label="SpoofingAwareInstantDetect",
+                    color=VARIANT_COLORS["SpoofingAwareInstantDetect"],
+                )
+                ax.bar(
+                    x + width,
                     trust_meds,
                     width=width,
                     yerr=[trust_err_lo, trust_err_hi],
                     capsize=3,
                     label="TrustRID",
-                    color="#f58518",
+                    color=VARIANT_COLORS["TrustRID"],
                 )
                 ax.set_xticks(x)
                 ax.set_xticklabels(labels, rotation=20, ha="right")
                 ax.set_ylabel(runtime_label)
-                ax.set_title("Runtime by Scenario: SpoofingAware vs TrustRID (median with IQR)")
+                ax.set_title("Runtime by Scenario: SpoofingAware vs InstantDetect vs TrustRID (median with IQR)")
                 ax.grid(axis="y", alpha=0.2)
                 ax.legend()
                 fig.tight_layout()
                 p = out_dir / "runtime_compare_scenarios_aware_vs_trustrid.pdf"
-                fig.savefig(p, dpi=220)
+                p = _save_figure_dual(fig, p, dpi=220)
                 plt.close(fig)
                 out_paths.append(p)
 
@@ -561,19 +744,30 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                         [
                             label.replace(" ", "_").lower(),
                             _fmt_table_value(aware_meds[i]),
+                            _fmt_table_value(instant_meds[i]),
                             _fmt_table_value(trust_meds[i]),
                         ]
                     )
                 p_table3_csv = out_dir / "table_iii_runtime_median_per_scenario_seconds.csv"
                 pd.DataFrame(
                     runtime_rows,
-                    columns=["Scenario", "Median (SA) [s]", "Median (Trust-RID) [s]"],
+                    columns=[
+                        "Scenario",
+                        "Median (SA) [s]",
+                        "Median (SA InstantDetect) [s]",
+                        "Median (Trust-RID) [s]",
+                    ],
                 ).to_csv(p_table3_csv, index=False)
                 out_paths.append(p_table3_csv)
                 p_table3_pdf = _save_table_pdf(
                     plt=plt,
                     rows=runtime_rows,
-                    headers=["Scenario", "Median (SA) [s]", "Median (Trust-RID) [s]"],
+                    headers=[
+                        "Scenario",
+                        "Median (SA) [s]",
+                        "Median (SA-ID) [s]",
+                        "Median (Trust-RID) [s]",
+                    ],
                     title="TABLE III",
                     subtitle="Median runtime per scenario (seconds)",
                     out_path=out_dir / "table_iii_runtime_median_per_scenario_seconds.pdf",
@@ -675,52 +869,17 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                     if p_cb_pdf is not None:
                         out_paths.append(p_cb_pdf)
 
-    # Detection MLAT coverage by scenario (aware only): median with IQR.
-    if "tag" in df.columns and "detection_mlat_skipped_insufficient_receivers_fraction_aware" in df.columns:
-        dd = df.copy()
-        dd["scenario"] = dd["tag"].apply(_scenario_group_from_tag)
-        scenarios = sorted(dd["scenario"].dropna().unique().tolist())
-        labels: list[str] = []
-        medians: list[float] = []
-        err_lo: list[float] = []
-        err_hi: list[float] = []
-        for scen in scenarios:
-            ss = dd[dd["scenario"] == scen]
-            vals = pd.to_numeric(
-                ss["detection_mlat_skipped_insufficient_receivers_fraction_aware"],
-                errors="coerce",
-            ).dropna().to_numpy(dtype=float)
-            if vals.size == 0:
-                continue
-            q1 = float(np.quantile(vals, 0.25))
-            med = float(np.quantile(vals, 0.5))
-            q3 = float(np.quantile(vals, 0.75))
-            labels.append(scen.replace("Scenario_", "").replace("_", " "))
-            medians.append(med)
-            err_lo.append(max(0.0, med - q1))
-            err_hi.append(max(0.0, q3 - med))
-
-        if labels:
-            x = np.arange(len(labels))
-            fig, ax = plt.subplots(figsize=(max(10.0, 1.5 * len(labels)), 5.0))
-            ax.bar(
-                x,
-                medians,
-                yerr=[err_lo, err_hi],
-                capsize=3,
-                color="#4c78a8",
-            )
-            ax.set_xticks(x)
-            ax.set_xticklabels(labels, rotation=20, ha="right")
-            ax.set_ylabel("fraction of detection callbacks skipped")
-            ax.set_ylim(0.0, 1.0)
-            ax.set_title("Detection MLAT Skip Fraction by Scenario (median with IQR)")
-            ax.grid(axis="y", alpha=0.2)
-            fig.tight_layout()
-            p = out_dir / "detection_mlat_skip_fraction_by_scenario.pdf"
-            fig.savefig(p, dpi=220)
-            plt.close(fig)
-            out_paths.append(p)
+    # Retired chart: detection_mlat_skip_fraction_by_scenario.
+    # It is intentionally not generated anymore.
+    for stale in [
+        out_dir / "detection_mlat_skip_fraction_by_scenario.pdf",
+        out_dir / "pdfs" / "detection_mlat_skip_fraction_by_scenario.pdf",
+        out_dir / "pngs" / "detection_mlat_skip_fraction_by_scenario.png",
+        out_dir / "keycharts" / "detection_mlat_skip_fraction_by_scenario.pdf",
+        out_dir / "keycharts" / "detection_mlat_skip_fraction_by_scenario.png",
+    ]:
+        if stale.exists():
+            stale.unlink()
 
     # Cleanup stale runtime chart that is now intentionally removed.
     stale_runtime_scalability = out_dir / "runtime_scalability_hub.png"
@@ -988,7 +1147,8 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         if not scenarios:
             return None
         n = len(scenarios)
-        fig, axes = plt.subplots(1, n, figsize=(5.0 * n, 4.2), squeeze=False)
+        fig, axes = plt.subplots(1, n, figsize=(5.0 * n, 4.2), squeeze=False, sharey=True)
+        global_y_values: list[float] = []
         for i, scen in enumerate(scenarios):
             ax = axes[0][i]
             ss = sub[sub["scenario"] == scen]
@@ -997,7 +1157,15 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                 if g.empty:
                     continue
                 med = g.groupby("time", as_index=False)["value"].median()
-                ax.plot(med["time"], med["value"], label=variant)
+                ax.plot(
+                    med["time"],
+                    med["value"],
+                    label=variant,
+                    color=VARIANT_COLORS.get(variant),
+                    linestyle=VARIANT_LINESTYLES.get(variant, "-"),
+                    linewidth=1.9,
+                )
+                global_y_values.extend(med["value"].tolist())
             if hline is not None:
                 ax.axhline(
                     y=hline,
@@ -1020,44 +1188,45 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
             ax.set_ylabel(ylabel)
             ax.grid(alpha=0.2)
             ax.legend(fontsize=8)
+        ylim = _safe_axis_limits(global_y_values)
+        if ylim is not None:
+            for ax in axes[0]:
+                ax.set_ylim(*ylim)
         fig.suptitle(title)
         fig.tight_layout()
         p = out_dir / out_name
-        fig.savefig(p, dpi=220)
+        p = _save_figure_dual(fig, p, dpi=220)
         plt.close(fig)
         return p
 
     def _plot_detection_timing(df: pd.DataFrame) -> Path | None:
-        # Use spoofing-aware-only vectors to extract first detection time per run.
-        # Prefer spoofer_detected; fall back to combined_alert if needed.
-        aware = df[df["variant"] == "SpoofingAware"].copy()
-        if aware.empty:
+        # Compare first detection timing across all variants when available.
+        if df.empty:
             return None
-        aware["name"] = aware["name"].astype(str)
-        metric = "spoofer_detected"
-        if not (aware["name"] == metric).any():
-            metric = "combined_alert"
-            if not (aware["name"] == metric).any():
-                return None
-
-        sub = aware[aware["name"] == metric].copy()
-        sub["value"] = pd.to_numeric(sub["value"], errors="coerce")
-        sub["time"] = pd.to_numeric(sub["time"], errors="coerce")
-        sub = sub.dropna(subset=["value", "time", "source_file", "scenario"])
-        if sub.empty:
+        sub_all = df.copy()
+        sub_all["name"] = sub_all["name"].astype(str)
+        metric = "spoofer_detected" if (sub_all["name"] == "spoofer_detected").any() else "combined_alert"
+        if not (sub_all["name"] == metric).any():
+            return None
+        sub_all = sub_all[sub_all["name"] == metric].copy()
+        sub_all["value"] = pd.to_numeric(sub_all["value"], errors="coerce")
+        sub_all["time"] = pd.to_numeric(sub_all["time"], errors="coerce")
+        sub_all = sub_all.dropna(subset=["value", "time", "source_file", "scenario", "variant"])
+        if sub_all.empty:
             return None
 
         rows: list[dict] = []
-        grouped = sub.sort_values(["source_file", "time"]).groupby(["scenario", "source_file"], as_index=False)
-        for (scen, src), g in grouped:
+        grouped = sub_all.sort_values(["source_file", "time"]).groupby(
+            ["scenario", "variant", "source_file"], as_index=False
+        )
+        for (scen, variant, src), g in grouped:
             detected = g[g["value"] > 0.5]
             rows.append(
                 {
                     "scenario": str(scen),
+                    "variant": str(variant),
                     "source_file": str(src),
-                    "first_detection_time_s": (
-                        float(detected["time"].iloc[0]) if not detected.empty else float("nan")
-                    ),
+                    "first_detection_time_s": float(detected["time"].iloc[0]) if not detected.empty else float("nan"),
                 }
             )
         det_df = pd.DataFrame(rows)
@@ -1069,29 +1238,56 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         det_df.to_csv(det_csv, index=False)
         out_paths.append(det_csv)
 
-        # Plot distribution across runs for each scenario.
+        # Plot distribution across runs for each scenario and variant.
         scen_order = sorted(det_df["scenario"].dropna().unique().tolist())
-        data = [
-            pd.to_numeric(
-                det_df.loc[det_df["scenario"] == s, "first_detection_time_s"], errors="coerce"
-            ).dropna().to_numpy(dtype=float)
-            for s in scen_order
-        ]
-        if all(len(v) == 0 for v in data):
+        variants = [v for v in VARIANT_ORDER if v in det_df["variant"].unique().tolist()]
+        if not variants:
             return None
 
         fig, ax = plt.subplots(figsize=(max(8.0, 1.7 * len(scen_order)), 4.6))
-        ax.boxplot(data, labels=scen_order)
-        ax.set_title("SpoofingAware First Detection Time by Scenario")
+        width = 0.22
+        positions: list[float] = []
+        data: list[np.ndarray] = []
+        labels: list[str] = []
+        for si, scen in enumerate(scen_order):
+            base = float(si)
+            for vi, variant in enumerate(variants):
+                vals = pd.to_numeric(
+                    det_df.loc[
+                        (det_df["scenario"] == scen) & (det_df["variant"] == variant),
+                        "first_detection_time_s",
+                    ],
+                    errors="coerce",
+                ).dropna().to_numpy(dtype=float)
+                if vals.size == 0:
+                    continue
+                positions.append(base + (vi - (len(variants) - 1) / 2.0) * width)
+                data.append(vals)
+                labels.append(variant)
+        if not data:
+            plt.close(fig)
+            return None
+        bp = ax.boxplot(data, positions=positions, widths=width * 0.85, patch_artist=True)
+        for patch, lbl in zip(bp["boxes"], labels):
+            patch.set_facecolor(VARIANT_COLORS.get(lbl, "#999999"))
+            patch.set_alpha(0.6)
+        ax.set_xticks(np.arange(len(scen_order)))
+        ax.set_xticklabels(scen_order, rotation=20, ha="right")
+        ax.set_title("First Detection Time by Scenario (All Variants)")
         ax.set_ylabel("first detection time (s)")
         ax.set_xlabel("scenario")
         ax.grid(axis="y", alpha=0.2)
-        for tick in ax.get_xticklabels():
-            tick.set_rotation(20)
-            tick.set_ha("right")
+        legend_done: set[str] = set()
+        for lbl in labels:
+            if lbl in legend_done:
+                continue
+            ax.plot([], [], color=VARIANT_COLORS.get(lbl, "#999999"), linewidth=8, alpha=0.6, label=lbl)
+            legend_done.add(lbl)
+        if legend_done:
+            ax.legend(fontsize=8, loc="best")
         fig.tight_layout()
         p = out_dir / "detection_first_time_by_scenario.pdf"
-        fig.savefig(p, dpi=220)
+        p = _save_figure_dual(fig, p, dpi=220)
         plt.close(fig)
         return p
 
@@ -1128,7 +1324,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         fig.suptitle("SpoofingAware IMM Mode Probabilities Through Time (Median)")
         fig.tight_layout()
         p = out_dir / "timeseries_imm_mode_probabilities_median.pdf"
-        fig.savefig(p, dpi=220)
+        p = _save_figure_dual(fig, p, dpi=220)
         plt.close(fig)
         return p
 
@@ -1164,7 +1360,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         fig.suptitle("SpoofingAware IMM: True vs Estimated XY Trajectory (Median)")
         fig.tight_layout()
         p = out_dir / "timeseries_imm_true_vs_estimated_xy_median.pdf"
-        fig.savefig(p, dpi=220)
+        p = _save_figure_dual(fig, p, dpi=220)
         plt.close(fig)
         return p
 
@@ -1220,21 +1416,22 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         fig.suptitle("SpoofingAware IMM Position Error from True vs Estimated Trajectory (Median)")
         fig.tight_layout()
         p = out_dir / "timeseries_imm_error_norm_median.pdf"
-        fig.savefig(p, dpi=220)
+        p = _save_figure_dual(fig, p, dpi=220)
         plt.close(fig)
         return p
 
     def _plot_localization_and_bubble_by_scenario(df: pd.DataFrame) -> Path | None:
+        variants = ["SpoofingAware", "SpoofingAwareInstantDetect"]
         containment = df[
-            (df["variant"] == "SpoofingAware")
+            (df["variant"].isin(variants))
             & (df["name"].str.contains("spoofer_containment_rate", na=False))
         ]
         loc = df[
-            (df["variant"] == "SpoofingAware")
+            (df["variant"].isin(variants))
             & (df["name"].str.contains("localization_rmse_m", na=False))
         ]
         bubble = df[
-            (df["variant"] == "SpoofingAware")
+            (df["variant"].isin(variants))
             & (df["name"].str.contains("unsafe_radius_max_m", na=False))
         ]
         if containment.empty or loc.empty or bubble.empty:
@@ -1247,63 +1444,96 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         if not scenarios:
             return None
         n = len(scenarios)
-        fig, axes = plt.subplots(1, n, figsize=(5.6 * n, 4.2), squeeze=False)
+        fig, axes = plt.subplots(3, n, figsize=(5.8 * n, 8.6), squeeze=False, sharex="col")
+        row1_vals: list[float] = []
+        row2_vals: list[float] = []
+        row3_vals: list[float] = []
         for i, scen in enumerate(scenarios):
-            ax = axes[0][i]
+            ax_cont = axes[0][i]
+            ax_loc = axes[1][i]
+            ax_bub = axes[2][i]
+
             containment_s = containment[containment["scenario"] == scen]
             loc_s = loc[loc["scenario"] == scen]
             bubble_s = bubble[bubble["scenario"] == scen]
-            if containment_s.empty or loc_s.empty or bubble_s.empty:
+            if containment_s.empty and loc_s.empty and bubble_s.empty:
                 continue
-            containment_med = containment_s.groupby("time", as_index=False)["value"].median()
-            loc_med = loc_s.groupby("time", as_index=False)["value"].median()
-            bubble_med = bubble_s.groupby("time", as_index=False)["value"].median()
 
-            line1 = ax.plot(
-                containment_med["time"],
-                containment_med["value"],
-                color="#2ca02c",
-                linewidth=1.7,
-                label="Containment rate median",
-            )[0]
-            ax.set_xlabel("time (s)")
-            ax.set_ylabel("containment rate", color="#2ca02c")
-            ax.tick_params(axis="y", labelcolor="#2ca02c")
-            ax.set_ylim(-0.02, 1.02)
-            ax.grid(alpha=0.2)
+            for variant in variants:
+                color = VARIANT_COLORS.get(variant, "#1f77b4")
+                style = VARIANT_LINESTYLES.get(variant, "-")
 
-            ax2 = ax.twinx()
-            line2 = ax2.plot(
-                loc_med["time"],
-                loc_med["value"],
-                color="#1f77b4",
-                linewidth=1.7,
-                label="Localization RMSE median (m)",
-            )[0]
-            line3 = ax2.plot(
-                bubble_med["time"],
-                bubble_med["value"],
-                color="#ff7f0e",
-                linewidth=1.7,
-                label="Unsafe bubble radius max median (m)",
-            )[0]
-            ax2.set_ylabel("meters", color="#1f77b4")
-            ax2.tick_params(axis="y", labelcolor="#1f77b4")
+                containment_v = containment_s[containment_s["variant"] == variant]
+                if not containment_v.empty:
+                    containment_med = containment_v.groupby("time", as_index=False)["value"].median()
+                    ax_cont.plot(
+                        containment_med["time"],
+                        containment_med["value"],
+                        color=color,
+                        linestyle=style,
+                        linewidth=2.0,
+                        label=variant,
+                    )
+                    row1_vals.extend(containment_med["value"].tolist())
 
-            ax.set_title(str(scen))
-            ax.legend(
-                [line1, line2, line3],
-                [line1.get_label(), line2.get_label(), line3.get_label()],
-                fontsize=8,
-                loc="best",
-            )
+                loc_v = loc_s[loc_s["variant"] == variant]
+                if not loc_v.empty:
+                    loc_med = loc_v.groupby("time", as_index=False)["value"].median()
+                    ax_loc.plot(
+                        loc_med["time"],
+                        loc_med["value"],
+                        color=color,
+                        linestyle=style,
+                        linewidth=2.0,
+                        label=variant,
+                    )
+                    row2_vals.extend(loc_med["value"].tolist())
+
+                bubble_v = bubble_s[bubble_s["variant"] == variant]
+                if not bubble_v.empty:
+                    bubble_med = bubble_v.groupby("time", as_index=False)["value"].median()
+                    ax_bub.plot(
+                        bubble_med["time"],
+                        bubble_med["value"],
+                        color=color,
+                        linestyle=style,
+                        linewidth=2.0,
+                        label=variant,
+                    )
+                    row3_vals.extend(bubble_med["value"].tolist())
+
+            ax_cont.set_title(str(scen))
+            ax_cont.set_ylabel("containment rate")
+            ax_cont.set_ylim(-0.02, 1.02)
+            ax_cont.grid(alpha=0.25)
+
+            ax_loc.set_ylabel("localization RMSE (m)")
+            ax_loc.grid(alpha=0.25)
+
+            ax_bub.set_ylabel("unsafe bubble radius max (m)")
+            ax_bub.set_xlabel("time (s)")
+            ax_bub.grid(alpha=0.25)
+
+            if i == 0:
+                handles, labels = ax_cont.get_legend_handles_labels()
+                if handles:
+                    ax_cont.legend(handles, labels, fontsize=8, loc="best")
+
+        ylim_loc = _safe_axis_limits(row2_vals)
+        ylim_bub = _safe_axis_limits(row3_vals)
+        for i in range(n):
+            axes[0][i].set_ylim(-0.02, 1.02)
+            if ylim_loc is not None:
+                axes[1][i].set_ylim(*ylim_loc)
+            if ylim_bub is not None:
+                axes[2][i].set_ylim(*ylim_bub)
 
         fig.suptitle(
-            "SpoofingAware Containment (left) and Localization/Bubble Metrics (right) Through Time (Median)"
+            "Containment, Localization RMSE, and Unsafe-Bubble Radius Through Time (Median)"
         )
-        fig.tight_layout()
+        fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
         p = out_dir / "timeseries_containment_localization_unsafe_bubble_median.pdf"
-        fig.savefig(p, dpi=220)
+        p = _save_figure_dual(fig, p, dpi=220)
         plt.close(fig)
         return p
 
@@ -1313,7 +1543,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         title="Min Benign-Spoofer Distance Through Time (Median, by Scenario)",
         ylabel="distance (m)",
         out_name="timeseries_min_distance_median.pdf",
-        variants=["SpoofingAware", "TrustRID"],
+        variants=["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"],
         hline=NMAC_THRESHOLD_M,
         hline_label=f"NMAC threshold ({int(NMAC_THRESHOLD_M)} m)",
     )
@@ -1411,21 +1641,21 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                 "Benign-Benign NMACs Through Time (Median, by Scenario)",
                 "cumulative benign-benign NMAC count",
                 "timeseries_nmac_benign_benign_median.pdf",
-                ["SpoofingAware", "TrustRID"],
+                ["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"],
             ),
             (
                 "nmac_benign_spoofer_total",
                 "Benign-Spoofer NMACs Through Time (Median, by Scenario)",
                 "cumulative benign-spoofer NMAC count",
                 "timeseries_nmac_benign_spoofer_median.pdf",
-                ["SpoofingAware", "TrustRID"],
+                ["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"],
             ),
             (
                 "nmac_spoofer_unsafe_total",
                 "SpoofingAware Unsafe-Region NMACs Through Time (Median, by Scenario)",
                 "cumulative unsafe-region NMAC count",
                 "timeseries_nmac_spoofer_unsafe_median.pdf",
-                ["SpoofingAware"],
+                ["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"],
             ),
         ]
         for metric_pattern, title, ylabel, out_name, variants in nmac_timeseries_specs:
@@ -1550,15 +1780,14 @@ def _load_3d_tx_points(parquet_path: Path, sample_every: int = 3) -> pd.DataFram
         return tx
     tx = tx.sort_values(["serial_number", "time"])
     if sample_every > 1:
-        tx = tx.groupby("serial_number", group_keys=False).apply(
-            lambda g: g.iloc[::sample_every]
-        )
+        step_mask = (tx.groupby("serial_number").cumcount() % sample_every) == 0
+        tx = tx[step_mask].copy()
     return tx
 
 
 def _collect_generated_parquets(generated_dir: Path) -> dict[str, dict[str, list[Path]]]:
     groups: dict[str, dict[str, list[Path]]] = defaultdict(
-        lambda: {"SpoofingAware": [], "TrustRID": []}
+        lambda: {"SpoofingAware": [], "SpoofingAwareInstantDetect": [], "TrustRID": []}
     )
     for scen_dir in sorted(generated_dir.iterdir()):
         if not scen_dir.is_dir() or not (scen_dir / "omnetpp.ini").is_file():
@@ -1568,6 +1797,8 @@ def _collect_generated_parquets(generated_dir: Path) -> dict[str, dict[str, list
             variant = _variant_from_parquet_name(p.name)
             if variant is None:
                 continue
+            if variant not in groups[group]:
+                groups[group][variant] = []
             groups[group][variant].append(p)
     return groups
 
@@ -1589,15 +1820,12 @@ def _set_axes_equal(ax, xr, yr, zr) -> None:
 def _plot_3d_group(group: str, by_variant: dict[str, list[Path]], out_dir: Path, sample_every: int) -> Path | None:
     import matplotlib.pyplot as plt
 
-    variants = ["SpoofingAware", "TrustRID"]
+    variants = ["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"]
     if all(len(by_variant.get(v, [])) == 0 for v in variants):
         return None
 
-    fig = plt.figure(figsize=(14.5, 6.8))
-    axs = [
-        fig.add_subplot(1, 2, 1, projection="3d"),
-        fig.add_subplot(1, 2, 2, projection="3d"),
-    ]
+    fig = plt.figure(figsize=(21.0, 6.8))
+    axs = [fig.add_subplot(1, 3, i + 1, projection="3d") for i in range(3)]
     fig.suptitle(f"3D Trajectory Overlay Across Seeds: {group}", fontsize=14)
 
     x_all: list[float] = []
@@ -1660,7 +1888,7 @@ def _plot_3d_group(group: str, by_variant: dict[str, list[Path]], out_dir: Path,
 
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])
     out = out_dir / f"trajectory_overlay_3d_{group}.pdf"
-    fig.savefig(out, dpi=240)
+    out = _save_figure_dual(fig, out, dpi=240)
     plt.close(fig)
     return out
 
@@ -1926,18 +2154,29 @@ def _export_keycharts(out_dir: Path, written: list[Path]) -> list[Path]:
 
     copied: list[Path] = []
     for p in written:
-        if p.parent != out_dir:
+        if not p.is_file():
             continue
         if p.name in key_names:
             dst = key_dir / p.name
             shutil.copy2(p, dst)
             copied.append(dst)
+            if p.suffix.lower() == ".pdf":
+                png_src = p.parent.parent / "pngs" / f"{p.stem}.png"
+                if png_src.is_file():
+                    png_dst = key_dir / png_src.name
+                    shutil.copy2(png_src, png_dst)
+                    copied.append(png_dst)
 
     # Include all generated 3D trajectory overlays as key artifacts.
-    for p in sorted(out_dir.glob("trajectory_overlay_3d_*.pdf")):
+    for p in sorted((out_dir / "pdfs").glob("trajectory_overlay_3d_*.pdf")):
         dst = key_dir / p.name
         shutil.copy2(p, dst)
         copied.append(dst)
+        png_src = out_dir / "pngs" / f"{p.stem}.png"
+        if png_src.is_file():
+            png_dst = key_dir / png_src.name
+            shutil.copy2(png_src, png_dst)
+            copied.append(png_dst)
 
     return copied
 

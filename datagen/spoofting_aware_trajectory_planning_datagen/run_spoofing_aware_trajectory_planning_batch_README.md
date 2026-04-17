@@ -66,7 +66,11 @@ Each run writes:
 - `generated/` - per scenario-seed generated INI + simulation artifacts
 - `summary.csv` - paired Aware vs TrustRID scalar summary (instant-detect runs are additional outputs)
 - `gcs_vectors/` - exported vector CSVs (if enabled)
-- `charts/` - summary and timeseries plots/tables
+- `charts/` - summary and timeseries plots/tables (`charts/pdfs` and `charts/pngs`)
+- `variants/` - per-variant chart views:
+  - `variants/spoofing_aware_trajectory_planning/charts/{pdfs,pngs}`
+  - `variants/instant_detect/charts/{pdfs,pngs}`
+  - `variants/trustRID/charts/{pdfs,pngs}`
 - `run_timing.csv` - wall-clock timings per scenario-seed pair, including instant-detect variant timing
 - `total_runtime_seconds.txt` - total batch runtime
 

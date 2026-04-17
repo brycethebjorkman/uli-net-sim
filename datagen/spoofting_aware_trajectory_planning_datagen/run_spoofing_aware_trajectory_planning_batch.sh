@@ -202,6 +202,10 @@ GEN_DIR="$RUN_ROOT/generated"
 SUMMARY_CSV="$RUN_ROOT/summary.csv"
 GCS_VEC_DIR="$RUN_ROOT/gcs_vectors"
 RUNTIME_CSV="$RUN_ROOT/run_timing.csv"
+VARIANT_ROOT="$RUN_ROOT/variants"
+VARIANT_DIR_AWARE="$VARIANT_ROOT/spoofing_aware_trajectory_planning"
+VARIANT_DIR_INSTANT="$VARIANT_ROOT/instant_detect"
+VARIANT_DIR_TRUST="$VARIANT_ROOT/trustRID"
 OVERALL_START_EPOCH="$(date +%s)"
 FAILED_RUN_JOBS=0
 PIPELINE_FAILED=0
@@ -306,13 +310,19 @@ fi
 export ULI_NET_SIM_IMAGE="$IMAGE"
 
 mkdir -p "$GEN_DIR" "$GCS_VEC_DIR" "$RUN_ROOT/charts"
+mkdir -p "$VARIANT_DIR_AWARE/charts/pdfs" "$VARIANT_DIR_AWARE/charts/pngs"
+mkdir -p "$VARIANT_DIR_INSTANT/charts/pdfs" "$VARIANT_DIR_INSTANT/charts/pngs"
+mkdir -p "$VARIANT_DIR_TRUST/charts/pdfs" "$VARIANT_DIR_TRUST/charts/pngs"
 mkdir -p "$RUN_ROOT"
 echo "scenario,seed,scenario_tag,elapsed_seconds,elapsed_aware_seconds,elapsed_aware_instant_detect_seconds,elapsed_trust_rid_seconds" > "$RUNTIME_CSV"
 
 if [[ "$DO_CLEAN" == "1" ]]; then
   echo "== Cleaning prior artifacts for run root =="
-  rm -rf "$GEN_DIR" "$RUN_ROOT/charts" || true
+  rm -rf "$GEN_DIR" "$RUN_ROOT/charts" "$VARIANT_ROOT" || true
   mkdir -p "$GEN_DIR" "$GCS_VEC_DIR" "$RUN_ROOT/charts"
+  mkdir -p "$VARIANT_DIR_AWARE/charts/pdfs" "$VARIANT_DIR_AWARE/charts/pngs"
+  mkdir -p "$VARIANT_DIR_INSTANT/charts/pdfs" "$VARIANT_DIR_INSTANT/charts/pngs"
+  mkdir -p "$VARIANT_DIR_TRUST/charts/pdfs" "$VARIANT_DIR_TRUST/charts/pngs"
   rm -f "$SUMMARY_CSV" || true
   rm -f "$GCS_VEC_DIR"/*.csv || true
 fi
@@ -486,6 +496,32 @@ if [[ "$DO_PLOT" == "1" ]]; then
     --mission-goal-tol-m "$MISSION_GOAL_TOL_M"; then
     PIPELINE_FAILED=1
     echo "[WARN] Chart generation failed."
+  else
+    echo "== Organizing per-variant chart views =="
+    python3 - "$RUN_ROOT/charts" "$VARIANT_DIR_AWARE/charts" "$VARIANT_DIR_INSTANT/charts" "$VARIANT_DIR_TRUST/charts" <<'PY'
+from pathlib import Path
+import shutil
+import sys
+
+charts_root = Path(sys.argv[1])
+variant_chart_roots = [Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4])]
+
+src_pdfs = charts_root / "pdfs"
+src_pngs = charts_root / "pngs"
+for vr in variant_chart_roots:
+    (vr / "pdfs").mkdir(parents=True, exist_ok=True)
+    (vr / "pngs").mkdir(parents=True, exist_ok=True)
+
+if src_pdfs.is_dir():
+    for src in sorted(src_pdfs.glob("*.pdf")):
+        for vr in variant_chart_roots:
+            shutil.copy2(src, vr / "pdfs" / src.name)
+
+if src_pngs.is_dir():
+    for src in sorted(src_pngs.glob("*.png")):
+        for vr in variant_chart_roots:
+            shutil.copy2(src, vr / "pngs" / src.name)
+PY
   fi
 fi
 
@@ -497,6 +533,7 @@ echo "$total_elapsed" > "$RUN_ROOT/total_runtime_seconds.txt"
 echo "Summary:  $SUMMARY_CSV"
 echo "Vectors:  $GCS_VEC_DIR"
 echo "Charts:   $RUN_ROOT/charts"
+echo "Variant folders: $VARIANT_ROOT/{spoofing_aware_trajectory_planning,instant_detect,trustRID}"
 echo "Run timing CSV: $RUNTIME_CSV"
 if (( FAILED_RUN_JOBS > 0 )); then
   echo "Background run failures: $FAILED_RUN_JOBS"

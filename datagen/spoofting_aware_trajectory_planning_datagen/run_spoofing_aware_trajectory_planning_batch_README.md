@@ -26,12 +26,12 @@ Single scenario:
 
 ```bash
 ./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh \
-  --scenario-config Scenario_Corners_4x1 \
+  --scenario-config Scenario_DepotCity_4x1 \
   --seeds 0:29 \
   --parallel 0
 ```
 
-Paper scenario suite:
+Default depot scenario suite:
 
 ```bash
 ./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh \
@@ -40,31 +40,22 @@ Paper scenario suite:
   --parallel 0
 ```
 
-Paper suite with spoofing detection forced at 5 seconds (Aware only; TrustRID unchanged):
+Depot suite with three variants per scenario-seed (Aware, AwareInstantDetect@5s, TrustRID):
 
 ```bash
 ./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh \
   --paper-scenarios \
-  --include-steepz \
   --seeds 0:29 \
   --parallel 0 \
-  --force-detect-at-sec 5
-```
-
-Paper suite plus `Scenario_SteepZ_8x1`:
-
-```bash
-./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh \
-  --paper-scenarios \
-  --include-steepz \
-  --seeds 0:29 \
-  --parallel 0
+  --instant-detect-at-sec 5
 ```
 
 Notes:
 
 - Batch runs are auto-numbered (for example `0001`, `0002`, ...).
 - Output is written under `simulations/spoofing_aware_with_planning/batches/<run-id>/`.
+- Runner is now depot-only; valid scenarios are:
+  `Scenario_DepotCity_4x1`, `Scenario_DepotCity_8x1`, `Scenario_DepotCity_12x1`, `Scenario_DepotCity_16x1`.
 
 ---
 
@@ -73,10 +64,10 @@ Notes:
 Each run writes:
 
 - `generated/` - per scenario-seed generated INI + simulation artifacts
-- `summary.csv` - paired Aware vs TrustRID scalar summary
+- `summary.csv` - paired Aware vs TrustRID scalar summary (instant-detect runs are additional outputs)
 - `gcs_vectors/` - exported vector CSVs (if enabled)
 - `charts/` - summary and timeseries plots/tables
-- `run_timing.csv` - wall-clock timings per scenario-seed pair
+- `run_timing.csv` - wall-clock timings per scenario-seed pair, including instant-detect variant timing
 - `total_runtime_seconds.txt` - total batch runtime
 
 New paper-style table outputs under `charts/`:
@@ -122,7 +113,7 @@ Detached launch (recommended for SSH disconnect safety):
 ```bash
 cd "/Users/webb/Library/CloudStorage/OneDrive-Vanderbilt/Vanderbilt/Ward_Lab/uli-net-sim"
 mkdir -p logs
-tmux new -d -s batch_run "cd ~/uli-net-sim && LOG=logs/batch_run_\$(date +%Y%m%d_%H%M%S).log && ./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh --paper-scenarios --include-steepz --seeds 0:29 --parallel 8 --skip-build --heartbeat-sec 60 > \"\$LOG\" 2>&1"
+tmux new -d -s batch_run "cd ~/uli-net-sim && LOG=logs/batch_run_\$(date +%Y%m%d_%H%M%S).log && ./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh --paper-scenarios --seeds 0:29 --parallel 8 --skip-build --heartbeat-sec 60 > \"\$LOG\" 2>&1"
 ```
 
 Foreground launch in tmux pane:
@@ -242,7 +233,7 @@ Common toggles:
 - `--mission-goal-tol-m X` goal tolerance for mission-progress success summaries
 - `--no-keep-vec` do not retain `.vec` files
 - `--heartbeat-sec N` emit periodic progress lines in long detached runs (`0` disables)
-- `--force-detect-at-sec N` force spoofing detection event at simulation time `N` seconds in SpoofingAwareGcs
+- `--instant-detect-at-sec N` force spoofing detection event at simulation time `N` seconds for the `*_AwareInstantDetect` runs
 
 ---
 

@@ -24,3 +24,11 @@ class PositionOffsetSpoofer:
                 pos[2] + self.offset[2],
             ),
         }
+
+
+class PositionOffsetSpooferNegZ(PositionOffsetSpoofer):
+    """Adds a fixed negative-Z offset to claimed beacon position."""
+
+    def __init__(self):
+        # Downward-only spoof in local ENU frame: east=0, north=0, up=-50 m.
+        self.offset = (0.0, 0.0, -50.0)

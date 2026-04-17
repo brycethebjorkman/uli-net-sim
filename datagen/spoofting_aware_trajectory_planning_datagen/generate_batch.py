@@ -2,15 +2,16 @@
 """
 generate_batch.py
 
-Materialize seeded random scenarios for batch comparison (SpoofingAwareGcs vs
-TrustRidGcs) under simulations/spoofing_aware_with_planning-style geometry.
+Materialize seeded random scenarios for batch comparison under
+simulations/spoofing_aware_with_planning-style geometry.
 
-Each output directory contains omnetpp.ini with three configs:
+Each output directory contains omnetpp.ini with four configs:
   - <tag>_Base   — shared mobility / radio (not a leaf; extended only)
   - <tag>_Aware  — extends Base (SpoofingAwareGcs)
+  - <tag>_AwareInstantDetect — extends Base (SpoofingAwareGcs; force detect via runner env)
   - <tag>_TrustRid — extends Base (TrustRidGcs)
 
-Leaf configs are *_Aware and *_TrustRid so datagen/run_batch.py runs both.
+Leaf configs are *_Aware, *_AwareInstantDetect, and *_TrustRid.
 
 Example:
     python3 datagen/spoofting_aware_trajectory_planning_datagen/generate_batch.py \\
@@ -178,6 +179,10 @@ def generate_circle8_ini(
         f"extends = {tag}_Base",
         f'description = "SpoofingAwareGcs — {tag}"',
         "",
+        f"[Config {tag}_AwareInstantDetect]",
+        f"extends = {tag}_Base",
+        f'description = "SpoofingAwareGcs instant-detect variant (set ULI_IMM_FORCE_DETECT_AT_S in runner) — {tag}"',
+        "",
         f"[Config {tag}_TrustRid]",
         f"extends = {tag}_Base",
         f'description = "TrustRidGcs baseline — {tag}"',
@@ -214,6 +219,7 @@ def write_bundle(
         "params": asdict(p),
         "configs": {
             "aware": f"{tag}_Aware",
+            "aware_instant_detect": f"{tag}_AwareInstantDetect",
             "trust_rid": f"{tag}_TrustRid",
         },
     }

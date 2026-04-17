@@ -45,7 +45,13 @@ def _apply_paper_style(plt) -> None:
 
 
 def _variant_from_name(name: str) -> str:
-    return "TrustRID" if "TrustRid" in name else ("SpoofingAware" if "Aware" in name else "Unknown")
+    if "TrustRid" in name:
+        return "TrustRID"
+    if "AwareInstantDetect" in name:
+        return "SpoofingAwareInstantDetect"
+    if "Aware" in name:
+        return "SpoofingAware"
+    return "Unknown"
 
 
 _SEED_SUFFIX_RE = re.compile(r"_s\d+$")
@@ -1524,6 +1530,8 @@ PALETTE_3D = [
 
 
 def _variant_from_parquet_name(name: str) -> str | None:
+    if "_AwareInstantDetect" in name:
+        return "SpoofingAwareInstantDetect"
     if "_Aware" in name:
         return "SpoofingAware"
     if "_TrustRid" in name:
@@ -1733,6 +1741,8 @@ def _extract_run_metadata_from_sca(sca_path: Path) -> tuple[dict[int, np.ndarray
 
 
 def _variant_from_parquet_basename(name: str) -> str | None:
+    if "_AwareInstantDetect" in name:
+        return "SpoofingAwareInstantDetect"
     if "_Aware" in name:
         return "SpoofingAware"
     if "_TrustRid" in name:

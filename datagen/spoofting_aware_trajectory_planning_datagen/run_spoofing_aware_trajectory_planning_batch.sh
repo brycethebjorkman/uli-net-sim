@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-command SpoofingAware vs TrustRID comparison runner.
+# One-command SpoofingAware / InstantDetect / TrustRID comparison runner.
 #
 # Supports:
 #   - one scenario or many scenarios
@@ -15,13 +15,12 @@ Usage:
   ./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh [scenario selection] [options]
 
 Scenario selection (choose one):
-  --scenario-config NAME           Single base config (e.g., Scenario_Corners_4x1)
+  --scenario-config NAME           Single base config (e.g., Scenario_DepotCity_4x1)
   --scenario-configs CSV           Comma-separated list of configs
-  --paper-scenarios                Use paper default set:
-                                   Scenario_Corners_4x1,Scenario_Hub_4x1,
-                                   Scenario_Circle_8x1,Scenario_Hub_8x1,
-                                   Scenario_Hub_12x1
-  --include-steepz                 Add Scenario_SteepZ_8x1 to selected set
+  --paper-scenarios                Use default depot set:
+                                   Scenario_DepotCity_4x1,Scenario_DepotCity_8x1,
+                                   Scenario_DepotCity_12x1,Scenario_DepotCity_16x1
+  --include-steepz                 Deprecated; ignored for depot-only runs
 
 Options:
   --seeds SPEC                     Seed spec: "0:29" or "0,1,2" (default: 0)
@@ -37,7 +36,8 @@ Options:
   --plot-profile MODE              Plot set: paper|full (default: paper)
   --mission-goal-tol-m X           Goal tolerance (m) for mission-progress summary (default: 10)
   --heartbeat-sec N                Emit heartbeat every N seconds (0 disables; default: 60)
-  --force-detect-at-sec N          Force spoofing detection at N seconds in SpoofingAwareGcs (default: disabled)
+  --instant-detect-at-sec N        Force spoofing detection at N seconds for instant-detect runs (default: 5)
+  --force-detect-at-sec N          Deprecated alias for --instant-detect-at-sec
   -h, --help                       Show this help
 EOF
 }
@@ -55,7 +55,7 @@ DO_PLOT="1"
 HEARTBEAT_SEC="60"
 PLOT_PROFILE="paper"
 MISSION_GOAL_TOL_M="10"
-FORCE_DETECT_AT_SEC=""
+INSTANT_DETECT_AT_SEC="5"
 
 SINGLE_SCENARIO=""
 SCENARIOS_CSV=""
@@ -117,8 +117,10 @@ while [[ $# -gt 0 ]]; do
       MISSION_GOAL_TOL_M="${2:-}"; shift 2 ;;
     --heartbeat-sec)
       HEARTBEAT_SEC="${2:-}"; shift 2 ;;
+    --instant-detect-at-sec)
+      INSTANT_DETECT_AT_SEC="${2:-}"; shift 2 ;;
     --force-detect-at-sec)
-      FORCE_DETECT_AT_SEC="${2:-}"; shift 2 ;;
+      INSTANT_DETECT_AT_SEC="${2:-}"; shift 2 ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -136,11 +138,10 @@ fi
 declare -a SCENARIOS=()
 if [[ "$PAPER_SCENARIOS" == "1" ]]; then
   SCENARIOS=(
-    "Scenario_Corners_4x1"
-    "Scenario_Hub_4x1"
-    "Scenario_Circle_8x1"
-    "Scenario_Hub_8x1"
-    "Scenario_Hub_12x1"
+    "Scenario_DepotCity_4x1"
+    "Scenario_DepotCity_8x1"
+    "Scenario_DepotCity_12x1"
+    "Scenario_DepotCity_16x1"
   )
 elif [[ -n "$SCENARIOS_CSV" ]]; then
   IFS=',' read -r -a SCENARIOS <<<"$SCENARIOS_CSV"
@@ -153,8 +154,16 @@ else
 fi
 
 if [[ "$INCLUDE_STEEPZ" == "1" ]]; then
-  SCENARIOS+=("Scenario_SteepZ_8x1")
+  echo "[WARN] --include-steepz is deprecated and ignored in depot-only mode."
 fi
+
+for scenario in "${SCENARIOS[@]}"; do
+  if [[ ! "$scenario" =~ ^Scenario_DepotCity_(4x1|8x1|12x1|16x1)$ ]]; then
+    echo "Only depot scenarios are allowed now. Invalid scenario: $scenario" >&2
+    echo "Allowed: Scenario_DepotCity_4x1, Scenario_DepotCity_8x1, Scenario_DepotCity_12x1, Scenario_DepotCity_16x1" >&2
+    exit 2
+  fi
+done
 
 declare -a SEEDS=()
 if [[ "$SEEDS_SPEC" == *:* ]]; then
@@ -216,11 +225,9 @@ if [[ "$PLOT_PROFILE" != "paper" && "$PLOT_PROFILE" != "full" ]]; then
   echo "Invalid --plot-profile value: $PLOT_PROFILE (expected: paper or full)" >&2
   exit 2
 fi
-if [[ -n "$FORCE_DETECT_AT_SEC" ]]; then
-  if ! [[ "$FORCE_DETECT_AT_SEC" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-    echo "Invalid --force-detect-at-sec value: $FORCE_DETECT_AT_SEC (expected non-negative number)" >&2
-    exit 2
-  fi
+if ! [[ "$INSTANT_DETECT_AT_SEC" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "Invalid --instant-detect-at-sec value: $INSTANT_DETECT_AT_SEC (expected non-negative number)" >&2
+  exit 2
 fi
 
 echo "== Config =="
@@ -231,11 +238,7 @@ echo "Parallel jobs: $PARALLEL"
 echo "Heartbeat sec: $HEARTBEAT_SEC"
 echo "Plot profile:  $PLOT_PROFILE"
 echo "Goal tol (m):  $MISSION_GOAL_TOL_M"
-if [[ -n "$FORCE_DETECT_AT_SEC" ]]; then
-  echo "Force detect s: $FORCE_DETECT_AT_SEC"
-else
-  echo "Force detect s: disabled"
-fi
+echo "Instant detect s: $INSTANT_DETECT_AT_SEC"
 
 TOTAL_RUN_JOBS=$(( ${#SCENARIOS[@]} * ${#SEEDS[@]} ))
 COMPLETED_RUN_JOBS=0
@@ -304,7 +307,7 @@ export ULI_NET_SIM_IMAGE="$IMAGE"
 
 mkdir -p "$GEN_DIR" "$GCS_VEC_DIR" "$RUN_ROOT/charts"
 mkdir -p "$RUN_ROOT"
-echo "scenario,seed,scenario_tag,elapsed_seconds,elapsed_aware_seconds,elapsed_trust_rid_seconds" > "$RUNTIME_CSV"
+echo "scenario,seed,scenario_tag,elapsed_seconds,elapsed_aware_seconds,elapsed_aware_instant_detect_seconds,elapsed_trust_rid_seconds" > "$RUNTIME_CSV"
 
 if [[ "$DO_CLEAN" == "1" ]]; then
   echo "== Cleaning prior artifacts for run root =="
@@ -320,35 +323,41 @@ run_one() {
   local scen_tag="$3"
   local scen_dir="$4"
   local aware_cfg="$5"
-  local trust_cfg="$6"
+  local aware_instant_cfg="$6"
+  local trust_cfg="$7"
   local run_start_epoch
   local run_elapsed
   local RUN_CMD_AWARE
+  local RUN_CMD_AWARE_INSTANT
   local RUN_CMD_TRUST
   local aware_elapsed
+  local aware_instant_elapsed
   local trust_elapsed
   local aware_start
+  local aware_instant_start
   local trust_start
 
   echo "== Running $scen_tag comparison =="
   run_start_epoch="$(date +%s)"
   RUN_CMD_AWARE=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$aware_cfg" --parallel 1)
+  RUN_CMD_AWARE_INSTANT=(env ULI_IMM_FORCE_DETECT_AT_S="$INSTANT_DETECT_AT_SEC" ./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$aware_instant_cfg" --parallel 1)
   RUN_CMD_TRUST=(./scripts/docker-run.sh python3 datagen/run_batch.py "$scen_dir" --configs "$trust_cfg" --parallel 1)
-  if [[ -n "$FORCE_DETECT_AT_SEC" ]]; then
-    RUN_CMD_AWARE=(env ULI_IMM_FORCE_DETECT_AT_S="$FORCE_DETECT_AT_SEC" "${RUN_CMD_AWARE[@]}")
-  fi
   if [[ "$KEEP_VEC" == "1" ]]; then
     RUN_CMD_AWARE+=(--keep-vec)
+    RUN_CMD_AWARE_INSTANT+=(--keep-vec)
     RUN_CMD_TRUST+=(--keep-vec)
   fi
   aware_start="$(date +%s)"
   "${RUN_CMD_AWARE[@]}"
   aware_elapsed=$(( $(date +%s) - aware_start ))
+  aware_instant_start="$(date +%s)"
+  "${RUN_CMD_AWARE_INSTANT[@]}"
+  aware_instant_elapsed=$(( $(date +%s) - aware_instant_start ))
   trust_start="$(date +%s)"
   "${RUN_CMD_TRUST[@]}"
   trust_elapsed=$(( $(date +%s) - trust_start ))
   run_elapsed=$(( $(date +%s) - run_start_epoch ))
-  echo "$scenario,$seed,$scen_tag,$run_elapsed,$aware_elapsed,$trust_elapsed" >> "$RUNTIME_CSV"
+  echo "$scenario,$seed,$scen_tag,$run_elapsed,$aware_elapsed,$aware_instant_elapsed,$trust_elapsed" >> "$RUNTIME_CSV"
   echo "== Completed $scen_tag in ${run_elapsed}s =="
 }
 
@@ -361,13 +370,14 @@ for scenario in "${SCENARIOS[@]}"; do
     dir_tag="${scen_slug}_s${seed_pad}"
     scen_dir="$GEN_DIR/$dir_tag"
     aware_cfg="${scen_tag}_Aware"
+    aware_instant_cfg="${scen_tag}_AwareInstantDetect"
     trust_cfg="${scen_tag}_TrustRid"
 
     mkdir -p "$scen_dir"
     ini_out="$scen_dir/omnetpp.ini"
 
     echo "== Writing isolated INI: $ini_out =="
-    python3 - "$BASE_INI" "$ini_out" "$scenario" "$aware_cfg" "$trust_cfg" "$seed" <<'PY'
+    python3 - "$BASE_INI" "$ini_out" "$scenario" "$aware_cfg" "$aware_instant_cfg" "$trust_cfg" "$seed" <<'PY'
 from pathlib import Path
 import sys
 
@@ -375,14 +385,20 @@ base_ini = Path(sys.argv[1])
 out_ini = Path(sys.argv[2])
 scenario = sys.argv[3]
 aware = sys.argv[4]
-trust = sys.argv[5]
-seed = int(sys.argv[6])
+aware_instant = sys.argv[5]
+trust = sys.argv[6]
+seed = int(sys.argv[7])
 
 text = base_ini.read_text()
 append = f"""
 
 # ---- Auto-added by datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh ----
 [Config {aware}]
+extends = {scenario}
+seed-set = {seed}
+*.gcs[0].pyClass = "pymodules.planners.spoofing_aware_gcs.SpoofingAwareGcs"
+
+[Config {aware_instant}]
 extends = {scenario}
 seed-set = {seed}
 *.gcs[0].pyClass = "pymodules.planners.spoofing_aware_gcs.SpoofingAwareGcs"
@@ -401,7 +417,7 @@ PY
       rm -rf "$scen_dir"/results || true
     fi
 
-    run_one "$scenario" "$seed" "$scen_tag" "$scen_dir" "$aware_cfg" "$trust_cfg" &
+    run_one "$scenario" "$seed" "$scen_tag" "$scen_dir" "$aware_cfg" "$aware_instant_cfg" "$trust_cfg" &
     while (( $(count_running_worker_jobs) >= PARALLEL )); do
       if ! wait -n; then
         FAILED_RUN_JOBS=$((FAILED_RUN_JOBS + 1))

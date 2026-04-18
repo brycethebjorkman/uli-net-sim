@@ -390,6 +390,7 @@ for scenario in "${SCENARIOS[@]}"; do
     python3 - "$BASE_INI" "$ini_out" "$scenario" "$aware_cfg" "$aware_instant_cfg" "$trust_cfg" "$seed" <<'PY'
 from pathlib import Path
 import re
+import random
 import sys
 
 base_ini = Path(sys.argv[1])
@@ -405,6 +406,170 @@ match = re.search(r"Scenario_DepotCity_(\d+)x1$", scenario)
 if not match:
     raise SystemExit(f"Unsupported scenario format for TrustRid override: {scenario}")
 spoofer_host = int(match.group(1))
+num_benign = spoofer_host
+
+
+def _scenario_block(full_text: str, cfg_name: str) -> str:
+    start_re = re.compile(rf"^\[Config {re.escape(cfg_name)}\]\s*$", re.MULTILINE)
+    start_m = start_re.search(full_text)
+    if not start_m:
+        raise SystemExit(f"Scenario block not found: {cfg_name}")
+    tail = full_text[start_m.end():]
+    next_cfg_m = re.search(r"^\[Config .+\]\s*$", tail, re.MULTILINE)
+    if next_cfg_m:
+        return tail[:next_cfg_m.start()]
+    return tail
+
+
+def _parse_xyz(tag: str, xml: str) -> tuple[float, float, float]:
+    m = re.search(
+        rf"<{tag}\s+[^>]*x='([^']+)'\s+[^>]*y='([^']+)'\s+[^>]*z='([^']+)'",
+        xml,
+    )
+    if not m:
+        raise SystemExit(f"Could not parse <{tag}> xyz from waypointScript: {xml}")
+    return (float(m.group(1)), float(m.group(2)), float(m.group(3)))
+
+
+def _parse_speed(xml: str) -> float:
+    m = re.search(r"<set\s+[^>]*speed='([^']+)'", xml)
+    if not m:
+        raise SystemExit(f"Could not parse <set> speed from waypointScript: {xml}")
+    return float(m.group(1))
+
+
+def _format_movement(host_id: int, start: tuple[float, float, float], goal: tuple[float, float, float], speed: float) -> str:
+    sx, sy, sz = start
+    gx, gy, gz = goal
+    return (
+        f"<movement id='{host_id}'><set x='{sx:.6g}' y='{sy:.6g}' z='{sz:.6g}' speed='{speed:.6g}'/>"
+        f"<moveto x='{gx:.6g}' y='{gy:.6g}' z='{gz:.6g}'/></movement>"
+    )
+
+
+def _dist_point_to_segment_xy(
+    p: tuple[float, float],
+    a: tuple[float, float],
+    b: tuple[float, float],
+) -> float:
+    px, py = p
+    ax, ay = a
+    bx, by = b
+    abx = bx - ax
+    aby = by - ay
+    apx = px - ax
+    apy = py - ay
+    den = abx * abx + aby * aby
+    if den <= 1e-9:
+        dx = px - ax
+        dy = py - ay
+        return (dx * dx + dy * dy) ** 0.5
+    t = max(0.0, min(1.0, (apx * abx + apy * aby) / den))
+    qx = ax + t * abx
+    qy = ay + t * aby
+    dx = px - qx
+    dy = py - qy
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _choose_constrained_derangement(
+    host_ids: list[int],
+    starts: dict[int, tuple[float, float, float]],
+    goals: dict[int, tuple[float, float, float]],
+    rng: random.Random,
+    hotspot_xy: tuple[float, float] | None,
+) -> list[int]:
+    # Keep flights one-leg only, but avoid pathological goal swaps.
+    # We constrain by XY trip length and encourage crossing the central corridor.
+    min_trip_xy = 320.0
+    max_trip_xy = 980.0
+    corridor_dist_thresh = 260.0
+    relax_thresh = 340.0
+
+    def _feasible(hid: int, gid: int, dist_thresh: float) -> bool:
+        if hid == gid:
+            return False
+        s = starts[hid]
+        g = goals[gid]
+        dx = g[0] - s[0]
+        dy = g[1] - s[1]
+        dxy = (dx * dx + dy * dy) ** 0.5
+        if dxy < min_trip_xy or dxy > max_trip_xy:
+            return False
+        if hotspot_xy is None:
+            return True
+        seg_dist = _dist_point_to_segment_xy(
+            hotspot_xy,
+            (s[0], s[1]),
+            (g[0], g[1]),
+        )
+        return seg_dist <= dist_thresh
+
+    def _search(dist_thresh: float, attempts: int) -> list[int] | None:
+        for _ in range(attempts):
+            perm = host_ids[:]
+            rng.shuffle(perm)
+            if all(_feasible(h, g, dist_thresh) for h, g in zip(host_ids, perm)):
+                return perm
+        return None
+
+    # Strict corridor constraint first, then relaxed, then pure derangement.
+    perm = _search(corridor_dist_thresh, attempts=768)
+    if perm is not None:
+        return perm
+    perm = _search(relax_thresh, attempts=768)
+    if perm is not None:
+        return perm
+    for _ in range(256):
+        perm = host_ids[:]
+        rng.shuffle(perm)
+        if all(h != g for h, g in zip(host_ids, perm)):
+            return perm
+    return host_ids[1:] + host_ids[:1]
+
+
+def _seeded_goal_overrides(full_text: str, cfg_name: str, benign_count: int, seed_value: int) -> str:
+    block = _scenario_block(full_text, cfg_name)
+    wp_re = re.compile(
+        r"\*\.host\[(\d+)\]\.mobility\.waypointScript\s*=\s+xml\(\"([^\"]+)\"\)"
+    )
+    starts: dict[int, tuple[float, float, float]] = {}
+    goals: dict[int, tuple[float, float, float]] = {}
+    speeds: dict[int, float] = {}
+    for host_s, xml in wp_re.findall(block):
+        hid = int(host_s)
+        if 0 <= hid < benign_count:
+            starts[hid] = _parse_xyz("set", xml)
+            goals[hid] = _parse_xyz("moveto", xml)
+            speeds[hid] = _parse_speed(xml)
+    # Derive hotspot from spoofer path when available (set -> first moveto).
+    hotspot_xy: tuple[float, float] | None = None
+    spoofer_xml: str | None = None
+    for host_s, xml in wp_re.findall(block):
+        if int(host_s) == benign_count:
+            spoofer_xml = xml
+            break
+    if spoofer_xml is not None:
+        s0 = _parse_xyz("set", spoofer_xml)
+        s1 = _parse_xyz("moveto", spoofer_xml)
+        hotspot_xy = ((s0[0] + s1[0]) * 0.5, (s0[1] + s1[1]) * 0.5)
+
+    host_ids = list(range(benign_count))
+    missing = [hid for hid in host_ids if hid not in goals or hid not in starts or hid not in speeds]
+    if missing:
+        raise SystemExit(f"Missing benign waypoint definitions for hosts: {missing}")
+
+    rng = random.Random(f"{cfg_name}:{seed_value}:goal_shuffle_v2_constrained")
+    perm = _choose_constrained_derangement(host_ids, starts, goals, rng, hotspot_xy)
+
+    lines = ["# Seeded benign goal reassignment (same for all variants this seed)"]
+    for hid, gid in zip(host_ids, perm):
+        mv = _format_movement(hid, starts[hid], goals[gid], speeds[hid])
+        lines.append(f"*.host[{hid}].mobility.waypointScript = xml(\"{mv}\")")
+    return "\n".join(lines)
+
+
+goal_overrides = _seeded_goal_overrides(text, scenario, num_benign, seed)
 append = f"""
 
 # ---- Auto-added by datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh ----
@@ -412,17 +577,20 @@ append = f"""
 extends = {scenario}
 seed-set = {seed}
 *.gcs[0].pyClass = "pymodules.planners.spoofing_aware_gcs.SpoofingAwareGcs"
+{goal_overrides}
 
 [Config {aware_instant}]
 extends = {scenario}
 seed-set = {seed}
 *.gcs[0].pyClass = "pymodules.planners.spoofing_aware_gcs.SpoofingAwareGcs"
+{goal_overrides}
 
 [Config {trust}]
 extends = {scenario}
 seed-set = {seed}
 *.gcs[0].pyClass = "pymodules.planners.trust_rid_gcs.TrustRidGcs"
 *.host[{spoofer_host}].wlan[0].mgmt.pyTxClass = "pymodules.spoofers.position_offset.PositionOffsetSpooferTrustRidCollisionBias"
+{goal_overrides}
 """
 out_ini.write_text(text + append)
 print(f"Wrote {out_ini}")

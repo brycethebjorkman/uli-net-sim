@@ -78,16 +78,11 @@ def _scenario_group_from_source_file(name: str) -> str:
     return _SEED_SUFFIX_RE.sub("", prefix)
 
 
-def _bootstrap_ci_median(values: np.ndarray, n_boot: int = 1000, alpha: float = 0.05) -> tuple[float, float]:
-    if values.size == 0:
-        return float("nan"), float("nan")
-    rng = np.random.default_rng(42)
-    meds = np.empty(n_boot, dtype=float)
-    n = values.size
-    for i in range(n_boot):
-        sample = rng.choice(values, size=n, replace=True)
-        meds[i] = float(np.median(sample))
-    return float(np.quantile(meds, alpha / 2.0)), float(np.quantile(meds, 1.0 - alpha / 2.0))
+def _safe_std(vals: np.ndarray) -> float:
+    vals = np.asarray(vals, dtype=float)
+    if vals.size <= 1:
+        return 0.0
+    return float(np.std(vals, ddof=1))
 
 
 def _write_distribution_table(df: pd.DataFrame, out_dir: Path) -> Path:
@@ -151,10 +146,8 @@ def _write_distribution_table(df: pd.DataFrame, out_dir: Path) -> Path:
                 vals = pd.to_numeric(g[col], errors="coerce").dropna().to_numpy(dtype=float)
                 if vals.size == 0:
                     continue
-                q1 = float(np.quantile(vals, 0.25))
-                med = float(np.quantile(vals, 0.5))
-                q3 = float(np.quantile(vals, 0.75))
-                ci_lo, ci_hi = _bootstrap_ci_median(vals)
+                mu = float(np.mean(vals))
+                sd = _safe_std(vals)
                 rows.append(
                     {
                         "scenario": scen,
@@ -162,12 +155,8 @@ def _write_distribution_table(df: pd.DataFrame, out_dir: Path) -> Path:
                         "metric_key": key,
                         "metric_label": label,
                         "n": int(vals.size),
-                        "median": med,
-                        "q1": q1,
-                        "q3": q3,
-                        "iqr": float(q3 - q1),
-                        "median_ci95_lo": ci_lo,
-                        "median_ci95_hi": ci_hi,
+                        "mean": mu,
+                        "std": sd,
                     }
                 )
     out = out_dir / "summary_distribution_table.csv"
@@ -417,12 +406,16 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             ax.axis("off")
             ax.set_title(f"{title} (missing data)")
             continue
-        ax.boxplot(data, tick_labels=labels)
+        means = [float(np.mean(d)) for d in data]
+        stds = [_safe_std(d) for d in data]
+        xpos = np.arange(len(labels))
+        colors_bar = [VARIANT_COLORS.get(lbl, "#888888") for lbl in labels]
+        ax.bar(xpos, means, yerr=stds, capsize=3, tick_label=labels, color=colors_bar)
         ax.set_title(title)
     while idx < len(axes):
         axes[idx].axis("off")
         idx += 1
-    fig.suptitle("Safety Metrics Across Seeds")
+    fig.suptitle("Safety Metrics Across Seeds (mean ± std)")
     fig.tight_layout()
     p = out_dir / "summary_boxplots.pdf"
     p = _save_figure_dual(fig, p, dpi=220)
@@ -500,53 +493,42 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
         aware_vals = pd.to_numeric(df[aware_col], errors="coerce").dropna().to_numpy(dtype=float)
         if aware_vals.size == 0:
             continue
-        aware_med = float(np.quantile(aware_vals, 0.5))
-        aware_q1 = float(np.quantile(aware_vals, 0.25))
-        aware_q3 = float(np.quantile(aware_vals, 0.75))
-        instant_med = float("nan")
-        instant_q1 = float("nan")
-        instant_q3 = float("nan")
+        aware_mean = float(np.mean(aware_vals))
+        aware_std = _safe_std(aware_vals)
+        instant_mean = float("nan")
+        instant_std = float("nan")
         if instant_col and instant_col in df.columns:
             instant_vals = pd.to_numeric(df[instant_col], errors="coerce").dropna().to_numpy(dtype=float)
             if instant_vals.size > 0:
-                instant_med = float(np.quantile(instant_vals, 0.5))
-                instant_q1 = float(np.quantile(instant_vals, 0.25))
-                instant_q3 = float(np.quantile(instant_vals, 0.75))
-        trust_med = float("nan")
-        trust_q1 = float("nan")
-        trust_q3 = float("nan")
+                instant_mean = float(np.mean(instant_vals))
+                instant_std = _safe_std(instant_vals)
+        trust_mean = float("nan")
+        trust_std = float("nan")
         if trust_col and trust_col in df.columns:
             trust_vals = pd.to_numeric(df[trust_col], errors="coerce").dropna().to_numpy(dtype=float)
             if trust_vals.size > 0:
-                trust_med = float(np.quantile(trust_vals, 0.5))
-                trust_q1 = float(np.quantile(trust_vals, 0.25))
-                trust_q3 = float(np.quantile(trust_vals, 0.75))
+                trust_mean = float(np.mean(trust_vals))
+                trust_std = _safe_std(trust_vals)
         rows.append((
             label,
-            aware_med,
-            aware_q1,
-            aware_q3,
-            instant_med,
-            instant_q1,
-            instant_q3,
-            trust_med,
-            trust_q1,
-            trust_q3,
+            aware_mean,
+            aware_std,
+            instant_mean,
+            instant_std,
+            trust_mean,
+            trust_std,
         ))
     if rows:
         mean_df = pd.DataFrame(
             rows,
             columns=[
                 "metric",
-                "spoofing_aware_median",
-                "spoofing_aware_q1",
-                "spoofing_aware_q3",
-                "spoofing_aware_instant_detect_median",
-                "spoofing_aware_instant_detect_q1",
-                "spoofing_aware_instant_detect_q3",
-                "trust_rid_median",
-                "trust_rid_q1",
-                "trust_rid_q3",
+                "spoofing_aware_mean",
+                "spoofing_aware_std",
+                "spoofing_aware_instant_detect_mean",
+                "spoofing_aware_instant_detect_std",
+                "trust_rid_mean",
+                "trust_rid_std",
             ],
         )
         p_csv = out_dir / "summary_means_table.csv"
@@ -559,43 +541,22 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             table2_rows.append(
                 [
                     str(rr["metric"]),
-                    "N/A",
-                    "N/A",
-                    "N/A",
-                    _fmt_table_value(rr["spoofing_aware_median"]),
+                    _fmt_table_value(rr["spoofing_aware_mean"]),
                     _fmt_table_value(
-                        rr["spoofing_aware_instant_detect_median"]
-                        if pd.notna(rr["spoofing_aware_instant_detect_median"])
+                        rr["spoofing_aware_instant_detect_mean"]
+                        if pd.notna(rr["spoofing_aware_instant_detect_mean"])
                         else float("nan")
                     ),
-                    _fmt_table_value(rr["trust_rid_median"] if pd.notna(rr["trust_rid_median"]) else float("nan")),
+                    _fmt_table_value(rr["trust_rid_mean"] if pd.notna(rr["trust_rid_mean"]) else float("nan")),
+                    _fmt_table_value(rr["spoofing_aware_std"]),
+                    _fmt_table_value(
+                        rr["spoofing_aware_instant_detect_std"]
+                        if pd.notna(rr["spoofing_aware_instant_detect_std"])
+                        else float("nan")
+                    ),
+                    _fmt_table_value(rr["trust_rid_std"] if pd.notna(rr["trust_rid_std"]) else float("nan")),
                 ]
             )
-        # Replace first two columns with true means from source dataframe.
-        mean_lookup: dict[str, tuple[float, float, float]] = {}
-        for label, aware_col, instant_col, trust_col in mean_specs:
-            if aware_col not in df.columns:
-                continue
-            aware_vals = pd.to_numeric(df[aware_col], errors="coerce").dropna().to_numpy(dtype=float)
-            if aware_vals.size == 0:
-                continue
-            aware_mean = float(np.mean(aware_vals))
-            instant_mean = float("nan")
-            if instant_col and instant_col in df.columns:
-                instant_vals = pd.to_numeric(df[instant_col], errors="coerce").dropna().to_numpy(dtype=float)
-                if instant_vals.size > 0:
-                    instant_mean = float(np.mean(instant_vals))
-            trust_mean = float("nan")
-            if trust_col and trust_col in df.columns:
-                trust_vals = pd.to_numeric(df[trust_col], errors="coerce").dropna().to_numpy(dtype=float)
-                if trust_vals.size > 0:
-                    trust_mean = float(np.mean(trust_vals))
-            mean_lookup[label] = (aware_mean, instant_mean, trust_mean)
-        for r in table2_rows:
-            m = mean_lookup.get(r[0], (float("nan"), float("nan"), float("nan")))
-            r[1] = _fmt_table_value(m[0])
-            r[2] = _fmt_table_value(m[1])
-            r[3] = _fmt_table_value(m[2])
         p_table2_csv = out_dir / "table_ii_nmac_summary_statistics.csv"
         pd.DataFrame(
             table2_rows,
@@ -604,9 +565,9 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 "Mean (SA)",
                 "Mean (SA InstantDetect)",
                 "Mean (Trust-RID)",
-                "Median (SA)",
-                "Median (SA InstantDetect)",
-                "Median (Trust-RID)",
+                "Std (SA)",
+                "Std (SA InstantDetect)",
+                "Std (Trust-RID)",
             ],
         ).to_csv(p_table2_csv, index=False)
         out_paths.append(p_table2_csv)
@@ -618,9 +579,9 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 "Mean\n(SA)",
                 "Mean\n(SA-ID)",
                 "Mean\n(Trust-RID)",
-                "Median\n(SA)",
-                "Median\n(SA-ID)",
-                "Median\n(Trust-RID)",
+                "Std\n(SA)",
+                "Std\n(SA-ID)",
+                "Std\n(Trust-RID)",
             ],
             title="TABLE II",
             subtitle="NMAC (real-position) summary statistics",
@@ -654,15 +615,12 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
     if rt is not None and "scenario" in rt.columns:
         scenarios = sorted(rt["scenario"].dropna().unique().tolist())
         if scenarios:
-            aware_meds: list[float] = []
-            aware_err_lo: list[float] = []
-            aware_err_hi: list[float] = []
-            instant_meds: list[float] = []
-            instant_err_lo: list[float] = []
-            instant_err_hi: list[float] = []
-            trust_meds: list[float] = []
-            trust_err_lo: list[float] = []
-            trust_err_hi: list[float] = []
+            aware_means: list[float] = []
+            aware_stds: list[float] = []
+            instant_means: list[float] = []
+            instant_stds: list[float] = []
+            trust_means: list[float] = []
+            trust_stds: list[float] = []
             labels: list[str] = []
             for scen in scenarios:
                 ss = rt[rt["scenario"] == scen]
@@ -673,26 +631,17 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 trust_vals = pd.to_numeric(ss["elapsed_trust_rid_seconds"], errors="coerce").dropna().to_numpy(dtype=float)
                 if aware_vals.size == 0 or instant_vals.size == 0 or trust_vals.size == 0:
                     continue
-                a_q1 = float(np.quantile(aware_vals, 0.25))
-                a_med = float(np.quantile(aware_vals, 0.5))
-                a_q3 = float(np.quantile(aware_vals, 0.75))
-                i_q1 = float(np.quantile(instant_vals, 0.25))
-                i_med = float(np.quantile(instant_vals, 0.5))
-                i_q3 = float(np.quantile(instant_vals, 0.75))
-                t_q1 = float(np.quantile(trust_vals, 0.25))
-                t_med = float(np.quantile(trust_vals, 0.5))
-                t_q3 = float(np.quantile(trust_vals, 0.75))
+                a_mu = float(np.mean(aware_vals))
+                i_mu = float(np.mean(instant_vals))
+                t_mu = float(np.mean(trust_vals))
 
                 labels.append(scen.replace("Scenario_", "").replace("_", " "))
-                aware_meds.append(a_med)
-                aware_err_lo.append(a_med - a_q1)
-                aware_err_hi.append(a_q3 - a_med)
-                instant_meds.append(i_med)
-                instant_err_lo.append(i_med - i_q1)
-                instant_err_hi.append(i_q3 - i_med)
-                trust_meds.append(t_med)
-                trust_err_lo.append(t_med - t_q1)
-                trust_err_hi.append(t_q3 - t_med)
+                aware_means.append(a_mu)
+                aware_stds.append(_safe_std(aware_vals))
+                instant_means.append(i_mu)
+                instant_stds.append(_safe_std(instant_vals))
+                trust_means.append(t_mu)
+                trust_stds.append(_safe_std(trust_vals))
 
             if labels:
                 x = np.arange(len(labels))
@@ -700,27 +649,27 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 fig, ax = plt.subplots(figsize=(12.5, 5.5))
                 ax.bar(
                     x - width,
-                    aware_meds,
+                    aware_means,
                     width=width,
-                    yerr=[aware_err_lo, aware_err_hi],
+                    yerr=aware_stds,
                     capsize=3,
                     label="SpoofingAware",
                     color=VARIANT_COLORS["SpoofingAware"],
                 )
                 ax.bar(
                     x,
-                    instant_meds,
+                    instant_means,
                     width=width,
-                    yerr=[instant_err_lo, instant_err_hi],
+                    yerr=instant_stds,
                     capsize=3,
                     label="SpoofingAwareInstantDetect",
                     color=VARIANT_COLORS["SpoofingAwareInstantDetect"],
                 )
                 ax.bar(
                     x + width,
-                    trust_meds,
+                    trust_means,
                     width=width,
-                    yerr=[trust_err_lo, trust_err_hi],
+                    yerr=trust_stds,
                     capsize=3,
                     label="TrustRID",
                     color=VARIANT_COLORS["TrustRID"],
@@ -728,7 +677,7 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 ax.set_xticks(x)
                 ax.set_xticklabels(labels, rotation=20, ha="right")
                 ax.set_ylabel(runtime_label)
-                ax.set_title("Runtime by Scenario: SpoofingAware vs InstantDetect vs TrustRID (median with IQR)")
+                ax.set_title("Runtime by Scenario: SpoofingAware vs InstantDetect vs TrustRID (mean ± std)")
                 ax.grid(axis="y", alpha=0.2)
                 ax.legend()
                 fig.tight_layout()
@@ -737,25 +686,31 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 plt.close(fig)
                 out_paths.append(p)
 
-                # Paper-style runtime median table figure (Table III style).
+                # Paper-style runtime mean/std table figure (Table III style).
                 runtime_rows: list[list[str]] = []
                 for i, label in enumerate(labels):
                     runtime_rows.append(
                         [
                             label.replace(" ", "_").lower(),
-                            _fmt_table_value(aware_meds[i]),
-                            _fmt_table_value(instant_meds[i]),
-                            _fmt_table_value(trust_meds[i]),
+                            _fmt_table_value(aware_means[i]),
+                            _fmt_table_value(aware_stds[i]),
+                            _fmt_table_value(instant_means[i]),
+                            _fmt_table_value(instant_stds[i]),
+                            _fmt_table_value(trust_means[i]),
+                            _fmt_table_value(trust_stds[i]),
                         ]
                     )
-                p_table3_csv = out_dir / "table_iii_runtime_median_per_scenario_seconds.csv"
+                p_table3_csv = out_dir / "table_iii_runtime_mean_std_per_scenario_seconds.csv"
                 pd.DataFrame(
                     runtime_rows,
                     columns=[
                         "Scenario",
-                        "Median (SA) [s]",
-                        "Median (SA InstantDetect) [s]",
-                        "Median (Trust-RID) [s]",
+                        "Mean (SA) [s]",
+                        "Std (SA) [s]",
+                        "Mean (SA InstantDetect) [s]",
+                        "Std (SA InstantDetect) [s]",
+                        "Mean (Trust-RID) [s]",
+                        "Std (Trust-RID) [s]",
                     ],
                 ).to_csv(p_table3_csv, index=False)
                 out_paths.append(p_table3_csv)
@@ -764,18 +719,21 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                     rows=runtime_rows,
                     headers=[
                         "Scenario",
-                        "Median (SA) [s]",
-                        "Median (SA-ID) [s]",
-                        "Median (Trust-RID) [s]",
+                        "Mean\n(SA) [s]",
+                        "Std\n(SA) [s]",
+                        "Mean\n(SA-ID) [s]",
+                        "Std\n(SA-ID) [s]",
+                        "Mean\n(TR) [s]",
+                        "Std\n(TR) [s]",
                     ],
                     title="TABLE III",
-                    subtitle="Median runtime per scenario (seconds)",
-                    out_path=out_dir / "table_iii_runtime_median_per_scenario_seconds.pdf",
+                    subtitle="Runtime per scenario: mean ± std (seconds)",
+                    out_path=out_dir / "table_iii_runtime_mean_std_per_scenario_seconds.pdf",
                 )
                 if p_table3_pdf is not None:
                     out_paths.append(p_table3_pdf)
 
-                # Compute-breakdown table (scenario medians): runtime + GCS callback costs.
+                # Compute-breakdown table (scenario means): runtime + GCS callback costs.
                 dd = df.copy()
                 if "tag" not in dd.columns:
                     dd["tag"] = "all"
@@ -785,49 +743,75 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                 for lbl in labels:
                     scen_key = label_to_key.get(lbl, lbl)
                     scen_df = dd[dd["scenario"] == scen_key]
-                    sa_rt = aware_meds[labels.index(lbl)]
-                    tr_rt = trust_meds[labels.index(lbl)]
+                    sa_rt = aware_means[labels.index(lbl)]
+                    sai_rt = instant_means[labels.index(lbl)]
+                    tr_rt = trust_means[labels.index(lbl)]
                     sa_rep = float("nan")
+                    sai_rep = float("nan")
                     tr_rep = float("nan")
                     sa_tick = float("nan")
+                    sai_tick = float("nan")
                     tr_tick = float("nan")
                     sa_total = float("nan")
+                    sai_total = float("nan")
                     tr_total = float("nan")
                     if not scen_df.empty:
                         if "gcs_reports_mean_ms_aware" in scen_df.columns:
                             v = pd.to_numeric(scen_df["gcs_reports_mean_ms_aware"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
-                                sa_rep = float(np.quantile(v, 0.5))
+                                sa_rep = float(np.mean(v))
+                        if "gcs_reports_mean_ms_aware_instant_detect" in scen_df.columns:
+                            v = pd.to_numeric(
+                                scen_df["gcs_reports_mean_ms_aware_instant_detect"], errors="coerce"
+                            ).dropna().to_numpy(dtype=float)
+                            if v.size > 0:
+                                sai_rep = float(np.mean(v))
                         if "gcs_reports_mean_ms_trust_rid" in scen_df.columns:
                             v = pd.to_numeric(scen_df["gcs_reports_mean_ms_trust_rid"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
-                                tr_rep = float(np.quantile(v, 0.5))
+                                tr_rep = float(np.mean(v))
                         if "gcs_tick_mean_ms_aware" in scen_df.columns:
                             v = pd.to_numeric(scen_df["gcs_tick_mean_ms_aware"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
-                                sa_tick = float(np.quantile(v, 0.5))
+                                sa_tick = float(np.mean(v))
+                        if "gcs_tick_mean_ms_aware_instant_detect" in scen_df.columns:
+                            v = pd.to_numeric(
+                                scen_df["gcs_tick_mean_ms_aware_instant_detect"], errors="coerce"
+                            ).dropna().to_numpy(dtype=float)
+                            if v.size > 0:
+                                sai_tick = float(np.mean(v))
                         if "gcs_tick_mean_ms_trust_rid" in scen_df.columns:
                             v = pd.to_numeric(scen_df["gcs_tick_mean_ms_trust_rid"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
-                                tr_tick = float(np.quantile(v, 0.5))
+                                tr_tick = float(np.mean(v))
                         if "gcs_compute_total_s_aware" in scen_df.columns:
                             v = pd.to_numeric(scen_df["gcs_compute_total_s_aware"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
-                                sa_total = float(np.quantile(v, 0.5))
+                                sa_total = float(np.mean(v))
+                        if "gcs_compute_total_s_aware_instant_detect" in scen_df.columns:
+                            v = pd.to_numeric(
+                                scen_df["gcs_compute_total_s_aware_instant_detect"], errors="coerce"
+                            ).dropna().to_numpy(dtype=float)
+                            if v.size > 0:
+                                sai_total = float(np.mean(v))
                         if "gcs_compute_total_s_trust_rid" in scen_df.columns:
                             v = pd.to_numeric(scen_df["gcs_compute_total_s_trust_rid"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
-                                tr_total = float(np.quantile(v, 0.5))
+                                tr_total = float(np.mean(v))
                     compute_rows.append(
                         [
                             lbl.replace(" ", "_").lower(),
                             _fmt_table_value(sa_rt),
+                            _fmt_table_value(sai_rt),
                             _fmt_table_value(tr_rt),
                             _fmt_table_value(sa_rep),
+                            _fmt_table_value(sai_rep),
                             _fmt_table_value(tr_rep),
                             _fmt_table_value(sa_tick),
+                            _fmt_table_value(sai_tick),
                             _fmt_table_value(tr_tick),
                             _fmt_table_value(sa_total),
+                            _fmt_table_value(sai_total),
                             _fmt_table_value(tr_total),
                         ]
                     )
@@ -837,14 +821,18 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                         compute_rows,
                         columns=[
                             "Scenario",
-                            "Runtime median SA (s)",
-                            "Runtime median Trust-RID (s)",
-                            "GCS report median SA (ms)",
-                            "GCS report median Trust-RID (ms)",
-                            "GCS tick median SA (ms)",
-                            "GCS tick median Trust-RID (ms)",
-                            "GCS total median SA (s)",
-                            "GCS total median Trust-RID (s)",
+                            "Runtime mean SA (s)",
+                            "Runtime mean SA-ID (s)",
+                            "Runtime mean Trust-RID (s)",
+                            "GCS report mean SA (ms)",
+                            "GCS report mean SA-ID (ms)",
+                            "GCS report mean Trust-RID (ms)",
+                            "GCS tick mean SA (ms)",
+                            "GCS tick mean SA-ID (ms)",
+                            "GCS tick mean Trust-RID (ms)",
+                            "GCS total mean SA (s)",
+                            "GCS total mean SA-ID (s)",
+                            "GCS total mean Trust-RID (s)",
                         ],
                     ).to_csv(p_cb_csv, index=False)
                     out_paths.append(p_cb_csv)
@@ -854,16 +842,20 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                         headers=[
                             "Scenario",
                             "Runtime\nSA (s)",
+                            "Runtime\nSA-ID (s)",
                             "Runtime\nTR (s)",
                             "Report\nSA (ms)",
+                            "Report\nSA-ID (ms)",
                             "Report\nTR (ms)",
                             "Tick\nSA (ms)",
+                            "Tick\nSA-ID (ms)",
                             "Tick\nTR (ms)",
                             "GCS total\nSA (s)",
+                            "GCS total\nSA-ID (s)",
                             "GCS total\nTR (s)",
                         ],
                         title="TABLE VI",
-                        subtitle="Compute breakdown by scenario (medians)",
+                        subtitle="Compute breakdown by scenario (means)",
                         out_path=out_dir / "table_vi_compute_breakdown_by_scenario.pdf",
                     )
                     if p_cb_pdf is not None:
@@ -888,42 +880,68 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
 
     out_paths.append(_write_distribution_table(df, out_dir))
 
-    # SA vs Trust-RID effect sizes for key paired metrics.
+    # SA / SA-ID / Trust-RID effect sizes for key paired metrics.
     effect_specs = [
-        ("Total NMACs (real-position)", "nmac_total_real_aware", "nmac_total_real_trust_rid", True),
-        ("Benign-Benign NMACs", "nmac_proximity_aware", "nmac_proximity_trust_rid", True),
-        ("Benign-Spoofer NMACs", "nmac_benign_spoofer_aware", "nmac_benign_spoofer_trust_rid", True),
+        ("Total NMACs (real-position)", "nmac_total_real_aware", "nmac_total_real_aware_instant_detect", "nmac_total_real_trust_rid", True),
+        ("Benign-Benign NMACs", "nmac_proximity_aware", "nmac_proximity_aware_instant_detect", "nmac_proximity_trust_rid", True),
+        ("Benign-Spoofer NMACs", "nmac_benign_spoofer_aware", "nmac_benign_spoofer_aware_instant_detect", "nmac_benign_spoofer_trust_rid", True),
         (
             "Min distance to true spoofer (m)",
             "min_benign_spoofer_distance_aware_m",
+            "min_benign_spoofer_distance_aware_instant_detect_m",
             "min_benign_spoofer_distance_trust_rid_m",
             False,
         ),
-        ("GCS report callback mean time (ms)", "gcs_reports_mean_ms_aware", "gcs_reports_mean_ms_trust_rid", True),
-        ("GCS tick callback mean time (ms)", "gcs_tick_mean_ms_aware", "gcs_tick_mean_ms_trust_rid", True),
-        ("Total GCS compute time (s)", "gcs_compute_total_s_aware", "gcs_compute_total_s_trust_rid", True),
+        (
+            "GCS report callback mean time (ms)",
+            "gcs_reports_mean_ms_aware",
+            "gcs_reports_mean_ms_aware_instant_detect",
+            "gcs_reports_mean_ms_trust_rid",
+            True,
+        ),
+        (
+            "GCS tick callback mean time (ms)",
+            "gcs_tick_mean_ms_aware",
+            "gcs_tick_mean_ms_aware_instant_detect",
+            "gcs_tick_mean_ms_trust_rid",
+            True,
+        ),
+        (
+            "Total GCS compute time (s)",
+            "gcs_compute_total_s_aware",
+            "gcs_compute_total_s_aware_instant_detect",
+            "gcs_compute_total_s_trust_rid",
+            True,
+        ),
     ]
     effect_rows: list[list[str]] = []
-    for label, sa_col, tr_col, lower_better in effect_specs:
-        if sa_col not in df.columns or tr_col not in df.columns:
+    for label, sa_col, sai_col, tr_col, lower_better in effect_specs:
+        if sa_col not in df.columns or sai_col not in df.columns or tr_col not in df.columns:
             continue
         sa_vals = pd.to_numeric(df[sa_col], errors="coerce").dropna().to_numpy(dtype=float)
+        sai_vals = pd.to_numeric(df[sai_col], errors="coerce").dropna().to_numpy(dtype=float)
         tr_vals = pd.to_numeric(df[tr_col], errors="coerce").dropna().to_numpy(dtype=float)
-        if sa_vals.size == 0 or tr_vals.size == 0:
+        if sa_vals.size == 0 or sai_vals.size == 0 or tr_vals.size == 0:
             continue
         sa_mean = float(np.mean(sa_vals))
+        sai_mean = float(np.mean(sai_vals))
         tr_mean = float(np.mean(tr_vals))
-        sa_med = float(np.quantile(sa_vals, 0.5))
-        tr_med = float(np.quantile(tr_vals, 0.5))
-        imp = _delta_pct(sa_med, tr_med, lower_is_better=lower_better)
+        sa_std = _safe_std(sa_vals)
+        sai_std = _safe_std(sai_vals)
+        tr_std = _safe_std(tr_vals)
+        imp_sa_vs_tr = _delta_pct(sa_mean, tr_mean, lower_is_better=lower_better)
+        imp_sai_vs_tr = _delta_pct(sai_mean, tr_mean, lower_is_better=lower_better)
         effect_rows.append(
             [
                 label,
                 _fmt_table_value(sa_mean),
+                _fmt_table_value(sai_mean),
                 _fmt_table_value(tr_mean),
-                _fmt_table_value(sa_med),
-                _fmt_table_value(tr_med),
-                _fmt_table_value(imp),
+                _fmt_table_value(sa_std),
+                _fmt_table_value(sai_std),
+                _fmt_table_value(tr_std),
+                _fmt_table_value(imp_sa_vs_tr),
+                _fmt_table_value(imp_sai_vs_tr),
             ]
         )
     if effect_rows:
@@ -933,10 +951,13 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             columns=[
                 "Metric",
                 "Mean (SA)",
+                "Mean (SA-ID)",
                 "Mean (Trust-RID)",
-                "Median (SA)",
-                "Median (Trust-RID)",
-                "Improvement % (median-based)",
+                "Std (SA)",
+                "Std (SA-ID)",
+                "Std (Trust-RID)",
+                "Improvement SA vs Trust % (mean-based)",
+                "Improvement SA-ID vs Trust % (mean-based)",
             ],
         ).to_csv(p_eff_csv, index=False)
         out_paths.append(p_eff_csv)
@@ -946,13 +967,16 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             headers=[
                 "Metric",
                 "Mean\n(SA)",
+                "Mean\n(SA-ID)",
                 "Mean\n(Trust-RID)",
-                "Median\n(SA)",
-                "Median\n(Trust-RID)",
-                "Improvement\n%",
+                "Std\n(SA)",
+                "Std\n(SA-ID)",
+                "Std\n(Trust-RID)",
+                "SA vs TR\nImprovement %",
+                "SA-ID vs TR\nImprovement %",
             ],
             title="TABLE IV",
-            subtitle="SA vs Trust-RID effect-size summary",
+            subtitle="SA / SA-ID / Trust-RID effect-size summary",
             out_path=out_dir / "table_iv_effect_size_sa_vs_trustrid.pdf",
         )
         if p_eff_pdf is not None:
@@ -971,14 +995,14 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             if vals.size == 0:
                 continue
             obs_mean = float(np.mean(vals))
-            obs_med = float(np.quantile(vals, 0.5))
+            obs_std = _safe_std(vals)
             ci_lo, ci_hi = _bootstrap_ci_mean(vals)
             calib_rows.append(
                 [
                     str(scen),
                     _fmt_table_value(expected),
                     _fmt_table_value(obs_mean),
-                    _fmt_table_value(obs_med),
+                    _fmt_table_value(obs_std),
                     _fmt_table_value(obs_mean - expected),
                     _fmt_table_value(ci_lo),
                     _fmt_table_value(ci_hi),
@@ -992,7 +1016,7 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                     "Scenario",
                     "Expected containment",
                     "Observed mean",
-                    "Observed median",
+                    "Observed std",
                     "Calibration error (mean-expected)",
                     "Observed mean CI95 low",
                     "Observed mean CI95 high",
@@ -1006,7 +1030,7 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                     "Scenario",
                     "Expected",
                     "Observed\nmean",
-                    "Observed\nmedian",
+                    "Observed\nstd",
                     "Error",
                     "CI95 low",
                     "CI95 high",
@@ -1109,13 +1133,16 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
             rows.append(
                 {
                     "scenario": scen,
-                    "imm_error_median_m": float(err.median()) if not err.empty else float("nan"),
-                    "imm_nees_median": float(nees.median()) if not nees.empty else float("nan"),
+                    "imm_error_mean_m": float(err.mean()) if not err.empty else float("nan"),
+                    "imm_error_std_m": float(err.std(ddof=1)) if len(err) > 1 else 0.0,
+                    "imm_nees_mean": float(nees.mean()) if not nees.empty else float("nan"),
+                    "imm_nees_std": float(nees.std(ddof=1)) if len(nees) > 1 else 0.0,
                     "imm_nees_in_95pct_fraction": (
                         float(((nees >= CHI2_3DOF_95_LO) & (nees <= CHI2_3DOF_95_HI)).mean())
                         if not nees.empty else float("nan")
                     ),
-                    "imm_nis_median": float(nis.median()) if not nis.empty else float("nan"),
+                    "imm_nis_mean": float(nis.mean()) if not nis.empty else float("nan"),
+                    "imm_nis_std": float(nis.std(ddof=1)) if len(nis) > 1 else 0.0,
                     "imm_nis_in_95pct_fraction": (
                         float(((nis >= CHI2_3DOF_95_LO) & (nis <= CHI2_3DOF_95_HI)).mean())
                         if not nis.empty else float("nan")
@@ -1156,16 +1183,27 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                 g = ss[ss["variant"] == variant]
                 if g.empty:
                     continue
-                med = g.groupby("time", as_index=False)["value"].median()
+                agg = g.groupby("time", as_index=False).agg(mean=("value", "mean"), std=("value", "std"))
+                agg["std"] = agg["std"].fillna(0.0)
+                color = VARIANT_COLORS.get(variant)
+                ax.fill_between(
+                    agg["time"],
+                    agg["mean"] - agg["std"],
+                    agg["mean"] + agg["std"],
+                    alpha=0.22,
+                    color=color,
+                    linewidth=0,
+                )
                 ax.plot(
-                    med["time"],
-                    med["value"],
+                    agg["time"],
+                    agg["mean"],
                     label=variant,
-                    color=VARIANT_COLORS.get(variant),
+                    color=color,
                     linestyle=VARIANT_LINESTYLES.get(variant, "-"),
                     linewidth=1.9,
                 )
-                global_y_values.extend(med["value"].tolist())
+                global_y_values.extend((agg["mean"] - agg["std"]).tolist())
+                global_y_values.extend((agg["mean"] + agg["std"]).tolist())
             if hline is not None:
                 ax.axhline(
                     y=hline,
@@ -1267,13 +1305,21 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         if not data:
             plt.close(fig)
             return None
-        bp = ax.boxplot(data, positions=positions, widths=width * 0.85, patch_artist=True)
-        for patch, lbl in zip(bp["boxes"], labels):
-            patch.set_facecolor(VARIANT_COLORS.get(lbl, "#999999"))
-            patch.set_alpha(0.6)
+        means = [float(np.mean(d)) for d in data]
+        stds = [_safe_std(d) for d in data]
+        colors_bar = [VARIANT_COLORS.get(lbl, "#999999") for lbl in labels]
+        ax.bar(
+            positions,
+            means,
+            width=width * 0.85,
+            yerr=stds,
+            capsize=2,
+            color=colors_bar,
+            alpha=0.75,
+        )
         ax.set_xticks(np.arange(len(scen_order)))
         ax.set_xticklabels(scen_order, rotation=20, ha="right")
-        ax.set_title("First Detection Time by Scenario (All Variants)")
+        ax.set_title("First Detection Time by Scenario (mean ± std)")
         ax.set_ylabel("first detection time (s)")
         ax.set_xlabel("scenario")
         ax.grid(axis="y", alpha=0.2)
@@ -1313,17 +1359,26 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                 g = ss[ss["name"] == metric_name]
                 if g.empty:
                     continue
-                med = g.groupby("time", as_index=False)["value"].median()
-                ax.plot(med["time"], med["value"], label=label, color=color)
+                agg = g.groupby("time", as_index=False).agg(mean=("value", "mean"), std=("value", "std"))
+                agg["std"] = agg["std"].fillna(0.0)
+                ax.fill_between(
+                    agg["time"],
+                    agg["mean"] - agg["std"],
+                    agg["mean"] + agg["std"],
+                    alpha=0.22,
+                    color=color,
+                    linewidth=0,
+                )
+                ax.plot(agg["time"], agg["mean"], label=label, color=color)
             ax.set_title(str(scen))
             ax.set_xlabel("time (s)")
             ax.set_ylabel("probability")
             ax.set_ylim(-0.02, 1.02)
             ax.grid(alpha=0.2)
             ax.legend(fontsize=8)
-        fig.suptitle("SpoofingAware IMM Mode Probabilities Through Time (Median)")
+        fig.suptitle("SpoofingAware IMM Mode Probabilities Through Time (mean ± std)")
         fig.tight_layout()
-        p = out_dir / "timeseries_imm_mode_probabilities_median.pdf"
+        p = out_dir / "timeseries_imm_mode_probabilities_mean_std.pdf"
         p = _save_figure_dual(fig, p, dpi=220)
         plt.close(fig)
         return p
@@ -1341,10 +1396,10 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         for i, scen in enumerate(scenarios):
             ax = axes[0][i]
             ss = sub[sub["scenario"] == scen]
-            ex = ss[ss["name"] == "imm_est_x_m"].groupby("time", as_index=False)["value"].median()
-            ey = ss[ss["name"] == "imm_est_y_m"].groupby("time", as_index=False)["value"].median()
-            tx = ss[ss["name"] == "imm_true_x_m"].groupby("time", as_index=False)["value"].median()
-            ty = ss[ss["name"] == "imm_true_y_m"].groupby("time", as_index=False)["value"].median()
+            ex = ss[ss["name"] == "imm_est_x_m"].groupby("time", as_index=False)["value"].mean()
+            ey = ss[ss["name"] == "imm_est_y_m"].groupby("time", as_index=False)["value"].mean()
+            tx = ss[ss["name"] == "imm_true_x_m"].groupby("time", as_index=False)["value"].mean()
+            ty = ss[ss["name"] == "imm_true_y_m"].groupby("time", as_index=False)["value"].mean()
             est = pd.merge(ex.rename(columns={"value": "x"}), ey.rename(columns={"value": "y"}), on="time", how="inner")
             tru = pd.merge(tx.rename(columns={"value": "x"}), ty.rename(columns={"value": "y"}), on="time", how="inner")
             if not est.empty:
@@ -1357,9 +1412,9 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
             ax.axis("equal")
             ax.grid(alpha=0.2)
             ax.legend(fontsize=8)
-        fig.suptitle("SpoofingAware IMM: True vs Estimated XY Trajectory (Median)")
+        fig.suptitle("SpoofingAware IMM: True vs Estimated XY Trajectory (mean across seeds)")
         fig.tight_layout()
-        p = out_dir / "timeseries_imm_true_vs_estimated_xy_median.pdf"
+        p = out_dir / "timeseries_imm_true_vs_estimated_xy_mean.pdf"
         p = _save_figure_dual(fig, p, dpi=220)
         plt.close(fig)
         return p
@@ -1377,45 +1432,62 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         for i, scen in enumerate(scenarios):
             ax = axes[0][i]
             ss = sub[sub["scenario"] == scen]
-            ex = ss[ss["name"] == "imm_est_x_m"].groupby("time", as_index=False)["value"].median()
-            ey = ss[ss["name"] == "imm_est_y_m"].groupby("time", as_index=False)["value"].median()
-            ez = ss[ss["name"] == "imm_est_z_m"].groupby("time", as_index=False)["value"].median()
-            tx = ss[ss["name"] == "imm_true_x_m"].groupby("time", as_index=False)["value"].median()
-            ty = ss[ss["name"] == "imm_true_y_m"].groupby("time", as_index=False)["value"].median()
-            tz = ss[ss["name"] == "imm_true_z_m"].groupby("time", as_index=False)["value"].median()
-            if ex.empty or ey.empty or tx.empty or ty.empty:
-                continue
-            est = ex.rename(columns={"value": "ex"}).merge(
-                ey.rename(columns={"value": "ey"}), on="time", how="inner"
-            )
-            tru = tx.rename(columns={"value": "tx"}).merge(
-                ty.rename(columns={"value": "ty"}), on="time", how="inner"
-            )
-            merged = est.merge(tru, on="time", how="inner")
-            if not ez.empty and not tz.empty:
-                ez2 = ez.rename(columns={"value": "ez"})
-                tz2 = tz.rename(columns={"value": "tz"})
-                merged = merged.merge(ez2, on="time", how="inner").merge(tz2, on="time", how="inner")
-                merged["err"] = np.sqrt(
-                    (merged["ex"] - merged["tx"]) ** 2
-                    + (merged["ey"] - merged["ty"]) ** 2
-                    + (merged["ez"] - merged["tz"]) ** 2
+            err_frames: list[pd.DataFrame] = []
+            for src in ss["source_file"].dropna().unique():
+                run = ss[ss["source_file"] == src]
+                ex = run[run["name"] == "imm_est_x_m"].groupby("time", as_index=False)["value"].mean()
+                ey = run[run["name"] == "imm_est_y_m"].groupby("time", as_index=False)["value"].mean()
+                ez = run[run["name"] == "imm_est_z_m"].groupby("time", as_index=False)["value"].mean()
+                tx = run[run["name"] == "imm_true_x_m"].groupby("time", as_index=False)["value"].mean()
+                ty = run[run["name"] == "imm_true_y_m"].groupby("time", as_index=False)["value"].mean()
+                tz = run[run["name"] == "imm_true_z_m"].groupby("time", as_index=False)["value"].mean()
+                if ex.empty or ey.empty or tx.empty or ty.empty:
+                    continue
+                est = ex.rename(columns={"value": "ex"}).merge(
+                    ey.rename(columns={"value": "ey"}), on="time", how="inner"
                 )
-            else:
-                merged["err"] = np.sqrt(
-                    (merged["ex"] - merged["tx"]) ** 2 + (merged["ey"] - merged["ty"]) ** 2
+                tru = tx.rename(columns={"value": "tx"}).merge(
+                    ty.rename(columns={"value": "ty"}), on="time", how="inner"
                 )
-            if merged.empty:
+                merged = est.merge(tru, on="time", how="inner")
+                if not ez.empty and not tz.empty:
+                    ez2 = ez.rename(columns={"value": "ez"})
+                    tz2 = tz.rename(columns={"value": "tz"})
+                    merged = merged.merge(ez2, on="time", how="inner").merge(tz2, on="time", how="inner")
+                    merged["err"] = np.sqrt(
+                        (merged["ex"] - merged["tx"]) ** 2
+                        + (merged["ey"] - merged["ty"]) ** 2
+                        + (merged["ez"] - merged["tz"]) ** 2
+                    )
+                else:
+                    merged["err"] = np.sqrt(
+                        (merged["ex"] - merged["tx"]) ** 2 + (merged["ey"] - merged["ty"]) ** 2
+                    )
+                if merged.empty:
+                    continue
+                err_frames.append(merged[["time", "err"]])
+            if not err_frames:
                 continue
-            ax.plot(merged["time"], merged["err"], color="#1f77b4", linewidth=1.7, label="IMM trajectory error")
+            err_long = pd.concat(err_frames, ignore_index=True)
+            agg = err_long.groupby("time", as_index=False).agg(mean=("err", "mean"), std=("err", "std"))
+            agg["std"] = agg["std"].fillna(0.0)
+            ax.fill_between(
+                agg["time"],
+                agg["mean"] - agg["std"],
+                agg["mean"] + agg["std"],
+                alpha=0.22,
+                color="#1f77b4",
+                linewidth=0,
+            )
+            ax.plot(agg["time"], agg["mean"], color="#1f77b4", linewidth=1.7, label="IMM trajectory error")
             ax.set_title(str(scen))
             ax.set_xlabel("time (s)")
             ax.set_ylabel("error (m)")
             ax.grid(alpha=0.2)
             ax.legend(fontsize=8)
-        fig.suptitle("SpoofingAware IMM Position Error from True vs Estimated Trajectory (Median)")
+        fig.suptitle("SpoofingAware IMM Position Error from True vs Estimated Trajectory (mean ± std across seeds)")
         fig.tight_layout()
-        p = out_dir / "timeseries_imm_error_norm_median.pdf"
+        p = out_dir / "timeseries_imm_error_norm_mean_std.pdf"
         p = _save_figure_dual(fig, p, dpi=220)
         plt.close(fig)
         return p
@@ -1465,42 +1537,72 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
 
                 containment_v = containment_s[containment_s["variant"] == variant]
                 if not containment_v.empty:
-                    containment_med = containment_v.groupby("time", as_index=False)["value"].median()
+                    ca = containment_v.groupby("time", as_index=False).agg(mean=("value", "mean"), std=("value", "std"))
+                    ca["std"] = ca["std"].fillna(0.0)
+                    ax_cont.fill_between(
+                        ca["time"],
+                        ca["mean"] - ca["std"],
+                        ca["mean"] + ca["std"],
+                        alpha=0.22,
+                        color=color,
+                        linewidth=0,
+                    )
                     ax_cont.plot(
-                        containment_med["time"],
-                        containment_med["value"],
+                        ca["time"],
+                        ca["mean"],
                         color=color,
                         linestyle=style,
                         linewidth=2.0,
                         label=variant,
                     )
-                    row1_vals.extend(containment_med["value"].tolist())
+                    row1_vals.extend((ca["mean"] - ca["std"]).tolist())
+                    row1_vals.extend((ca["mean"] + ca["std"]).tolist())
 
                 loc_v = loc_s[loc_s["variant"] == variant]
                 if not loc_v.empty:
-                    loc_med = loc_v.groupby("time", as_index=False)["value"].median()
+                    la = loc_v.groupby("time", as_index=False).agg(mean=("value", "mean"), std=("value", "std"))
+                    la["std"] = la["std"].fillna(0.0)
+                    ax_loc.fill_between(
+                        la["time"],
+                        la["mean"] - la["std"],
+                        la["mean"] + la["std"],
+                        alpha=0.22,
+                        color=color,
+                        linewidth=0,
+                    )
                     ax_loc.plot(
-                        loc_med["time"],
-                        loc_med["value"],
+                        la["time"],
+                        la["mean"],
                         color=color,
                         linestyle=style,
                         linewidth=2.0,
                         label=variant,
                     )
-                    row2_vals.extend(loc_med["value"].tolist())
+                    row2_vals.extend((la["mean"] - la["std"]).tolist())
+                    row2_vals.extend((la["mean"] + la["std"]).tolist())
 
                 bubble_v = bubble_s[bubble_s["variant"] == variant]
                 if not bubble_v.empty:
-                    bubble_med = bubble_v.groupby("time", as_index=False)["value"].median()
+                    ba = bubble_v.groupby("time", as_index=False).agg(mean=("value", "mean"), std=("value", "std"))
+                    ba["std"] = ba["std"].fillna(0.0)
+                    ax_bub.fill_between(
+                        ba["time"],
+                        ba["mean"] - ba["std"],
+                        ba["mean"] + ba["std"],
+                        alpha=0.22,
+                        color=color,
+                        linewidth=0,
+                    )
                     ax_bub.plot(
-                        bubble_med["time"],
-                        bubble_med["value"],
+                        ba["time"],
+                        ba["mean"],
                         color=color,
                         linestyle=style,
                         linewidth=2.0,
                         label=variant,
                     )
-                    row3_vals.extend(bubble_med["value"].tolist())
+                    row3_vals.extend((ba["mean"] - ba["std"]).tolist())
+                    row3_vals.extend((ba["mean"] + ba["std"]).tolist())
 
             ax_cont.set_title(str(scen))
             ax_cont.set_ylabel("containment rate")
@@ -1529,10 +1631,10 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                 axes[2][i].set_ylim(*ylim_bub)
 
         fig.suptitle(
-            "Containment, Localization RMSE, and Unsafe-Bubble Radius Through Time (Median)"
+            "Containment, Localization RMSE, and Unsafe-Bubble Radius Through Time (mean ± std)"
         )
         fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
-        p = out_dir / "timeseries_containment_localization_unsafe_bubble_median.pdf"
+        p = out_dir / "timeseries_containment_localization_unsafe_bubble_mean_std.pdf"
         p = _save_figure_dual(fig, p, dpi=220)
         plt.close(fig)
         return p
@@ -1540,9 +1642,9 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
     p = _plot_by_scenario(
         long_df,
         metric_pattern="min_benign_spoofer_distance_now_m",
-        title="Min Benign-Spoofer Distance Through Time (Median, by Scenario)",
+        title="Min Benign-Spoofer Distance Through Time (mean ± std, by Scenario)",
         ylabel="distance (m)",
-        out_name="timeseries_min_distance_median.pdf",
+        out_name="timeseries_min_distance_mean_std.pdf",
         variants=["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"],
         hline=NMAC_THRESHOLD_M,
         hline_label=f"NMAC threshold ({int(NMAC_THRESHOLD_M)} m)",
@@ -1590,13 +1692,17 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                     first_alert_times.append(float(alert_pos["time"].iloc[0]))
             det_rate = float(detected_runs) / float(len(runs))
             pre_false = float(np.mean(pre_detect_false_fracs)) if pre_detect_false_fracs else float("nan")
-            first_alert_med = float(np.median(first_alert_times)) if first_alert_times else float("nan")
+            first_alert_mean = float(np.mean(first_alert_times)) if first_alert_times else float("nan")
+            first_alert_std = _safe_std(np.asarray(first_alert_times, dtype=float)) if len(first_alert_times) > 1 else 0.0
+            if not first_alert_times:
+                first_alert_std = float("nan")
             det_rows.append(
                 [
                     str(scen),
                     _fmt_table_value(len(runs)),
                     _fmt_table_value(det_rate),
-                    _fmt_table_value(first_alert_med),
+                    _fmt_table_value(first_alert_mean),
+                    _fmt_table_value(first_alert_std),
                     _fmt_table_value(pre_false),
                     "FP/FN precision/recall require explicit per-report truth labels (not logged).",
                 ]
@@ -1609,7 +1715,8 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                     "Scenario",
                     "Runs",
                     "Detection success rate",
-                    "First alert median (s)",
+                    "First alert mean (s)",
+                    "First alert std (s)",
                     "False-alert fraction before detection (proxy)",
                     "Notes",
                 ],
@@ -1622,7 +1729,8 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                     "Scenario",
                     "Runs",
                     "Detection\nsuccess",
-                    "First alert\nmedian (s)",
+                    "First alert\nmean (s)",
+                    "First alert\nstd (s)",
                     "Pre-detect\nfalse-alert frac",
                     "Notes",
                 ],
@@ -1638,23 +1746,23 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         nmac_timeseries_specs = [
             (
                 "nmac_proximity_total",
-                "Benign-Benign NMACs Through Time (Median, by Scenario)",
+                "Benign-Benign NMACs Through Time (mean ± std, by Scenario)",
                 "cumulative benign-benign NMAC count",
-                "timeseries_nmac_benign_benign_median.pdf",
+                "timeseries_nmac_benign_benign_mean_std.pdf",
                 ["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"],
             ),
             (
                 "nmac_benign_spoofer_total",
-                "Benign-Spoofer NMACs Through Time (Median, by Scenario)",
+                "Benign-Spoofer NMACs Through Time (mean ± std, by Scenario)",
                 "cumulative benign-spoofer NMAC count",
-                "timeseries_nmac_benign_spoofer_median.pdf",
+                "timeseries_nmac_benign_spoofer_mean_std.pdf",
                 ["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"],
             ),
             (
                 "nmac_spoofer_unsafe_total",
-                "SpoofingAware Unsafe-Region NMACs Through Time (Median, by Scenario)",
+                "SpoofingAware Unsafe-Region NMACs Through Time (mean ± std, by Scenario)",
                 "cumulative unsafe-region NMAC count",
-                "timeseries_nmac_spoofer_unsafe_median.pdf",
+                "timeseries_nmac_spoofer_unsafe_mean_std.pdf",
                 ["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"],
             ),
         ]
@@ -1690,9 +1798,9 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         p = _plot_by_scenario(
             long_df,
             metric_pattern="imm_nis_mix",
-            title="SpoofingAware IMM NIS Through Time (Median, by Scenario)",
+            title="SpoofingAware IMM NIS Through Time (mean ± std, by Scenario)",
             ylabel="NIS (3 dof)",
-            out_name="timeseries_imm_nis_median.pdf",
+            out_name="timeseries_imm_nis_mean_std.pdf",
             variants=["SpoofingAware"],
             hlines=[
                 (CHI2_3DOF_95_LO, "--", "chi2 95% lower"),
@@ -1705,9 +1813,9 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
         p = _plot_by_scenario(
             long_df,
             metric_pattern="imm_nees",
-            title="SpoofingAware IMM NEES Through Time (Median, by Scenario)",
+            title="SpoofingAware IMM NEES Through Time (mean ± std, by Scenario)",
             ylabel="NEES (3 dof)",
-            out_name="timeseries_imm_nees_median.pdf",
+            out_name="timeseries_imm_nees_mean_std.pdf",
             variants=["SpoofingAware"],
             hlines=[
                 (CHI2_3DOF_95_LO, "--", "chi2 95% lower"),
@@ -2046,9 +2154,9 @@ def _make_mission_progress_tables(generated_dir: Path, out_dir: Path, goal_tol_m
                     "run_tag": scen_dir.name,
                     "variant": variant,
                     "mission_success_rate": float(success_count) / float(denom),
-                    "time_to_goal_median_s": (float(np.median(per_host_ttg)) if per_host_ttg else float("nan")),
-                    "final_goal_distance_median_m": (
-                        float(np.median(per_host_final_dist)) if per_host_final_dist else float("nan")
+                    "time_to_goal_mean_s": (float(np.mean(per_host_ttg)) if per_host_ttg else float("nan")),
+                    "final_goal_distance_mean_m": (
+                        float(np.mean(per_host_final_dist)) if per_host_final_dist else float("nan")
                     ),
                 }
             )
@@ -2067,21 +2175,39 @@ def _make_mission_progress_tables(generated_dir: Path, out_dir: Path, goal_tol_m
         tr = runs_df[(runs_df["scenario"] == scen) & (runs_df["variant"] == "TrustRID")]
         if sa.empty and tr.empty:
             continue
-        sa_sr = float(np.median(sa["mission_success_rate"])) if not sa.empty else float("nan")
-        tr_sr = float(np.median(tr["mission_success_rate"])) if not tr.empty else float("nan")
-        sa_ttg = float(np.median(pd.to_numeric(sa["time_to_goal_median_s"], errors="coerce").dropna())) if not sa.empty else float("nan")
-        tr_ttg = float(np.median(pd.to_numeric(tr["time_to_goal_median_s"], errors="coerce").dropna())) if not tr.empty else float("nan")
-        sa_fd = float(np.median(pd.to_numeric(sa["final_goal_distance_median_m"], errors="coerce").dropna())) if not sa.empty else float("nan")
-        tr_fd = float(np.median(pd.to_numeric(tr["final_goal_distance_median_m"], errors="coerce").dropna())) if not tr.empty else float("nan")
+        sa_sr_vals = pd.to_numeric(sa["mission_success_rate"], errors="coerce").dropna().to_numpy(dtype=float)
+        tr_sr_vals = pd.to_numeric(tr["mission_success_rate"], errors="coerce").dropna().to_numpy(dtype=float)
+        sa_sr = float(np.mean(sa_sr_vals)) if sa_sr_vals.size > 0 else float("nan")
+        tr_sr = float(np.mean(tr_sr_vals)) if tr_sr_vals.size > 0 else float("nan")
+        sa_sr_std = _safe_std(sa_sr_vals) if sa_sr_vals.size > 0 else float("nan")
+        tr_sr_std = _safe_std(tr_sr_vals) if tr_sr_vals.size > 0 else float("nan")
+        sa_ttg_vals = pd.to_numeric(sa["time_to_goal_mean_s"], errors="coerce").dropna().to_numpy(dtype=float)
+        tr_ttg_vals = pd.to_numeric(tr["time_to_goal_mean_s"], errors="coerce").dropna().to_numpy(dtype=float)
+        sa_ttg = float(np.mean(sa_ttg_vals)) if sa_ttg_vals.size > 0 else float("nan")
+        tr_ttg = float(np.mean(tr_ttg_vals)) if tr_ttg_vals.size > 0 else float("nan")
+        sa_ttg_std = _safe_std(sa_ttg_vals) if sa_ttg_vals.size > 0 else float("nan")
+        tr_ttg_std = _safe_std(tr_ttg_vals) if tr_ttg_vals.size > 0 else float("nan")
+        sa_fd_vals = pd.to_numeric(sa["final_goal_distance_mean_m"], errors="coerce").dropna().to_numpy(dtype=float)
+        tr_fd_vals = pd.to_numeric(tr["final_goal_distance_mean_m"], errors="coerce").dropna().to_numpy(dtype=float)
+        sa_fd = float(np.mean(sa_fd_vals)) if sa_fd_vals.size > 0 else float("nan")
+        tr_fd = float(np.mean(tr_fd_vals)) if tr_fd_vals.size > 0 else float("nan")
+        sa_fd_std = _safe_std(sa_fd_vals) if sa_fd_vals.size > 0 else float("nan")
+        tr_fd_std = _safe_std(tr_fd_vals) if tr_fd_vals.size > 0 else float("nan")
         table_rows.append(
             [
                 scen,
                 _fmt_table_value(sa_sr),
+                _fmt_table_value(sa_sr_std),
                 _fmt_table_value(tr_sr),
+                _fmt_table_value(tr_sr_std),
                 _fmt_table_value(sa_ttg),
+                _fmt_table_value(sa_ttg_std),
                 _fmt_table_value(tr_ttg),
+                _fmt_table_value(tr_ttg_std),
                 _fmt_table_value(sa_fd),
+                _fmt_table_value(sa_fd_std),
                 _fmt_table_value(tr_fd),
+                _fmt_table_value(tr_fd_std),
             ]
         )
     if table_rows:
@@ -2090,12 +2216,18 @@ def _make_mission_progress_tables(generated_dir: Path, out_dir: Path, goal_tol_m
             table_rows,
             columns=[
                 "Scenario",
-                "Mission success rate median (SA)",
-                "Mission success rate median (Trust-RID)",
-                "Time-to-goal median SA (s)",
-                "Time-to-goal median Trust-RID (s)",
-                "Final distance-to-goal median SA (m)",
-                "Final distance-to-goal median Trust-RID (m)",
+                "Mission success rate mean (SA)",
+                "Mission success rate std (SA)",
+                "Mission success rate mean (Trust-RID)",
+                "Mission success rate std (Trust-RID)",
+                "Time-to-goal mean SA (s)",
+                "Time-to-goal std SA (s)",
+                "Time-to-goal mean Trust-RID (s)",
+                "Time-to-goal std Trust-RID (s)",
+                "Final distance-to-goal mean SA (m)",
+                "Final distance-to-goal std SA (m)",
+                "Final distance-to-goal mean Trust-RID (m)",
+                "Final distance-to-goal std Trust-RID (m)",
             ],
         ).to_csv(p_csv, index=False)
         out_paths.append(p_csv)
@@ -2104,12 +2236,18 @@ def _make_mission_progress_tables(generated_dir: Path, out_dir: Path, goal_tol_m
             rows=table_rows,
             headers=[
                 "Scenario",
-                "Success\nSA",
-                "Success\nTR",
-                "TTG\nSA (s)",
-                "TTG\nTR (s)",
-                "Final dist\nSA (m)",
-                "Final dist\nTR (m)",
+                "Success\nmean SA",
+                "Success\nstd SA",
+                "Success\nmean TR",
+                "Success\nstd TR",
+                "TTG\nmean SA",
+                "TTG\nstd SA",
+                "TTG\nmean TR",
+                "TTG\nstd TR",
+                "Dist\nmean SA",
+                "Dist\nstd SA",
+                "Dist\nmean TR",
+                "Dist\nstd TR",
             ],
             title="TABLE VIII",
             subtitle=f"Mission-progress summary (goal tolerance = {goal_tol_m:g} m)",
@@ -2132,13 +2270,13 @@ def _export_keycharts(out_dir: Path, written: list[Path]) -> list[Path]:
         "summary_means_table.csv",
         "summary_distribution_table.csv",
         "runtime_compare_scenarios_aware_vs_trustrid.pdf",
-        "timeseries_min_distance_median.pdf",
-        "timeseries_containment_localization_unsafe_bubble_median.pdf",
+        "timeseries_min_distance_mean_std.pdf",
+        "timeseries_containment_localization_unsafe_bubble_mean_std.pdf",
         "detection_first_time_by_scenario.pdf",
         "table_ii_nmac_summary_statistics.pdf",
         "table_ii_nmac_summary_statistics.csv",
-        "table_iii_runtime_median_per_scenario_seconds.pdf",
-        "table_iii_runtime_median_per_scenario_seconds.csv",
+        "table_iii_runtime_mean_std_per_scenario_seconds.pdf",
+        "table_iii_runtime_mean_std_per_scenario_seconds.csv",
         "table_iv_effect_size_sa_vs_trustrid.pdf",
         "table_iv_effect_size_sa_vs_trustrid.csv",
         "table_v_containment_calibration.pdf",

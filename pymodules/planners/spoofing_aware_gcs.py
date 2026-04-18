@@ -590,6 +590,8 @@ class SpoofingAwareGcs:
             # Visualization cue: once spoofing is detected for this serial,
             # claimed RID points switch color (handled by C++ OSG renderer).
             visualization["claimed_detected"] = bool(serial in self.spoofers)
+        if visualization and self._visual_spoofer_serial is not None:
+            visualization["track_host_id"] = int(self._visual_spoofer_serial)
         if visualization:
             result["visualization"] = visualization
         self._reports_time_total_s += max(0.0, time.perf_counter() - t0)
@@ -600,7 +602,9 @@ class SpoofingAwareGcs:
         """Return hosts considered complete and excluded from NMAC metrics."""
         reached: set[int] = set()
         for hid, pos in positions.items():
-            goal = self.goals.get(int(hid))
+            goal = self._goals_by_host.get(int(hid))
+            if goal is None:
+                goal = self.goals.get(int(hid), self.goals.get(str(int(hid))))
             if goal is None:
                 continue
             goal_arr = np.asarray(goal, dtype=float).ravel()[:3]
@@ -963,8 +967,11 @@ class SpoofingAwareGcs:
                 "alpha": self.alpha,
                 "host_id": hid,
             }
-            if hid in self.goals:
-                cmd["goal"] = self.goals[hid]
+            goal = self._goals_by_host.get(int(hid))
+            if goal is None:
+                goal = self.goals.get(int(hid), self.goals.get(str(int(hid))))
+            if goal is not None:
+                cmd["goal"] = np.asarray(goal, dtype=float).ravel()[:3].tolist()
 
             commands[hid] = cmd
 
@@ -972,6 +979,8 @@ class SpoofingAwareGcs:
         if primary_unsafe is not None:
             visualization["ellipsoid"] = primary_unsafe
             visualization["detected"] = True
+        if self._visual_spoofer_serial is not None:
+            visualization["track_host_id"] = int(self._visual_spoofer_serial)
 
         out = {
             "commands": commands,
@@ -1050,6 +1059,19 @@ class SpoofingAwareGcs:
 
     def on_gcs_finish(self) -> dict:
         """Simulation end: emit final NMAC totals as OMNeT++ scalars (.sca) for analysis filters."""
+        # LCR = fraction of GCS ticks where true spoofer lies inside the published chance-constraint ellipsoid
+        # (same counters as spoofer_containment_rate / spoofer_containment_rate_final).
+        if self._spoofer_containment_total > 0:
+            lcr = float(self._spoofer_containment_hits) / float(self._spoofer_containment_total)
+            print(
+                "[SpoofingAwareGcs] localization containment rate "
+                f"(spoofer inside chance-constraint ellipsoid): {100.0 * lcr:.2f}% "
+                f"({self._spoofer_containment_hits}/{self._spoofer_containment_total})"
+            )
+        else:
+            print(
+                "[SpoofingAwareGcs] localization containment rate: n/a (no containment samples)"
+            )
         return {
             "scalars": {
                 "nmac_proximity_final": float(self.nmac_proximity_count),

@@ -52,6 +52,17 @@ simple GcsModule
         // Periodic tick interval for on_tick() callback (0 = disabled)
         double tickInterval @unit(s) = default(0s);
 
+        // Qtenv 2D overlay (network canvas): top-down XY slice of unsafe ellipsoid,
+        // claimed-RID polyline, and true spoofer position when trackHostId is set.
+        bool drawPresentationOverlay = default(true);
+        bool overlayFollowSpoofer = default(true);
+        double overlayFollowHalfSpan @unit(m) = default(350m);
+        double overlayMapMinX @unit(m) = default(-100m);
+        double overlayMapMaxX @unit(m) = default(600m);
+        double overlayMapMinY @unit(m) = default(-100m);
+        double overlayMapMaxY @unit(m) = default(600m);
+        int overlayMaxClaimedPoints = default(800);
+
     gates:
         input directIn @directIn;
 }

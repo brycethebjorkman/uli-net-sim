@@ -78,8 +78,8 @@ New paper-style table outputs under `charts/`:
 
 - `table_ii_nmac_summary_statistics.pdf`
 - `table_ii_nmac_summary_statistics.csv`
-- `table_iii_runtime_median_per_scenario_seconds.pdf`
-- `table_iii_runtime_median_per_scenario_seconds.csv`
+- `table_iii_runtime_mean_std_per_scenario_seconds.pdf`
+- `table_iii_runtime_mean_std_per_scenario_seconds.csv`
 - `table_iv_effect_size_sa_vs_trustrid.pdf`
 - `table_iv_effect_size_sa_vs_trustrid.csv`
 - `table_v_containment_calibration.pdf`

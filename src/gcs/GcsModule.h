@@ -20,8 +20,8 @@ class GcsReport;
 //
 // Ground Control Station: aggregates per-transmission RX reports,
 // calls a Python decision algorithm, optionally sends control commands.
-// Supports OSG visualization of chance-constraint ellipsoid and
-// spoofer claimed-position trail.
+// OSG (3D) and Qtenv network-canvas overlay (2D): chance-constraint ellipsoid,
+// claimed-RID trail, and optional follow framing for the spoofer host.
 //
 class GcsModule : public cSimpleModule, public cListener
 {
@@ -34,12 +34,14 @@ class GcsModule : public cSimpleModule, public cListener
     // Forward a control command to a UAV's mobility module
     void sendCommand(int hostId, const std::string& commandJson);
 
-    // OSG visualization: draw/update chance-constraint ellipsoid and claimed trail
+    // OSG + Qtenv canvas: chance-constraint ellipsoid and claimed-RID trail
     void updateVisualization(const std::vector<double>& mu,
                              const std::vector<std::vector<double>>& sigma,
                              double alpha,
                              bool detected);
     void addClaimedTrailPoint(double x, double y, double z, bool detected);
+
+    int trackHostId = -1;
 
   protected:
     // Federate host indices this GCS manages (empty = all)
@@ -73,7 +75,26 @@ class GcsModule : public cSimpleModule, public cListener
     void *claimedTrailGeode = nullptr;
     std::vector<std::tuple<double, double, double>> claimedTrailPoints;
     std::vector<bool> claimedTrailDetected;
-    bool visualizationInitialized = false;
+
+    // Last published unsafe ellipsoid (for 2D redraw / OSG-off builds)
+    std::vector<double> lastEllipsoidMu;
+    std::vector<std::vector<double>> lastEllipsoidSigma;
+    double lastEllipsoidAlpha = 0.05;
+    bool lastEllipsoidDetected = false;
+    bool lastEllipsoidValid = false;
+
+    class cGroupFigure *presentationRoot = nullptr;
+    class cPolylineFigure *canvasEllipseFig = nullptr;
+    class cPolylineFigure *canvasClaimedFig = nullptr;
+    class cOvalFigure *canvasTruthFig = nullptr;
+    class cOvalFigure *canvasClaimedHeadFig = nullptr;
+
+    void ensurePresentationCanvas();
+    void removePresentationCanvas();
+    void computeOverlayBounds(double& minX, double& maxX, double& minY, double& maxY) const;
+    void mapWorldToCanvas(double wx, double wy, double& outCx, double& outCy) const;
+    bool queryHostPosition(int hostId, double& x, double& y, double& z) const;
+    void refreshCanvasOverlay();
 
     virtual void initialize() override;
     virtual void finish() override;

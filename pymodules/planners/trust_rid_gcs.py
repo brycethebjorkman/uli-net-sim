@@ -35,6 +35,16 @@ class TrustRidGcs:
         self.alpha = alpha
         self.agent_radius = agent_radius
         self.goals = goals or {}
+        self._goals_by_host: dict[int, np.ndarray] = {}
+        for k, v in self.goals.items():
+            try:
+                hid = int(k)
+            except (TypeError, ValueError):
+                continue
+            g = np.asarray(v, dtype=float).ravel()[:3]
+            if g.shape[0] < 3:
+                g = np.pad(g, (0, 3 - g.shape[0]), mode="constant")
+            self._goals_by_host[hid] = g
         self._spoofer_host = spoofer_host
 
         self.rid_positions: dict[int, tuple[float, float, float]] = {}
@@ -55,6 +65,19 @@ class TrustRidGcs:
         self._max_host_count = 0
         # OSG claimed-position trail (red spheres): same convention as SpoofingAwareGcs.
         self._visual_spoofer_serial: int | None = None
+
+    def _ingest_host_goals(self, host_goals: dict | None) -> None:
+        if not host_goals:
+            return
+        for k, v in host_goals.items():
+            try:
+                hid = int(k)
+            except (TypeError, ValueError):
+                continue
+            g = np.asarray(v, dtype=float).ravel()[:3]
+            if g.shape[0] < 3:
+                g = np.pad(g, (0, 3 - g.shape[0]), mode="constant")
+            self._goals_by_host[hid] = g
 
     def on_gcs_reports(self, data: dict) -> dict | None:
         t0 = time.perf_counter()
@@ -78,6 +101,8 @@ class TrustRidGcs:
         )
         if show_claimed_trail:
             visualization["claimed_pos"] = [float(c) for c in claimed_pos]
+            if self._visual_spoofer_serial is not None:
+                visualization["track_host_id"] = int(self._visual_spoofer_serial)
 
         out: dict = {
             "log": {
@@ -215,6 +240,7 @@ class TrustRidGcs:
         host_ids = list(data.get("host_ids", []))
         sim_time = float(data.get("time", 0.0))
         self._max_host_count = max(self._max_host_count, len(host_ids))
+        self._ingest_host_goals(data.get("host_goals"))
 
         if self._spoofer_host is None and host_ids:
             self._spoofer_host = max(int(h) for h in host_ids)
@@ -250,8 +276,11 @@ class TrustRidGcs:
                 "alpha": self.alpha,
                 "host_id": hid,
             }
-            if hid in self.goals:
-                cmd["goal"] = self.goals[hid]
+            goal = self._goals_by_host.get(int(hid))
+            if goal is None:
+                goal = self.goals.get(int(hid), self.goals.get(str(int(hid))))
+            if goal is not None:
+                cmd["goal"] = np.asarray(goal, dtype=float).ravel()[:3].tolist()
 
             commands[hid] = cmd
 

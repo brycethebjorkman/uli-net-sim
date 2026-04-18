@@ -392,6 +392,7 @@ void GcsModule::removePresentationCanvas()
     canvasTruthFig = nullptr;
     canvasClaimedHeadFig = nullptr;
     canvasBenignRiskFigs.clear();
+    canvasBenignSpooferNmacRings.clear();
     canvasGoalDots.clear();
     canvasGoalLabels.clear();
     canvasScaleLeftSpine = nullptr;
@@ -459,6 +460,22 @@ void GcsModule::ensureBenignRiskMarkerCapacity(size_t need)
         fig->setVisible(false);
         presentationRoot->addFigure(fig);
         canvasBenignRiskFigs.push_back(fig);
+    }
+}
+
+void GcsModule::ensureBenignSpooferNmacRingCapacity(size_t need)
+{
+    if (!presentationRoot)
+        return;
+    while (canvasBenignSpooferNmacRings.size() < need) {
+        auto *ring = new cOvalFigure(("benignSpooferNmac" + std::to_string(canvasBenignSpooferNmacRings.size())).c_str());
+        ring->setZIndex(8018);
+        ring->setFilled(false);
+        ring->setLineWidth(2.5);
+        ring->setLineColor(cFigure::parseColor("#cc5500"));
+        ring->setVisible(false);
+        presentationRoot->addFigure(ring);
+        canvasBenignSpooferNmacRings.push_back(ring);
     }
 }
 
@@ -934,18 +951,20 @@ void GcsModule::refreshCanvasOverlay()
         canvasClaimedHeadFig->setVisible(false);
     }
 
-    // ── Benign hosts: filled red inside unsafe set (3D ellipsoid and/or XY marginal matching
-    //    the red canvas ellipse); hollow orange if NMAC-only outside that set ──
+    // ── Benign hosts: filled red = unsafe region; hollow orange rect = 3D NMAC to spoofer
+    //    truth only; optional hollow orange *oval* repeats that NMAC cue (also when unsafe). ──
     const bool showBenignRisk =
         hasPar("overlayBenignRiskMarkers") && par("overlayBenignRiskMarkers").boolValue();
+    const bool showBenignSpooferNmacRing =
+        showBenignRisk
+        && (!hasPar("overlayBenignSpooferNmacRing") || par("overlayBenignSpooferNmacRing").boolValue());
     if (showBenignRisk) {
         cModule *sys = getSystemModule();
         int nHosts = sys->hasPar("numHosts") ? sys->par("numHosts").intValue() : 0;
         if (nHosts > 0) {
             ensureBenignRiskMarkerCapacity(static_cast<size_t>(nHosts));
-            // NMAC ring uses ground-truth spoofer position (last host), not trackHostId
-            // (estimated track from Python), which would otherwise move the proximity test
-            // and make rectangles appear to jump between benign hosts.
+            ensureBenignSpooferNmacRingCapacity(static_cast<size_t>(nHosts));
+            // NMAC uses ground-truth spoofer position (last host), not trackHostId (Python track).
             const int spooferHostId = nHosts - 1;
 
             const bool ellipsoidReady =
@@ -996,6 +1015,8 @@ void GcsModule::refreshCanvasOverlay()
 
             for (int hid = 0; hid < nHosts; ++hid) {
                 cRectangleFigure *fig = canvasBenignRiskFigs[static_cast<size_t>(hid)];
+                cOvalFigure *nmacRing = canvasBenignSpooferNmacRings[static_cast<size_t>(hid)];
+                nmacRing->setVisible(false);
                 if (hid == spooferHostId) {
                     fig->setVisible(false);
                     continue;
@@ -1065,15 +1086,31 @@ void GcsModule::refreshCanvasOverlay()
                     fig->setLineColor(cFigure::parseColor("darkorange"));
                 }
                 fig->setVisible(true);
+
+                if (showBenignSpooferNmacRing && nmac && haveSpooferTruth) {
+                    const double ringD = std::max(box + 10.0, 30.0);
+                    nmacRing->setBounds(cFigure::Rectangle(cpx - ringD * 0.5, cpy - ringD * 0.5, ringD, ringD));
+                    nmacRing->setVisible(true);
+                }
             }
             for (size_t i = static_cast<size_t>(nHosts); i < canvasBenignRiskFigs.size(); ++i)
                 canvasBenignRiskFigs[i]->setVisible(false);
+            for (size_t i = static_cast<size_t>(nHosts); i < canvasBenignSpooferNmacRings.size(); ++i)
+                canvasBenignSpooferNmacRings[i]->setVisible(false);
+        }
+        else {
+            for (auto *r : canvasBenignSpooferNmacRings)
+                if (r)
+                    r->setVisible(false);
         }
     }
     else {
         for (auto *fig : canvasBenignRiskFigs)
             if (fig)
                 fig->setVisible(false);
+        for (auto *r : canvasBenignSpooferNmacRings)
+            if (r)
+                r->setVisible(false);
     }
 
     // ── Per-host waypoint goals (2D): dot color matches mobility trail palette by index ──

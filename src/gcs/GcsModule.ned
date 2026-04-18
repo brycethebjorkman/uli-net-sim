@@ -54,12 +54,13 @@ simple GcsModule
 
         // Qtenv 2D overlay (network canvas): top-down XY slice of unsafe ellipsoid,
         // claimed-RID polyline, and true spoofer position when trackHostId is set.
-        // overlayBenignRiskMarkers: red/orange rectangles on benign hosts inside the
-        // published unsafe set (Python benign_inside_unsafe_host_ids and/or geometric test)
-        // or within overlayNmacProximityM of designated spoofer truth
-        // (host[numHosts-1], not Python track_host_id). On by default; set false to hide.
+        // overlayBenignRiskMarkers: red filled = chance-constraint / planner unsafe region;
+        // hollow orange rectangle = benign within overlayNmacProximityM of spoofer *ground truth*
+        // (host[numHosts-1]) but outside that unsafe set. overlayBenignSpooferNmacRing adds a
+        // hollow orange *ring* on any benign in that NMAC range (including when also unsafe).
         bool drawPresentationOverlay = default(true);
         bool overlayBenignRiskMarkers = default(true);
+        bool overlayBenignSpooferNmacRing = default(true);
         double overlayNmacProximityM @unit(m) = default(50m);
         // Legacy follow mode (unused with CanvasProjection). Map rectangle is used for fixed
         // world-space distance scales on the 2D canvas (axes do not follow the host swarm).

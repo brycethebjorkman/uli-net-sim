@@ -99,6 +99,8 @@ class GcsModule : public cSimpleModule, public cListener
     class cOvalFigure *canvasTruthFig = nullptr;
     class cOvalFigure *canvasClaimedHeadFig = nullptr;
     std::vector<cRectangleFigure *> canvasBenignRiskFigs;
+    // Hollow ring: benign within 3D NMAC distance of spoofer truth (same test as orange box).
+    std::vector<cOvalFigure *> canvasBenignSpooferNmacRings;
     std::vector<cOvalFigure *> canvasGoalDots;
     std::vector<cTextFigure *> canvasGoalLabels;
 
@@ -114,6 +116,7 @@ class GcsModule : public cSimpleModule, public cListener
 
     void ensurePresentationCanvas();
     void ensureBenignRiskMarkerCapacity(size_t need);
+    void ensureBenignSpooferNmacRingCapacity(size_t need);
     void ensureGoalDotCapacity(size_t need);
     void tryCacheWaypointGoalForHost(int hid);
     void removePresentationCanvas();

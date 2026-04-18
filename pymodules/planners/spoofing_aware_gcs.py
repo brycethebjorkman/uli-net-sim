@@ -85,7 +85,7 @@ IMM_CA_POS_NOISE = 4.0
 IMM_CA_VEL_NOISE = 50.0
 IMM_CA_ACC_NOISE = 20.0
 IMM_CA_MEAS_NOISE = 50.0
-FORCE_DETECT_AT_S = -1
+FORCE_DETECT_AT_S = 5
 UNSAFE_MU_SMOOTH = 0.35       # EMA gain for published unsafe-region center
 UNSAFE_SIGMA_SMOOTH = 0.25    # EMA gain for published unsafe covariance
 UNSAFE_STD_MIN_M = 4.0        # floor for visual/planning stability (avoid vanish)
@@ -355,10 +355,14 @@ class SpoofingAwareGcs:
         tx_oracle_dbm = 0.0
 
         # Keep exactly one claimed RID trail (red) for visual clarity.
-        # Use scenario convention: spoofer is max host id. host_ids are provided
-        # with each report so trail source is stable from the start.
+        # Spoofer index is ``num_hosts - 1`` in our scenarios (DepotCity, Hub, …).
+        # Do not use max(federate host_ids): federate lists often omit the last index
+        # while the GCS still processes that aircraft's beacons.
         report_host_ids = [int(h) for h in data.get("host_ids", [])]
-        if report_host_ids:
+        num_hosts = int(data.get("num_hosts", 0))
+        if num_hosts > 0:
+            self._visual_spoofer_serial = int(num_hosts - 1)
+        elif report_host_ids:
             self._visual_spoofer_serial = max(report_host_ids)
         elif self._spoofer_host is not None:
             self._visual_spoofer_serial = int(self._spoofer_host)
@@ -370,7 +374,9 @@ class SpoofingAwareGcs:
             visualization["claimed_pos"] = [float(c) for c in claimed_pos]
 
         expected_spoofer_serial: int | None = None
-        if report_host_ids:
+        if num_hosts > 0:
+            expected_spoofer_serial = int(num_hosts - 1)
+        elif report_host_ids:
             expected_spoofer_serial = max(report_host_ids)
         elif self._spoofer_host is not None:
             expected_spoofer_serial = int(self._spoofer_host)
@@ -835,9 +841,12 @@ class SpoofingAwareGcs:
         self._ingest_host_goals(data.get("host_goals"))
         self._refresh_goal_reached_hosts(data.get("ground_truth_positions"))
         self._max_host_count = max(self._max_host_count, len(host_ids))
-        if self._spoofer_host is None and host_ids:
-            # Sweep layouts convention: spoofer is last host index.
-            self._spoofer_host = max(int(h) for h in host_ids)
+        num_hosts = int(data.get("num_hosts", 0))
+        if self._spoofer_host is None:
+            if num_hosts > 0:
+                self._spoofer_host = int(num_hosts - 1)
+            elif host_ids:
+                self._spoofer_host = max(int(h) for h in host_ids)
         if self._spoofer_host is not None:
             self._visual_spoofer_serial = int(self._spoofer_host)
 

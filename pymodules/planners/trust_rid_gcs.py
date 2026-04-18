@@ -3,9 +3,9 @@ Baseline GCS: trust reported RID positions (no detection, localization, or
 chance constraints). Same command shape as SpoofingAwareGcs so MdpTrajectoryPlanner
 is unchanged; unsafe regions are always empty.
 
-NMAC proximity uses ground truth when provided and excludes the spoofer host as
-``max(host_ids)`` (or optional ``spoofer_host=``), matching typical circle layouts
-where the spoofer is the last host. ``nmac_spoofer_unsafe_*`` stays zero because
+NMAC proximity uses ground truth when provided and excludes the spoofer host
+(``num_hosts - 1`` from GcsModule, else ``max(host_ids)``, else optional
+``spoofer_host=``). ``nmac_spoofer_unsafe_*`` stays zero because
 TrustRid does not publish unsafe regions, but ``nmac_benign_spoofer_*`` still
 captures benign-vs-spoofer proximity events.
 
@@ -91,7 +91,10 @@ class TrustRidGcs:
 
         visualization: dict = {}
         report_host_ids = [int(h) for h in data.get("host_ids", [])]
-        if report_host_ids:
+        num_hosts = int(data.get("num_hosts", 0))
+        if num_hosts > 0:
+            self._visual_spoofer_serial = int(num_hosts - 1)
+        elif report_host_ids:
             self._visual_spoofer_serial = max(report_host_ids)
         elif self._spoofer_host is not None:
             self._visual_spoofer_serial = int(self._spoofer_host)
@@ -118,9 +121,11 @@ class TrustRidGcs:
         self._reports_calls += 1
         return out
 
-    def _spoofer_hid(self, host_ids: list[int]) -> int | None:
+    def _spoofer_hid(self, host_ids: list[int], num_hosts: int = 0) -> int | None:
         if self._spoofer_host is not None:
             return self._spoofer_host
+        if num_hosts > 0:
+            return int(num_hosts - 1)
         if not host_ids:
             return None
         return max(int(h) for h in host_ids)
@@ -239,13 +244,17 @@ class TrustRidGcs:
         t0 = time.perf_counter()
         host_ids = list(data.get("host_ids", []))
         sim_time = float(data.get("time", 0.0))
+        num_hosts = int(data.get("num_hosts", 0))
         self._max_host_count = max(self._max_host_count, len(host_ids))
         self._ingest_host_goals(data.get("host_goals"))
 
-        if self._spoofer_host is None and host_ids:
-            self._spoofer_host = max(int(h) for h in host_ids)
+        if self._spoofer_host is None:
+            if num_hosts > 0:
+                self._spoofer_host = int(num_hosts - 1)
+            elif host_ids:
+                self._spoofer_host = max(int(h) for h in host_ids)
 
-        spoofer_hid = self._spoofer_hid(host_ids)
+        spoofer_hid = self._spoofer_hid(host_ids, num_hosts)
         unsafe_regions: list[dict] = []
 
         self._update_nmac_metrics(

@@ -156,6 +156,15 @@ void PyBridge::initialize()
     for (auto key : toReload)
         PyDict_DelItem(modules.ptr(), key.ptr());
 
+    // Qtenv draws red sendDirect line animations for WirelessSignal deliveries between
+    // hosts; that is independent of INET's mediumVisualizer. Disable at the network
+    // root when BasicUav (or any network) sets suppressQtenvWirelessAnimations.
+    cModule *root = getSimulation()->getSystemModule();
+    if (root->hasPar("suppressQtenvWirelessAnimations")
+        && root->par("suppressQtenvWirelessAnimations").boolValue()) {
+        root->setBuiltinAnimationsAllowed(false);
+    }
+
     EV_INFO << "PyBridge initialized. sys.path = " << py::str(path).cast<std::string>() << endl;
 }
 

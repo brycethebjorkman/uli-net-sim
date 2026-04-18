@@ -6,6 +6,7 @@
 #define __GCS_MODULE_H
 
 #include <omnetpp.h>
+#include <omnetpp/ccanvas.h>
 #include <map>
 #include <set>
 #include <vector>
@@ -40,6 +41,7 @@ class GcsModule : public cSimpleModule, public cListener
                              double alpha,
                              bool detected);
     void addClaimedTrailPoint(double x, double y, double z, bool detected);
+    void resetClaimedTrail();
 
     int trackHostId = -1;
 
@@ -88,11 +90,17 @@ class GcsModule : public cSimpleModule, public cListener
     class cPolylineFigure *canvasClaimedFig = nullptr;
     class cOvalFigure *canvasTruthFig = nullptr;
     class cOvalFigure *canvasClaimedHeadFig = nullptr;
+    std::vector<cRectangleFigure *> canvasBenignRiskFigs;
+    std::vector<cOvalFigure *> canvasGoalDots;
 
     void ensurePresentationCanvas();
+    void ensureBenignRiskMarkerCapacity(size_t need);
+    void ensureGoalDotCapacity(size_t need);
+    void tryCacheWaypointGoalForHost(int hid);
     void removePresentationCanvas();
-    void computeOverlayBounds(double& minX, double& maxX, double& minY, double& maxY) const;
-    void mapWorldToCanvas(double wx, double wy, double& outCx, double& outCy) const;
+    // World (m) → Qtenv network canvas pixels using INET's CanvasProjection (same as
+    // MobilityCanvasVisualizer trails / position markers).
+    void mapWorldToCanvas(double wx, double wy, double wz, double& outCx, double& outCy) const;
     bool queryHostPosition(int hostId, double& x, double& y, double& z) const;
     void refreshCanvasOverlay();
 

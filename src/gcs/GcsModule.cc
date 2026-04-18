@@ -14,8 +14,11 @@
 #include "GcsCommand_m.h"
 #include "inet/physicallayer/wireless/common/contract/packetlevel/IRadioMedium.h"
 #include "inet/mobility/contract/IMobility.h"
+#include "inet/common/geometry/common/CanvasProjection.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <sstream>
 
 #ifdef WITH_OSG
@@ -44,6 +47,79 @@ double chi2Threshold2D(double alpha)
     if (alpha <= 0.10)
         return 4.605;
     return 5.991;
+}
+
+double chi2Threshold3D(double alpha)
+{
+    if (alpha <= 0.01)
+        return 11.345;
+    if (alpha <= 0.05)
+        return 7.815;
+    if (alpha <= 0.10)
+        return 6.251;
+    return 7.815;
+}
+
+// Cholesky A = L L^T for 3x3 SPD; returns false if not factorable.
+bool cholesky3(const double A[3][3], double L[3][3])
+{
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            L[i][j] = 0.0;
+
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j <= i; ++j) {
+            double sum = A[i][j];
+            for (int k = 0; k < j; ++k)
+                sum -= L[i][k] * L[j][k];
+            if (i == j) {
+                if (sum <= 1e-18)
+                    return false;
+                L[i][j] = std::sqrt(sum);
+            }
+            else {
+                if (std::abs(L[j][j]) < 1e-18)
+                    return false;
+                L[i][j] = sum / L[j][j];
+            }
+        }
+    }
+    return true;
+}
+
+// Mahalanobis^2 = d^T Sigma^{-1} d  with Sigma symmetric SPD (via Cholesky).
+bool mahalanobisSquared3(const double Sigma[3][3], const double d[3], double& outM2)
+{
+    double L[3][3];
+    if (!cholesky3(Sigma, L))
+        return false;
+    double y0 = d[0] / L[0][0];
+    double y1 = (d[1] - L[1][0] * y0) / L[1][1];
+    double y2 = (d[2] - L[2][0] * y0 - L[2][1] * y1) / L[2][2];
+    outM2 = y0 * y0 + y1 * y1 + y2 * y2;
+    return std::isfinite(outM2);
+}
+
+// Same order as BasicUav.ned movementTrailLineColor / MultirotorMobility kInetTrailPalette.
+// Red is reserved for the designated spoofer (host[numHosts-1]) in goalDotColorForHostIndex.
+const char* const kHostGoalDotPalette[] = {
+    "#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a",
+    "#9467bd", "#c5b0d5", "#404040", "#bdbdbd", "#e377c2", "#f7b6d2",
+    "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5",
+    "#393b79", "#5254a3", "#637939", "#8ca252", "#3182bd", "#6baed6",
+    "#31a354", "#756bb1",
+};
+static constexpr size_t kHostGoalDotPaletteLen = sizeof(kHostGoalDotPalette) / sizeof(kHostGoalDotPalette[0]);
+
+static const char* goalDotColorForHostIndex(int hid)
+{
+    cModule *net = getSimulation()->getSystemModule();
+    if (net && net->hasPar("numHosts")) {
+        int nh = net->par("numHosts").intValue();
+        if (hid == nh - 1)
+            return "#ea4335";
+    }
+    return kHostGoalDotPalette[static_cast<size_t>(hid) % kHostGoalDotPaletteLen];
 }
 
 } // namespace
@@ -208,10 +284,44 @@ void GcsModule::updateVisualization(const std::vector<double>& mu,
         refreshCanvasOverlay();
 }
 
+void GcsModule::resetClaimedTrail()
+{
+    claimedTrailPoints.clear();
+    claimedTrailDetected.clear();
+    if constexpr (hasOsg) {
+#ifdef WITH_OSG
+        auto *osgCanvas = getSystemModule()->getOsgCanvas();
+        auto *scene = osgCanvas ? dynamic_cast< ::osg::Group*>(osgCanvas->getScene()) : nullptr;
+        if (scene && claimedTrailGeode) {
+            scene->removeChild(static_cast< ::osg::Node*>(claimedTrailGeode));
+            claimedTrailGeode = nullptr;
+        }
+#endif
+    }
+    if (hasPar("drawPresentationOverlay") && par("drawPresentationOverlay").boolValue())
+        refreshCanvasOverlay();
+}
+
 void GcsModule::addClaimedTrailPoint(double x, double y, double z, bool detected)
 {
     if (!getEnvir()->isGUI())
         return;
+
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+        return;
+
+    if (!claimedTrailPoints.empty()) {
+        const auto& prev = claimedTrailPoints.back();
+        double dx = x - std::get<0>(prev);
+        double dy = y - std::get<1>(prev);
+        double dz = z - std::get<2>(prev);
+        double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        double lim = hasPar("overlayClaimedJumpResetM")
+            ? par("overlayClaimedJumpResetM").doubleValueInUnit("m")
+            : 400.0;
+        if (dist > lim)
+            resetClaimedTrail();
+    }
 
     claimedTrailPoints.emplace_back(x, y, z);
     claimedTrailDetected.push_back(detected);
@@ -278,6 +388,8 @@ void GcsModule::removePresentationCanvas()
     canvasClaimedFig = nullptr;
     canvasTruthFig = nullptr;
     canvasClaimedHeadFig = nullptr;
+    canvasBenignRiskFigs.clear();
+    canvasGoalDots.clear();
 }
 
 void GcsModule::ensurePresentationCanvas()
@@ -321,6 +433,72 @@ void GcsModule::ensurePresentationCanvas()
     canvas->addFigure(presentationRoot);
 }
 
+void GcsModule::ensureBenignRiskMarkerCapacity(size_t need)
+{
+    if (!presentationRoot)
+        return;
+    while (canvasBenignRiskFigs.size() < need) {
+        auto *fig = new cRectangleFigure(("benignAlert" + std::to_string(canvasBenignRiskFigs.size())).c_str());
+        fig->setZIndex(8015);
+        fig->setFilled(true);
+        fig->setLineWidth(2);
+        fig->setLineColor(cFigure::parseColor("red"));
+        fig->setFillColor(cFigure::parseColor("#FF8888"));
+        fig->setCornerRadius(0);
+        fig->setVisible(false);
+        presentationRoot->addFigure(fig);
+        canvasBenignRiskFigs.push_back(fig);
+    }
+}
+
+void GcsModule::ensureGoalDotCapacity(size_t need)
+{
+    if (!presentationRoot)
+        return;
+    while (canvasGoalDots.size() < need) {
+        auto *fig = new cOvalFigure(("hostGoal" + std::to_string(canvasGoalDots.size())).c_str());
+        fig->setZIndex(8025);
+        fig->setFilled(true);
+        fig->setLineWidth(2);
+        fig->setLineColor(cFigure::parseColor("#202020"));
+        fig->setVisible(false);
+        presentationRoot->addFigure(fig);
+        canvasGoalDots.push_back(fig);
+    }
+}
+
+void GcsModule::tryCacheWaypointGoalForHost(int hid)
+{
+    if (hostGoalsByHost.find(hid) != hostGoalsByHost.end())
+        return;
+    cModule *network = getSystemModule();
+    if (!network)
+        return;
+    std::string path = "host[" + std::to_string(hid) + "].mobility";
+    cModule *mobilityMod = network->getModuleByPath(path.c_str());
+    if (!mobilityMod || !mobilityMod->hasPar("waypointScript"))
+        return;
+    cXMLElement *wpXml = mobilityMod->par("waypointScript").xmlValue();
+    if (!wpXml)
+        return;
+    bool foundMoveto = false;
+    std::array<double, 3> goal = {NAN, NAN, NAN};
+    for (cXMLElement *child = wpXml->getFirstChild(); child; child = child->getNextSibling()) {
+        const char *tag = child->getTagName();
+        double x = atof(child->getAttribute("x") ? child->getAttribute("x") : "0");
+        double y = atof(child->getAttribute("y") ? child->getAttribute("y") : "0");
+        double z = atof(child->getAttribute("z") ? child->getAttribute("z") : "0");
+        if (strcmp(tag, "set") == 0 && !foundMoveto)
+            goal = {x, y, z};
+        else if (strcmp(tag, "moveto") == 0) {
+            goal = {x, y, z};
+            foundMoveto = true;
+        }
+    }
+    if (std::isfinite(goal[0]) && std::isfinite(goal[1]) && std::isfinite(goal[2]))
+        hostGoalsByHost[hid] = goal;
+}
+
 bool GcsModule::queryHostPosition(int hostId, double& x, double& y, double& z) const
 {
     if (hostId < 0)
@@ -337,44 +515,19 @@ bool GcsModule::queryHostPosition(int hostId, double& x, double& y, double& z) c
     return true;
 }
 
-void GcsModule::computeOverlayBounds(double& minX, double& maxX, double& minY, double& maxY) const
+void GcsModule::mapWorldToCanvas(double wx, double wy, double wz, double& outCx, double& outCy) const
 {
-    minX = par("overlayMapMinX").doubleValueInUnit("m");
-    maxX = par("overlayMapMaxX").doubleValueInUnit("m");
-    minY = par("overlayMapMinY").doubleValueInUnit("m");
-    maxY = par("overlayMapMaxY").doubleValueInUnit("m");
-
-    if (par("overlayFollowSpoofer").boolValue() && trackHostId >= 0) {
-        double tx = 0, ty = 0, tz = 0;
-        if (queryHostPosition(trackHostId, tx, ty, tz)) {
-            double hs = par("overlayFollowHalfSpan").doubleValueInUnit("m");
-            minX = tx - hs;
-            maxX = tx + hs;
-            minY = ty - hs;
-            maxY = ty + hs;
-        }
+    cModule *sys = getSystemModule();
+    cCanvas *canvas = sys ? sys->getCanvas() : nullptr;
+    if (!canvas) {
+        outCx = 0;
+        outCy = 0;
+        return;
     }
-
-    if (maxX <= minX)
-        maxX = minX + 1.0;
-    if (maxY <= minY)
-        maxY = minY + 1.0;
-}
-
-void GcsModule::mapWorldToCanvas(double wx, double wy, double& outCx, double& outCy) const
-{
-    double minX, maxX, minY, maxY;
-    computeOverlayBounds(minX, maxX, minY, maxY);
-
-    // Match BasicUav.ned @display("bgb=1000,1000") — canvas mapping is in layout pixels.
-    const double cw = 1000;
-    const double ch = 1000;
-
-    const double margin = 40;
-    double W = std::max(10.0, cw - 2 * margin);
-    double H = std::max(10.0, ch - 2 * margin);
-    outCx = margin + (wx - minX) / (maxX - minX) * W;
-    outCy = ch - margin - (wy - minY) / (maxY - minY) * H;
+    CanvasProjection *proj = CanvasProjection::getCanvasProjection(canvas);
+    cFigure::Point p = proj->computeCanvasPoint(Coord(wx, wy, wz));
+    outCx = p.x;
+    outCy = p.y;
 }
 
 void GcsModule::refreshCanvasOverlay()
@@ -440,6 +593,7 @@ void GcsModule::refreshCanvasOverlay()
         pts.reserve(N + 1);
         double cx0 = lastEllipsoidMu[0];
         double cy0 = lastEllipsoidMu[1];
+        const double cz0 = lastEllipsoidMu.size() >= 3 ? lastEllipsoidMu[2] : 0.0;
         for (int i = 0; i <= N; ++i) {
             double t = (2.0 * M_PI * i) / N;
             double lx = axisMajor * std::cos(t);
@@ -447,7 +601,7 @@ void GcsModule::refreshCanvasOverlay()
             double wx = cx0 + lx * std::cos(angle) - ly * std::sin(angle);
             double wy = cy0 + lx * std::sin(angle) + ly * std::cos(angle);
             double cpx, cpy;
-            mapWorldToCanvas(wx, wy, cpx, cpy);
+            mapWorldToCanvas(wx, wy, cz0, cpx, cpy);
             pts.push_back(cFigure::Point(cpx, cpy));
         }
         if (pts.size() >= 2)
@@ -467,7 +621,7 @@ void GcsModule::refreshCanvasOverlay()
         pts.reserve(claimedTrailPoints.size());
         for (const auto& p : claimedTrailPoints) {
             double cpx, cpy;
-            mapWorldToCanvas(std::get<0>(p), std::get<1>(p), cpx, cpy);
+            mapWorldToCanvas(std::get<0>(p), std::get<1>(p), std::get<2>(p), cpx, cpy);
             pts.push_back(cFigure::Point(cpx, cpy));
         }
         canvasClaimedFig->setPoints(pts);
@@ -482,7 +636,7 @@ void GcsModule::refreshCanvasOverlay()
         double tx, ty, tz;
         if (queryHostPosition(trackHostId, tx, ty, tz)) {
             double cpx, cpy;
-            mapWorldToCanvas(tx, ty, cpx, cpy);
+            mapWorldToCanvas(tx, ty, tz, cpx, cpy);
             const double d = 12;
             canvasTruthFig->setBounds(
                 cFigure::Rectangle(cpx - d * 0.5, cpy - d * 0.5, d, d));
@@ -500,7 +654,7 @@ void GcsModule::refreshCanvasOverlay()
     if (canvasClaimedHeadFig && !claimedTrailPoints.empty()) {
         const auto& tail = claimedTrailPoints.back();
         double cpx, cpy;
-        mapWorldToCanvas(std::get<0>(tail), std::get<1>(tail), cpx, cpy);
+        mapWorldToCanvas(std::get<0>(tail), std::get<1>(tail), std::get<2>(tail), cpx, cpy);
         const double d = 14;
         canvasClaimedHeadFig->setBounds(
             cFigure::Rectangle(cpx - d * 0.5, cpy - d * 0.5, d, d));
@@ -511,6 +665,149 @@ void GcsModule::refreshCanvasOverlay()
     }
     else if (canvasClaimedHeadFig) {
         canvasClaimedHeadFig->setVisible(false);
+    }
+
+    // ── Benign hosts: filled red inside 3D unsafe ellipsoid; hollow orange if NMAC-only ──
+    const bool showBenignRisk =
+        hasPar("overlayBenignRiskMarkers") && par("overlayBenignRiskMarkers").boolValue();
+    if (showBenignRisk) {
+        cModule *sys = getSystemModule();
+        int nHosts = sys->hasPar("numHosts") ? sys->par("numHosts").intValue() : 0;
+        if (nHosts > 0) {
+            ensureBenignRiskMarkerCapacity(static_cast<size_t>(nHosts));
+
+            const bool ellipsoidReady =
+                lastEllipsoidValid && lastEllipsoidMu.size() >= 3
+                && lastEllipsoidSigma.size() >= 3 && lastEllipsoidSigma[0].size() >= 3
+                && lastEllipsoidSigma[1].size() >= 3 && lastEllipsoidSigma[2].size() >= 3;
+            double S3[3][3];
+            if (ellipsoidReady) {
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        S3[i][j] = 0.5
+                            * (lastEllipsoidSigma[i][j] + lastEllipsoidSigma[j][i]);
+            }
+
+            const double thr3 = chi2Threshold3D(lastEllipsoidAlpha);
+            const double mu0 = lastEllipsoidMu.size() >= 3 ? lastEllipsoidMu[0] : 0.0;
+            const double mu1 = lastEllipsoidMu.size() >= 3 ? lastEllipsoidMu[1] : 0.0;
+            const double mu2 = lastEllipsoidMu.size() >= 3 ? lastEllipsoidMu[2] : 0.0;
+
+            double sx = 0, sy = 0, sz = 0;
+            const bool haveSpooferTruth =
+                trackHostId >= 0 && queryHostPosition(trackHostId, sx, sy, sz);
+            const double nmacR = hasPar("overlayNmacProximityM")
+                ? par("overlayNmacProximityM").doubleValueInUnit("m")
+                : 50.0;
+
+            for (int hid = 0; hid < nHosts; ++hid) {
+                cRectangleFigure *fig = canvasBenignRiskFigs[static_cast<size_t>(hid)];
+                if (hid == trackHostId) {
+                    fig->setVisible(false);
+                    continue;
+                }
+                double x = 0, y = 0, z = 0;
+                if (!queryHostPosition(hid, x, y, z)) {
+                    fig->setVisible(false);
+                    continue;
+                }
+
+                bool in3d = false;
+                if (ellipsoidReady) {
+                    const double dx = x - mu0;
+                    const double dy = y - mu1;
+                    const double dz = z - mu2;
+                    double diff[3] = {dx, dy, dz};
+                    double md3 = 0;
+                    const bool ok3 = mahalanobisSquared3(S3, diff, md3);
+                    in3d = ok3 && md3 <= thr3 + 1e-6;
+                }
+
+                bool nmac = false;
+                if (haveSpooferTruth) {
+                    const double ddx = x - sx;
+                    const double ddy = y - sy;
+                    const double ddz = z - sz;
+                    const double dist = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+                    nmac = dist < nmacR;
+                }
+
+                if (!in3d && !nmac) {
+                    fig->setVisible(false);
+                    continue;
+                }
+
+                double cpx = 0, cpy = 0;
+                mapWorldToCanvas(x, y, z, cpx, cpy);
+                const double box = in3d ? 28.0 : 22.0;
+                fig->setBounds(cFigure::Rectangle(cpx - box * 0.5, cpy - box * 0.5, box, box));
+                if (in3d) {
+                    fig->setFilled(true);
+                    fig->setLineWidth(3);
+                    fig->setLineColor(cFigure::parseColor("red"));
+                    fig->setFillColor(cFigure::parseColor("#FF6666"));
+                }
+                else {
+                    // NMAC-only (outside ellipsoid): hollow warning, not "unsafe set"
+                    fig->setFilled(false);
+                    fig->setLineWidth(2);
+                    fig->setLineColor(cFigure::parseColor("darkorange"));
+                }
+                fig->setVisible(true);
+            }
+            for (size_t i = static_cast<size_t>(nHosts); i < canvasBenignRiskFigs.size(); ++i)
+                canvasBenignRiskFigs[i]->setVisible(false);
+        }
+    }
+    else {
+        for (auto *fig : canvasBenignRiskFigs)
+            if (fig)
+                fig->setVisible(false);
+    }
+
+    // ── Per-host waypoint goals (2D): dot color matches mobility trail palette by index ──
+    const bool showHostGoals =
+        hasPar("overlayShowHostGoals") && par("overlayShowHostGoals").boolValue();
+    if (showHostGoals) {
+        cModule *sys = getSystemModule();
+        int nHosts = sys->hasPar("numHosts") ? sys->par("numHosts").intValue() : 0;
+        if (nHosts > 0) {
+            ensureGoalDotCapacity(static_cast<size_t>(nHosts));
+            for (int hid = 0; hid < nHosts; ++hid) {
+                tryCacheWaypointGoalForHost(hid);
+                cOvalFigure *fig = canvasGoalDots[static_cast<size_t>(hid)];
+                auto git = hostGoalsByHost.find(hid);
+                if (git == hostGoalsByHost.end()) {
+                    fig->setVisible(false);
+                    continue;
+                }
+                const double gx = git->second[0];
+                const double gy = git->second[1];
+                const double gz = git->second[2];
+                double cpx = 0, cpy = 0;
+                mapWorldToCanvas(gx, gy, gz, cpx, cpy);
+                const double d = 14;
+                fig->setBounds(cFigure::Rectangle(cpx - d * 0.5, cpy - d * 0.5, d, d));
+                fig->setFillColor(cFigure::parseColor(goalDotColorForHostIndex(hid)));
+                fig->setLineColor(cFigure::parseColor("#202020"));
+                fig->setTooltip(
+                    (std::string("Waypoint goal for host[") + std::to_string(hid) + "]").c_str());
+                fig->setVisible(true);
+            }
+            for (size_t i = static_cast<size_t>(nHosts); i < canvasGoalDots.size(); ++i)
+                if (canvasGoalDots[i])
+                    canvasGoalDots[i]->setVisible(false);
+        }
+        else {
+            for (auto *fig : canvasGoalDots)
+                if (fig)
+                    fig->setVisible(false);
+        }
+    }
+    else {
+        for (auto *fig : canvasGoalDots)
+            if (fig)
+                fig->setVisible(false);
     }
 }
 
@@ -550,8 +847,12 @@ static void handlePyResult(GcsModule *gcs, const py::object& result)
     if (d.contains("visualization") && !d["visualization"].is_none()) {
         py::dict viz = d["visualization"].cast<py::dict>();
 
-        if (viz.contains("track_host_id") && !viz["track_host_id"].is_none())
-            gcs->trackHostId = py::cast<int>(viz["track_host_id"]);
+        if (viz.contains("track_host_id") && !viz["track_host_id"].is_none()) {
+            int newTrack = py::cast<int>(viz["track_host_id"]);
+            if (gcs->trackHostId >= 0 && newTrack != gcs->trackHostId)
+                gcs->resetClaimedTrail();
+            gcs->trackHostId = newTrack;
+        }
 
         // Chance-constraint ellipsoid
         if (viz.contains("ellipsoid") && !viz["ellipsoid"].is_none()) {
@@ -801,6 +1102,7 @@ void GcsModule::pyOnReport(const BeaconKey& key,
             hostIds.append(i);
     }
     txData["host_ids"] = hostIds;
+    txData["num_hosts"] = getSystemModule()->par("numHosts").intValue();
     txData["time"] = simTime().dbl();
 
     // Call Python: on_gcs_reports(transmission_data) — skip if method not defined
@@ -824,6 +1126,7 @@ void GcsModule::pyOnTick()
     py::dict data;
     data["time"] = simTime().dbl();
     data["tick_count"] = tickCount;
+    data["num_hosts"] = getSystemModule()->par("numHosts").intValue();
 
     // Provide list of federate host IDs
     py::list hostIds;
@@ -858,30 +1161,7 @@ void GcsModule::pyOnTick()
         Coord pos = mobility->getCurrentPosition();
         groundTruth[py::int_(hid)] = py::make_tuple(pos.getX(), pos.getY(), pos.getZ());
 
-        // Cache host final goal from waypoint script once (deterministic, no runtime inference).
-        if (hostGoalsByHost.find(hid) == hostGoalsByHost.end() && mobilityMod->hasPar("waypointScript")) {
-            cXMLElement *wpXml = mobilityMod->par("waypointScript").xmlValue();
-            if (wpXml) {
-                bool foundMoveto = false;
-                std::array<double, 3> goal = {NAN, NAN, NAN};
-                for (cXMLElement *child = wpXml->getFirstChild(); child; child = child->getNextSibling()) {
-                    const char *tag = child->getTagName();
-                    double x = atof(child->getAttribute("x") ? child->getAttribute("x") : "0");
-                    double y = atof(child->getAttribute("y") ? child->getAttribute("y") : "0");
-                    double z = atof(child->getAttribute("z") ? child->getAttribute("z") : "0");
-                    if (strcmp(tag, "set") == 0 && !foundMoveto) {
-                        goal = {x, y, z};
-                    }
-                    else if (strcmp(tag, "moveto") == 0) {
-                        goal = {x, y, z};
-                        foundMoveto = true;
-                    }
-                }
-                if (std::isfinite(goal[0]) && std::isfinite(goal[1]) && std::isfinite(goal[2])) {
-                    hostGoalsByHost[hid] = goal;
-                }
-            }
-        }
+        tryCacheWaypointGoalForHost(hid);
     }
     data["ground_truth_positions"] = groundTruth;
     py::dict hostGoals;

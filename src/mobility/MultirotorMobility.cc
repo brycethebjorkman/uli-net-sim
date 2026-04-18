@@ -11,6 +11,7 @@
 
 #include "inet/common/INETMath.h"
 #include "inet/common/geometry/common/Quaternion.h"
+#include "visualizer/SpooferTrailColor.h"
 
 #ifdef WITH_OSG
 #include <osg/Geode>
@@ -28,6 +29,47 @@ static constexpr double GRAVITY = 9.81;  // m/s^2
 
 #ifdef WITH_OSG
 static constexpr bool hasOsg = true;
+
+// OSG waypoint polyline colors: benign agents use the same slot as SpooferAwareMobilityOsgVisualizer
+// (getId() % N over the benign-only palette); spoofer (host[numHosts-1]) uses fixed red only.
+// Order matches BasicUav.ned movementTrailLineColor.
+static const ::osg::Vec4 kInetTrailPalette[] = {
+    {31 / 255.0f, 119 / 255.0f, 180 / 255.0f, 1.0f},   // #1f77b4
+    {174 / 255.0f, 199 / 255.0f, 232 / 255.0f, 1.0f},  // #aec7e8
+    {255 / 255.0f, 127 / 255.0f, 14 / 255.0f, 1.0f},   // #ff7f0e
+    {255 / 255.0f, 187 / 255.0f, 120 / 255.0f, 1.0f},  // #ffbb78
+    {44 / 255.0f, 160 / 255.0f, 44 / 255.0f, 1.0f},    // #2ca02c
+    {152 / 255.0f, 223 / 255.0f, 138 / 255.0f, 1.0f},  // #98df8a
+    {148 / 255.0f, 103 / 255.0f, 189 / 255.0f, 1.0f},  // #9467bd
+    {197 / 255.0f, 176 / 255.0f, 213 / 255.0f, 1.0f},  // #c5b0d5
+    {64 / 255.0f, 64 / 255.0f, 64 / 255.0f, 1.0f},     // #404040
+    {189 / 255.0f, 189 / 255.0f, 189 / 255.0f, 1.0f},  // #bdbdbd
+    {227 / 255.0f, 119 / 255.0f, 194 / 255.0f, 1.0f},  // #e377c2
+    {247 / 255.0f, 182 / 255.0f, 210 / 255.0f, 1.0f},  // #f7b6d2
+    {127 / 255.0f, 127 / 255.0f, 127 / 255.0f, 1.0f},  // #7f7f7f
+    {199 / 255.0f, 199 / 255.0f, 199 / 255.0f, 1.0f},  // #c7c7c7
+    {188 / 255.0f, 189 / 255.0f, 34 / 255.0f, 1.0f},   // #bcbd22
+    {219 / 255.0f, 219 / 255.0f, 141 / 255.0f, 1.0f},  // #dbdb8d
+    {23 / 255.0f, 190 / 255.0f, 207 / 255.0f, 1.0f},   // #17becf
+    {158 / 255.0f, 218 / 255.0f, 229 / 255.0f, 1.0f},  // #9edae5
+    {57 / 255.0f, 59 / 255.0f, 121 / 255.0f, 1.0f},   // #393b79
+    {82 / 255.0f, 84 / 255.0f, 163 / 255.0f, 1.0f},   // #5254a3
+    {99 / 255.0f, 121 / 255.0f, 57 / 255.0f, 1.0f},   // #637939
+    {140 / 255.0f, 162 / 255.0f, 82 / 255.0f, 1.0f},  // #8ca252
+    {49 / 255.0f, 130 / 255.0f, 189 / 255.0f, 1.0f},  // #3182bd
+    {107 / 255.0f, 174 / 255.0f, 214 / 255.0f, 1.0f}, // #6baed6
+    {49 / 255.0f, 163 / 255.0f, 84 / 255.0f, 1.0f},   // #31a354
+    {117 / 255.0f, 107 / 255.0f, 177 / 255.0f, 1.0f}, // #756bb1
+};
+static constexpr size_t kInetTrailPaletteLen = sizeof(kInetTrailPalette) / sizeof(kInetTrailPalette[0]);
+
+static ::osg::Vec4 waypointColorMatchingInetTrails(const cModule *mobilityMod)
+{
+    if (uav_rid::mobilityHostIsDesignatedSpoofer(mobilityMod))
+        return ::osg::Vec4(234 / 255.0f, 67 / 255.0f, 53 / 255.0f, 1.0f);  // #ea4335 — only spoofer
+    const unsigned idx = static_cast<unsigned>(mobilityMod->getId()) % kInetTrailPaletteLen;
+    return kInetTrailPalette[idx];
+}
 #else
 static constexpr bool hasOsg = false;
 #endif
@@ -257,19 +299,7 @@ void MultirotorMobility::drawWaypointPath()
         // Create a group node to hold the polyline + sphere markers
         auto *group = new ::osg::Group();
 
-        static const ::osg::Vec4 osgColors[] = {
-            {66/255.0f, 133/255.0f, 244/255.0f, 1.0f},   // blue
-            {52/255.0f, 168/255.0f, 83/255.0f, 1.0f},    // green
-            {251/255.0f, 188/255.0f, 4/255.0f, 1.0f},    // amber
-            {171/255.0f, 71/255.0f, 188/255.0f, 1.0f},   // purple
-        };
-        int hostIdx = getParentModule()->getIndex();
-        auto colorVec = osgColors[hostIdx % 4];
-        // Keep the spoofer trajectory red across scenarios (layout convention:
-        // spoofer is highest host index).
-        int numHosts = getSystemModule()->par("numHosts").intValue();
-        if (hostIdx == numHosts - 1)
-            colorVec = ::osg::Vec4(234/255.0f, 67/255.0f, 53/255.0f, 1.0f);
+        auto colorVec = waypointColorMatchingInetTrails(this);
 
         // Polyline geometry for the path
         auto *geometry = new ::osg::Geometry();

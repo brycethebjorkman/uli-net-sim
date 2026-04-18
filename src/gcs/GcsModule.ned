@@ -54,7 +54,15 @@ simple GcsModule
 
         // Qtenv 2D overlay (network canvas): top-down XY slice of unsafe ellipsoid,
         // claimed-RID polyline, and true spoofer position when trackHostId is set.
+        // When overlayBenignRiskMarkers=true: benign hosts inside the published 3D unsafe
+        // ellipsoid (ground-truth pose) get a filled red highlight; hosts only within
+        // overlayNmacProximityM of the spoofer truth (not in the ellipsoid) get a hollow
+        // darkorange outline instead.
         bool drawPresentationOverlay = default(true);
+        bool overlayBenignRiskMarkers = default(true);
+        double overlayNmacProximityM @unit(m) = default(50m);
+        // Legacy: overlay was linear-mapped in GcsModule; it now uses INET CanvasProjection
+        // (same transform as mobility trails). These are kept for compatibility but unused.
         bool overlayFollowSpoofer = default(true);
         double overlayFollowHalfSpan @unit(m) = default(350m);
         double overlayMapMinX @unit(m) = default(-100m);
@@ -62,6 +70,12 @@ simple GcsModule
         double overlayMapMinY @unit(m) = default(-100m);
         double overlayMapMaxY @unit(m) = default(600m);
         int overlayMaxClaimedPoints = default(800);
+        // If a new claimed point is farther than this from the previous, drop the trail
+        // (avoids one bad sample / serial mix-up drawing a long "dragging" segment).
+        double overlayClaimedJumpResetM @unit(m) = default(400m);
+        // Per-host final waypoint (from mobility waypointScript) as filled dots on the 2D
+        // overlay; colors match BasicUav canvas mobility trail palette by host index.
+        bool overlayShowHostGoals = default(true);
 
     gates:
         input directIn @directIn;

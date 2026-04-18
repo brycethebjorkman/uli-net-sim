@@ -54,21 +54,21 @@ simple GcsModule
 
         // Qtenv 2D overlay (network canvas): top-down XY slice of unsafe ellipsoid,
         // claimed-RID polyline, and true spoofer position when trackHostId is set.
-        // When overlayBenignRiskMarkers=true: benign hosts inside the published 3D unsafe
-        // ellipsoid (ground-truth pose) get a filled red highlight; hosts only within
-        // overlayNmacProximityM of the spoofer truth (not in the ellipsoid) get a hollow
-        // darkorange outline instead.
+        // overlayBenignRiskMarkers: red/orange rectangles on benign hosts inside the
+        // published unsafe set (Python benign_inside_unsafe_host_ids and/or geometric test)
+        // or within overlayNmacProximityM of designated spoofer truth
+        // (host[numHosts-1], not Python track_host_id). On by default; set false to hide.
         bool drawPresentationOverlay = default(true);
         bool overlayBenignRiskMarkers = default(true);
         double overlayNmacProximityM @unit(m) = default(50m);
-        // Legacy: overlay was linear-mapped in GcsModule; it now uses INET CanvasProjection
-        // (same transform as mobility trails). These are kept for compatibility but unused.
+        // Legacy follow mode (unused with CanvasProjection). Map rectangle is used for fixed
+        // world-space distance scales on the 2D canvas (axes do not follow the host swarm).
         bool overlayFollowSpoofer = default(true);
         double overlayFollowHalfSpan @unit(m) = default(350m);
         double overlayMapMinX @unit(m) = default(-100m);
-        double overlayMapMaxX @unit(m) = default(600m);
+        double overlayMapMaxX @unit(m) = default(1000m);
         double overlayMapMinY @unit(m) = default(-100m);
-        double overlayMapMaxY @unit(m) = default(600m);
+        double overlayMapMaxY @unit(m) = default(1000m);
         int overlayMaxClaimedPoints = default(800);
         // If a new claimed point is farther than this from the previous, drop the trail
         // (avoids one bad sample / serial mix-up drawing a long "dragging" segment).
@@ -76,6 +76,14 @@ simple GcsModule
         // Per-host final waypoint (from mobility waypointScript) as filled dots on the 2D
         // overlay; colors match BasicUav canvas mobility trail palette by host index.
         bool overlayShowHostGoals = default(true);
+
+        // World-space distance scales (INET CanvasProjection). Axes lie on overlayMap* bounds
+        // (fixed world m), not the current host bbox, so rulers do not drift with traffic.
+        bool overlayDistanceScales = default(true);
+        double overlayScaleTickSpacingM @unit(m) = default(200m);
+        double overlayScaleTickLengthM @unit(m) = default(35m);
+        // Small world offset from map southwest corner for spine placement (0 = on edge).
+        double overlayScaleAxisInsetM @unit(m) = default(0m);
 
     gates:
         input directIn @directIn;

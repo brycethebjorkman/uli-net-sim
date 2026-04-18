@@ -596,6 +596,8 @@ class SpoofingAwareGcs:
             # Visualization cue: once spoofing is detected for this serial,
             # claimed RID points switch color (handled by C++ OSG renderer).
             visualization["claimed_detected"] = bool(serial in self.spoofers)
+        # Unsafe-violation host ids: only on_gcs_tick updates _nmac_serial_inside_unsafe; omit
+        # here so Qtenv does not refresh the list on every beacon between ticks (avoids jitter).
         if visualization and self._visual_spoofer_serial is not None:
             visualization["track_host_id"] = int(self._visual_spoofer_serial)
         if visualization:
@@ -985,6 +987,10 @@ class SpoofingAwareGcs:
             commands[hid] = cmd
 
         visualization = {}
+        # Same host set as NMAC spoofer-unsafe metric (is_safe / ground truth); drives Qtenv markers.
+        visualization["benign_inside_unsafe_host_ids"] = sorted(
+            int(s) for s in self._nmac_serial_inside_unsafe
+        )
         if primary_unsafe is not None:
             visualization["ellipsoid"] = primary_unsafe
             visualization["detected"] = True

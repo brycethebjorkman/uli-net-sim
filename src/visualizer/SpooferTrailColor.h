@@ -27,7 +27,7 @@ inline bool mobilityHostIsDesignatedSpoofer(const omnetpp::cModule *mobilityModu
     return host->getIndex() == nh - 1;
 }
 
-/** Movement trail color: fixed red for spoofer; otherwise INET ColorSet by mobility id. */
+/** Movement trail color: fixed red for spoofer; otherwise INET ColorSet by host index (not getId()). */
 inline omnetpp::cFigure::Color movementTrailColorForMobility(
     const omnetpp::cModule *mobilityModule,
     const inet::visualizer::ColorSet &movementTrailLineColorSet)
@@ -35,7 +35,9 @@ inline omnetpp::cFigure::Color movementTrailColorForMobility(
     using omnetpp::cFigure;
     if (mobilityHostIsDesignatedSpoofer(mobilityModule))
         return cFigure::parseColor("#ea4335");
-    return movementTrailLineColorSet.getColor(mobilityModule->getId());
+    omnetpp::cModule *host = mobilityModule->getParentModule();
+    const int hostIdx = host ? host->getIndex() : 0;
+    return movementTrailLineColorSet.getColor(hostIdx);
 }
 
 } // namespace uav_rid

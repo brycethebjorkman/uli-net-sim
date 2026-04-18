@@ -45,6 +45,10 @@ class GcsModule : public cSimpleModule, public cListener
 
     int trackHostId = -1;
 
+    // Written by static handlePyResult in GcsModule.cc (file scope); must stay public for access.
+    std::set<int> benignInsideUnsafeFromPlanner;
+    bool benignInsideUnsafePlannerActive = false;
+
   protected:
     // Federate host indices this GCS manages (empty = all)
     std::set<int> federateSet;
@@ -66,6 +70,10 @@ class GcsModule : public cSimpleModule, public cListener
     cMessage *tickTimer = nullptr;
     double tickInterval = 0;   // 0 = disabled
     int tickCount = 0;
+
+    // Defer Qtenv canvas overlay refresh to end of same simTime (after mobility etc.)
+    cMessage *canvasOverlayRefreshMsg = nullptr;
+    void requestCanvasOverlayRefresh();
 
     // Dynamic vector registry: Python "log" keys → cOutVector (always recorded)
     std::map<std::string, cOutVector*> logVectors;
@@ -92,6 +100,17 @@ class GcsModule : public cSimpleModule, public cListener
     class cOvalFigure *canvasClaimedHeadFig = nullptr;
     std::vector<cRectangleFigure *> canvasBenignRiskFigs;
     std::vector<cOvalFigure *> canvasGoalDots;
+    std::vector<cTextFigure *> canvasGoalLabels;
+
+    // World XY distance scales (2D overlay)
+    static constexpr int kMaxScaleTicks = 50;
+    cPolylineFigure *canvasScaleLeftSpine = nullptr;
+    cPolylineFigure *canvasScaleBottomSpine = nullptr;
+    std::vector<cPolylineFigure *> canvasScaleLeftTickSegs;
+    std::vector<cPolylineFigure *> canvasScaleBottomTickSegs;
+    std::vector<cTextFigure *> canvasScaleLeftLabels;
+    std::vector<cTextFigure *> canvasScaleBottomLabels;
+    bool canvasScalePoolCreated = false;
 
     void ensurePresentationCanvas();
     void ensureBenignRiskMarkerCapacity(size_t need);
@@ -103,6 +122,8 @@ class GcsModule : public cSimpleModule, public cListener
     void mapWorldToCanvas(double wx, double wy, double wz, double& outCx, double& outCy) const;
     bool queryHostPosition(int hostId, double& x, double& y, double& z) const;
     void refreshCanvasOverlay();
+    void ensureCanvasDistanceScalePool();
+    void updateCanvasDistanceScales();
 
     virtual void initialize() override;
     virtual void finish() override;

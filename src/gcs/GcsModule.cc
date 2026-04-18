@@ -17,8 +17,10 @@
 #include "inet/common/geometry/common/CanvasProjection.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <sstream>
 
 #ifdef WITH_OSG
@@ -136,6 +138,7 @@ GcsModule::~GcsModule()
 {
     removePresentationCanvas();
     cancelAndDelete(tickTimer);
+    cancelAndDelete(canvasOverlayRefreshMsg);
     for (auto& [name, vec] : logVectors)
         delete vec;
 }
@@ -281,7 +284,7 @@ void GcsModule::updateVisualization(const std::vector<double>& mu,
     }
 
     if (hasPar("drawPresentationOverlay") && par("drawPresentationOverlay").boolValue())
-        refreshCanvasOverlay();
+        requestCanvasOverlayRefresh();
 }
 
 void GcsModule::resetClaimedTrail()
@@ -299,7 +302,7 @@ void GcsModule::resetClaimedTrail()
 #endif
     }
     if (hasPar("drawPresentationOverlay") && par("drawPresentationOverlay").boolValue())
-        refreshCanvasOverlay();
+        requestCanvasOverlayRefresh();
 }
 
 void GcsModule::addClaimedTrailPoint(double x, double y, double z, bool detected)
@@ -373,7 +376,7 @@ void GcsModule::addClaimedTrailPoint(double x, double y, double z, bool detected
     }
 
     if (hasPar("drawPresentationOverlay") && par("drawPresentationOverlay").boolValue())
-        refreshCanvasOverlay();
+        requestCanvasOverlayRefresh();
 }
 
 void GcsModule::removePresentationCanvas()
@@ -390,6 +393,14 @@ void GcsModule::removePresentationCanvas()
     canvasClaimedHeadFig = nullptr;
     canvasBenignRiskFigs.clear();
     canvasGoalDots.clear();
+    canvasGoalLabels.clear();
+    canvasScaleLeftSpine = nullptr;
+    canvasScaleBottomSpine = nullptr;
+    canvasScaleLeftTickSegs.clear();
+    canvasScaleBottomTickSegs.clear();
+    canvasScaleLeftLabels.clear();
+    canvasScaleBottomLabels.clear();
+    canvasScalePoolCreated = false;
 }
 
 void GcsModule::ensurePresentationCanvas()
@@ -456,7 +467,8 @@ void GcsModule::ensureGoalDotCapacity(size_t need)
     if (!presentationRoot)
         return;
     while (canvasGoalDots.size() < need) {
-        auto *fig = new cOvalFigure(("hostGoal" + std::to_string(canvasGoalDots.size())).c_str());
+        const size_t idx = canvasGoalDots.size();
+        auto *fig = new cOvalFigure(("hostGoal" + std::to_string(idx)).c_str());
         fig->setZIndex(8025);
         fig->setFilled(true);
         fig->setLineWidth(2);
@@ -464,6 +476,17 @@ void GcsModule::ensureGoalDotCapacity(size_t need)
         fig->setVisible(false);
         presentationRoot->addFigure(fig);
         canvasGoalDots.push_back(fig);
+
+        auto *lbl = new cTextFigure(("hostGoalLbl" + std::to_string(idx)).c_str());
+        lbl->setZIndex(8026);
+        lbl->setText("");
+        // cAbstractTextFigure: anchor + alignment (no setHAlign/setVAlign in OMNeT++ 6.3)
+        lbl->setAnchor(cFigure::ANCHOR_N);
+        lbl->setAlignment(cFigure::ALIGN_CENTER);
+        lbl->setColor(cFigure::parseColor("#101010"));
+        lbl->setVisible(false);
+        presentationRoot->addFigure(lbl);
+        canvasGoalLabels.push_back(lbl);
     }
 }
 
@@ -528,6 +551,250 @@ void GcsModule::mapWorldToCanvas(double wx, double wy, double wz, double& outCx,
     cFigure::Point p = proj->computeCanvasPoint(Coord(wx, wy, wz));
     outCx = p.x;
     outCy = p.y;
+}
+
+void GcsModule::ensureCanvasDistanceScalePool()
+{
+    if (!presentationRoot || canvasScalePoolCreated)
+        return;
+    canvasScalePoolCreated = true;
+
+    auto addSpine = [this](const char *name) {
+        auto *p = new cPolylineFigure(name);
+        p->setZIndex(7975);
+        p->setLineWidth(1.5);
+        p->setLineColor(cFigure::parseColor("#2a2a2a"));
+        p->setVisible(false);
+        presentationRoot->addFigure(p);
+        return p;
+    };
+    canvasScaleLeftSpine = addSpine("canvasScaleLeftSpine");
+    canvasScaleBottomSpine = addSpine("canvasScaleBottomSpine");
+
+    for (int i = 0; i < kMaxScaleTicks; ++i) {
+        auto *ls = new cPolylineFigure(("canvasScaleLTick" + std::to_string(i)).c_str());
+        ls->setZIndex(7976);
+        ls->setLineWidth(1.2);
+        ls->setLineColor(cFigure::parseColor("#2a2a2a"));
+        ls->setVisible(false);
+        presentationRoot->addFigure(ls);
+        canvasScaleLeftTickSegs.push_back(ls);
+
+        auto *bs = new cPolylineFigure(("canvasScaleBTick" + std::to_string(i)).c_str());
+        bs->setZIndex(7976);
+        bs->setLineWidth(1.2);
+        bs->setLineColor(cFigure::parseColor("#2a2a2a"));
+        bs->setVisible(false);
+        presentationRoot->addFigure(bs);
+        canvasScaleBottomTickSegs.push_back(bs);
+
+        auto *ll = new cTextFigure(("canvasScaleLLbl" + std::to_string(i)).c_str());
+        ll->setZIndex(7977);
+        ll->setAnchor(cFigure::ANCHOR_E);
+        ll->setAlignment(cFigure::ALIGN_CENTER);
+        ll->setColor(cFigure::parseColor("#1a1a1a"));
+        ll->setText("");
+        ll->setVisible(false);
+        presentationRoot->addFigure(ll);
+        canvasScaleLeftLabels.push_back(ll);
+
+        auto *bl = new cTextFigure(("canvasScaleBLbl" + std::to_string(i)).c_str());
+        bl->setZIndex(7977);
+        bl->setAnchor(cFigure::ANCHOR_N);
+        bl->setAlignment(cFigure::ALIGN_CENTER);
+        bl->setColor(cFigure::parseColor("#1a1a1a"));
+        bl->setText("");
+        bl->setVisible(false);
+        presentationRoot->addFigure(bl);
+        canvasScaleBottomLabels.push_back(bl);
+    }
+}
+
+void GcsModule::updateCanvasDistanceScales()
+{
+    auto hideAllScales = [&]() {
+        if (canvasScaleLeftSpine)
+            canvasScaleLeftSpine->setVisible(false);
+        if (canvasScaleBottomSpine)
+            canvasScaleBottomSpine->setVisible(false);
+        for (auto *s : canvasScaleLeftTickSegs)
+            if (s)
+                s->setVisible(false);
+        for (auto *s : canvasScaleBottomTickSegs)
+            if (s)
+                s->setVisible(false);
+        for (auto *t : canvasScaleLeftLabels)
+            if (t)
+                t->setVisible(false);
+        for (auto *t : canvasScaleBottomLabels)
+            if (t)
+                t->setVisible(false);
+    };
+
+    if (!presentationRoot || !hasPar("overlayDistanceScales") || !par("overlayDistanceScales").boolValue()) {
+        hideAllScales();
+        return;
+    }
+
+    ensureCanvasDistanceScalePool();
+
+    cModule *net = getSystemModule();
+    int nHosts = net->hasPar("numHosts") ? net->par("numHosts").intValue() : 0;
+    if (nHosts <= 0) {
+        hideAllScales();
+        return;
+    }
+
+    // Fixed world rectangle (NED params): rulers stay put; only zRef follows hosts for projection.
+    const double xLo = hasPar("overlayMapMinX") ? par("overlayMapMinX").doubleValueInUnit("m") : -100.0;
+    const double xHi = hasPar("overlayMapMaxX") ? par("overlayMapMaxX").doubleValueInUnit("m") : 1000.0;
+    const double yLo = hasPar("overlayMapMinY") ? par("overlayMapMinY").doubleValueInUnit("m") : -100.0;
+    const double yHi = hasPar("overlayMapMaxY") ? par("overlayMapMaxY").doubleValueInUnit("m") : 1000.0;
+    if (!std::isfinite(xLo) || !std::isfinite(xHi) || !std::isfinite(yLo) || !std::isfinite(yHi) || xHi - xLo < 1.0
+        || yHi - yLo < 1.0) {
+        hideAllScales();
+        return;
+    }
+
+    double zSum = 0.0;
+    int nPos = 0;
+    for (int hid = 0; hid < nHosts; ++hid) {
+        double x = 0, y = 0, z = 0;
+        if (!queryHostPosition(hid, x, y, z))
+            continue;
+        (void)x;
+        (void)y;
+        zSum += z;
+        ++nPos;
+    }
+    const double zRef = nPos > 0 ? zSum / nPos : 0.0;
+
+    const double inset = hasPar("overlayScaleAxisInsetM") ? par("overlayScaleAxisInsetM").doubleValueInUnit("m") : 0.0;
+    double tick = hasPar("overlayScaleTickSpacingM") ? par("overlayScaleTickSpacingM").doubleValueInUnit("m") : 200.0;
+    const double tickLen = hasPar("overlayScaleTickLengthM") ? par("overlayScaleTickLengthM").doubleValueInUnit("m") : 35.0;
+    if (tick < 5.0)
+        tick = 100.0;
+
+    const double spanX = xHi - xLo;
+    const double spanY = yHi - yLo;
+    const double insetClamped = std::max(0.0, std::min(inset, 0.49 * std::min(spanX, spanY)));
+    const double xLeft = xLo + insetClamped;
+    const double yBottom = yLo + insetClamped;
+
+    // First major tick on or inside the map rect (avoids e.g. -200 m when yLo=-100 m: floor()
+    // would start below the spine so labels sit off the axis until the swarm moves).
+    const double tickEps = 1e-9;
+    auto firstMajorTick = [&](double lo) {
+        double t = std::floor(lo / tick) * tick;
+        const int guard = 10000;
+        for (int k = 0; k < guard && t < lo - tickEps; ++k)
+            t += tick;
+        return t;
+    };
+
+    // Left spine (world X = const, varying Y)
+    {
+        std::vector<cFigure::Point> pts;
+        pts.reserve(129);
+        for (int s = 0; s <= 128; ++s) {
+            const double y = yLo + (yHi - yLo) * (s / 128.0);
+            double cx = 0, cy = 0;
+            mapWorldToCanvas(xLeft, y, zRef, cx, cy);
+            pts.emplace_back(cx, cy);
+        }
+        canvasScaleLeftSpine->setPoints(pts);
+        canvasScaleLeftSpine->setVisible(true);
+    }
+
+    // Bottom spine (world Y = const, varying X)
+    {
+        std::vector<cFigure::Point> pts;
+        pts.reserve(129);
+        for (int s = 0; s <= 128; ++s) {
+            const double x = xLo + (xHi - xLo) * (s / 128.0);
+            double cx = 0, cy = 0;
+            mapWorldToCanvas(x, yBottom, zRef, cx, cy);
+            pts.emplace_back(cx, cy);
+        }
+        canvasScaleBottomSpine->setPoints(pts);
+        canvasScaleBottomSpine->setVisible(true);
+    }
+
+    auto formatM = [](double m, char *buf, size_t n) {
+        const double a = std::fabs(m);
+        if (a >= 1000.0)
+            snprintf(buf, n, "%.2f km", m / 1000.0);
+        else
+            snprintf(buf, n, "%.0f m", m);
+    };
+
+    // Major ticks along Y (left axis)
+    {
+        const double yStart = firstMajorTick(yLo);
+        int ti = 0;
+        for (double y = yStart; y <= yHi + tickEps && ti < kMaxScaleTicks; y += tick, ++ti) {
+            double cx0 = 0, cy0 = 0, cx1 = 0, cy1 = 0;
+            mapWorldToCanvas(xLeft, y, zRef, cx0, cy0);
+            mapWorldToCanvas(xLeft - tickLen, y, zRef, cx1, cy1);
+            std::vector<cFigure::Point> seg = {cFigure::Point(cx0, cy0), cFigure::Point(cx1, cy1)};
+            canvasScaleLeftTickSegs[static_cast<size_t>(ti)]->setPoints(seg);
+            canvasScaleLeftTickSegs[static_cast<size_t>(ti)]->setVisible(true);
+
+            char buf[64];
+            formatM(y, buf, sizeof(buf));
+            cTextFigure *lbl = canvasScaleLeftLabels[static_cast<size_t>(ti)];
+            lbl->setText(buf);
+            lbl->setPosition(cFigure::Point(cx1 - 4, cy0));
+            lbl->setVisible(true);
+        }
+        for (int j = ti; j < kMaxScaleTicks; ++j) {
+            canvasScaleLeftTickSegs[static_cast<size_t>(j)]->setVisible(false);
+            canvasScaleLeftLabels[static_cast<size_t>(j)]->setVisible(false);
+        }
+    }
+
+    // Major ticks along X (bottom axis)
+    {
+        const double xStart = firstMajorTick(xLo);
+        int ti = 0;
+        for (double x = xStart; x <= xHi + tickEps && ti < kMaxScaleTicks; x += tick, ++ti) {
+            double cx0 = 0, cy0 = 0, cx1 = 0, cy1 = 0;
+            mapWorldToCanvas(x, yBottom, zRef, cx0, cy0);
+            mapWorldToCanvas(x, yBottom + tickLen, zRef, cx1, cy1);
+            std::vector<cFigure::Point> seg = {cFigure::Point(cx0, cy0), cFigure::Point(cx1, cy1)};
+            canvasScaleBottomTickSegs[static_cast<size_t>(ti)]->setPoints(seg);
+            canvasScaleBottomTickSegs[static_cast<size_t>(ti)]->setVisible(true);
+
+            char buf[64];
+            formatM(x, buf, sizeof(buf));
+            cTextFigure *lbl = canvasScaleBottomLabels[static_cast<size_t>(ti)];
+            lbl->setText(buf);
+            lbl->setPosition(cFigure::Point(cx0, std::max(cy0, cy1) + 10));
+            lbl->setVisible(true);
+        }
+        for (int j = ti; j < kMaxScaleTicks; ++j) {
+            canvasScaleBottomTickSegs[static_cast<size_t>(j)]->setVisible(false);
+            canvasScaleBottomLabels[static_cast<size_t>(j)]->setVisible(false);
+        }
+    }
+}
+
+void GcsModule::requestCanvasOverlayRefresh()
+{
+    if (!getEnvir()->isGUI())
+        return;
+    if (!hasPar("drawPresentationOverlay") || !par("drawPresentationOverlay").boolValue())
+        return;
+    if (!canvasOverlayRefreshMsg)
+        return;
+    // Coalesce: one refresh per simTime; high scheduling priority runs after default (0)
+    // mobility/control events at the same timestamp so benign markers use a full snapshot.
+    if (canvasOverlayRefreshMsg->isScheduled()) {
+        if (canvasOverlayRefreshMsg->getArrivalTime() == simTime())
+            return;
+        cancelEvent(canvasOverlayRefreshMsg);
+    }
+    scheduleAt(simTime(), canvasOverlayRefreshMsg);
 }
 
 void GcsModule::refreshCanvasOverlay()
@@ -667,7 +934,8 @@ void GcsModule::refreshCanvasOverlay()
         canvasClaimedHeadFig->setVisible(false);
     }
 
-    // ── Benign hosts: filled red inside 3D unsafe ellipsoid; hollow orange if NMAC-only ──
+    // ── Benign hosts: filled red inside unsafe set (3D ellipsoid and/or XY marginal matching
+    //    the red canvas ellipse); hollow orange if NMAC-only outside that set ──
     const bool showBenignRisk =
         hasPar("overlayBenignRiskMarkers") && par("overlayBenignRiskMarkers").boolValue();
     if (showBenignRisk) {
@@ -675,6 +943,10 @@ void GcsModule::refreshCanvasOverlay()
         int nHosts = sys->hasPar("numHosts") ? sys->par("numHosts").intValue() : 0;
         if (nHosts > 0) {
             ensureBenignRiskMarkerCapacity(static_cast<size_t>(nHosts));
+            // NMAC ring uses ground-truth spoofer position (last host), not trackHostId
+            // (estimated track from Python), which would otherwise move the proximity test
+            // and make rectangles appear to jump between benign hosts.
+            const int spooferHostId = nHosts - 1;
 
             const bool ellipsoidReady =
                 lastEllipsoidValid && lastEllipsoidMu.size() >= 3
@@ -689,20 +961,42 @@ void GcsModule::refreshCanvasOverlay()
             }
 
             const double thr3 = chi2Threshold3D(lastEllipsoidAlpha);
+            const double thr2 = chi2Threshold2D(lastEllipsoidAlpha);
             const double mu0 = lastEllipsoidMu.size() >= 3 ? lastEllipsoidMu[0] : 0.0;
             const double mu1 = lastEllipsoidMu.size() >= 3 ? lastEllipsoidMu[1] : 0.0;
             const double mu2 = lastEllipsoidMu.size() >= 3 ? lastEllipsoidMu[2] : 0.0;
 
+            // Same XY marginal as the canvas confidence ellipse (only needs 2×2 Σ block).
+            // The 3D test below can fail (incomplete Σ, Cholesky) while the ellipse still draws.
+            bool marginal2dReady = false;
+            double mInv00 = 0, mInv01 = 0, mInv11 = 0;
+            if (lastEllipsoidValid && lastEllipsoidMu.size() >= 3
+                && lastEllipsoidSigma.size() >= 2 && lastEllipsoidSigma[0].size() >= 2
+                && lastEllipsoidSigma[1].size() >= 2) {
+                const double s00 = lastEllipsoidSigma[0][0];
+                const double s01 = lastEllipsoidSigma[0][1];
+                const double s10 = lastEllipsoidSigma[1][0];
+                const double s11 = lastEllipsoidSigma[1][1];
+                const double s01m = 0.5 * (s01 + s10);
+                const double det2 = s00 * s11 - s01m * s01m;
+                if (det2 > 1e-18) {
+                    mInv00 = s11 / det2;
+                    mInv01 = -s01m / det2;
+                    mInv11 = s00 / det2;
+                    marginal2dReady = true;
+                }
+            }
+
             double sx = 0, sy = 0, sz = 0;
             const bool haveSpooferTruth =
-                trackHostId >= 0 && queryHostPosition(trackHostId, sx, sy, sz);
+                spooferHostId >= 0 && queryHostPosition(spooferHostId, sx, sy, sz);
             const double nmacR = hasPar("overlayNmacProximityM")
                 ? par("overlayNmacProximityM").doubleValueInUnit("m")
                 : 50.0;
 
             for (int hid = 0; hid < nHosts; ++hid) {
                 cRectangleFigure *fig = canvasBenignRiskFigs[static_cast<size_t>(hid)];
-                if (hid == trackHostId) {
+                if (hid == spooferHostId) {
                     fig->setVisible(false);
                     continue;
                 }
@@ -723,6 +1017,23 @@ void GcsModule::refreshCanvasOverlay()
                     in3d = ok3 && md3 <= thr3 + 1e-6;
                 }
 
+                bool in2dMarginal = false;
+                if (marginal2dReady) {
+                    const double ddx2 = x - mu0;
+                    const double ddy2 = y - mu1;
+                    const double md2 =
+                        ddx2 * (mInv00 * ddx2 + mInv01 * ddy2) + ddy2 * (mInv01 * ddx2 + mInv11 * ddy2);
+                    in2dMarginal = md2 <= thr2 + 1e-6;
+                }
+                const bool plannerInside =
+                    benignInsideUnsafePlannerActive
+                    && benignInsideUnsafeFromPlanner.find(hid) != benignInsideUnsafeFromPlanner.end();
+                // When Python publishes benign_inside_unsafe_host_ids, use it alone for the
+                // filled red "unsafe" marker so canvas does not fight NumPy ellipsoid tests.
+                const bool geomUnsafe = in3d || in2dMarginal;
+                const bool inUnsafeSet =
+                    benignInsideUnsafePlannerActive ? plannerInside : geomUnsafe;
+
                 bool nmac = false;
                 if (haveSpooferTruth) {
                     const double ddx = x - sx;
@@ -732,23 +1043,23 @@ void GcsModule::refreshCanvasOverlay()
                     nmac = dist < nmacR;
                 }
 
-                if (!in3d && !nmac) {
+                if (!inUnsafeSet && !nmac) {
                     fig->setVisible(false);
                     continue;
                 }
 
                 double cpx = 0, cpy = 0;
                 mapWorldToCanvas(x, y, z, cpx, cpy);
-                const double box = in3d ? 28.0 : 22.0;
+                const double box = inUnsafeSet ? 28.0 : 22.0;
                 fig->setBounds(cFigure::Rectangle(cpx - box * 0.5, cpy - box * 0.5, box, box));
-                if (in3d) {
+                if (inUnsafeSet) {
                     fig->setFilled(true);
                     fig->setLineWidth(3);
                     fig->setLineColor(cFigure::parseColor("red"));
                     fig->setFillColor(cFigure::parseColor("#FF6666"));
                 }
                 else {
-                    // NMAC-only (outside ellipsoid): hollow warning, not "unsafe set"
+                    // NMAC-only (outside published unsafe set): hollow warning
                     fig->setFilled(false);
                     fig->setLineWidth(2);
                     fig->setLineColor(cFigure::parseColor("darkorange"));
@@ -776,9 +1087,11 @@ void GcsModule::refreshCanvasOverlay()
             for (int hid = 0; hid < nHosts; ++hid) {
                 tryCacheWaypointGoalForHost(hid);
                 cOvalFigure *fig = canvasGoalDots[static_cast<size_t>(hid)];
+                cTextFigure *lbl = canvasGoalLabels[static_cast<size_t>(hid)];
                 auto git = hostGoalsByHost.find(hid);
                 if (git == hostGoalsByHost.end()) {
                     fig->setVisible(false);
+                    lbl->setVisible(false);
                     continue;
                 }
                 const double gx = git->second[0];
@@ -793,22 +1106,41 @@ void GcsModule::refreshCanvasOverlay()
                 fig->setTooltip(
                     (std::string("Waypoint goal for host[") + std::to_string(hid) + "]").c_str());
                 fig->setVisible(true);
+
+                std::string hostNum = std::to_string(hid);
+                lbl->setText(hostNum.c_str());
+                lbl->setColor(cFigure::parseColor("#101010"));
+                lbl->setPosition(cFigure::Point(cpx, cpy + d * 0.5 + 1));
+                lbl->setTooltip(
+                    (std::string("Waypoint goal for host[") + std::to_string(hid) + "]").c_str());
+                lbl->setVisible(true);
             }
-            for (size_t i = static_cast<size_t>(nHosts); i < canvasGoalDots.size(); ++i)
+            for (size_t i = static_cast<size_t>(nHosts); i < canvasGoalDots.size(); ++i) {
                 if (canvasGoalDots[i])
                     canvasGoalDots[i]->setVisible(false);
+                if (i < canvasGoalLabels.size() && canvasGoalLabels[i])
+                    canvasGoalLabels[i]->setVisible(false);
+            }
         }
         else {
             for (auto *fig : canvasGoalDots)
                 if (fig)
                     fig->setVisible(false);
+            for (auto *lbl : canvasGoalLabels)
+                if (lbl)
+                    lbl->setVisible(false);
         }
     }
     else {
         for (auto *fig : canvasGoalDots)
             if (fig)
                 fig->setVisible(false);
+        for (auto *lbl : canvasGoalLabels)
+            if (lbl)
+                lbl->setVisible(false);
     }
+
+    updateCanvasDistanceScales();
 }
 
 // ── Shared result handler (log + commands + visualization) ──────────────────
@@ -846,6 +1178,21 @@ static void handlePyResult(GcsModule *gcs, const py::object& result)
     // Visualization: ellipsoid + claimed_pos (+ track_host_id) → OSG and/or canvas
     if (d.contains("visualization") && !d["visualization"].is_none()) {
         py::dict viz = d["visualization"].cast<py::dict>();
+
+        // Benign unsafe host list: only refresh when Python sends the key (tick path).
+        // Do not clear on unrelated visualization (e.g. claimed_pos-only beacons), or red
+        // boxes flicker between geometric test and stale planner ids between ticks.
+        if (py::len(viz) == 0) {
+            gcs->benignInsideUnsafePlannerActive = false;
+            gcs->benignInsideUnsafeFromPlanner.clear();
+        }
+        else if (viz.contains("benign_inside_unsafe_host_ids") && !viz["benign_inside_unsafe_host_ids"].is_none()) {
+            gcs->benignInsideUnsafePlannerActive = true;
+            gcs->benignInsideUnsafeFromPlanner.clear();
+            py::list idlist = viz["benign_inside_unsafe_host_ids"].cast<py::list>();
+            for (auto item : idlist)
+                gcs->benignInsideUnsafeFromPlanner.insert(py::cast<int>(item));
+        }
 
         if (viz.contains("track_host_id") && !viz["track_host_id"].is_none()) {
             int newTrack = py::cast<int>(viz["track_host_id"]);
@@ -922,6 +1269,8 @@ void GcsModule::initialize()
     claimedTrailDetected.clear();
     lastEllipsoidValid = false;
     trackHostId = -1;
+    benignInsideUnsafeFromPlanner.clear();
+    benignInsideUnsafePlannerActive = false;
     removePresentationCanvas();
 
     // Initialize Python class if configured
@@ -938,6 +1287,11 @@ void GcsModule::initialize()
         tickTimer = new cMessage("gcsTick");
         scheduleAt(simTime() + tickInterval, tickTimer);
     }
+
+    canvasOverlayRefreshMsg = new cMessage("gcsCanvasOverlayRefresh");
+    // Smaller priority runs first in OMNeT++; use large value so overlay runs after mobility at same t.
+    // OMNeT++ uses short priorities; keep in [-32768, 32767] (100000 overflows).
+    canvasOverlayRefreshMsg->setSchedulingPriority(25000);
 }
 
 void GcsModule::finish()
@@ -978,9 +1332,17 @@ void GcsModule::pyOnFinish()
 void GcsModule::handleMessage(cMessage *msg)
 {
     if (msg->isSelfMessage()) {
-        // Periodic tick
-        pyOnTick();
-        scheduleAt(simTime() + tickInterval, tickTimer);
+        if (msg == canvasOverlayRefreshMsg) {
+            refreshCanvasOverlay();
+            return;
+        }
+        if (tickTimer && msg == tickTimer) {
+            pyOnTick();
+            if (tickInterval > 0)
+                scheduleAt(simTime() + tickInterval, tickTimer);
+            return;
+        }
+        EV_WARN << "GcsModule: unexpected self-message: " << msg->getName() << endl;
         return;
     }
 

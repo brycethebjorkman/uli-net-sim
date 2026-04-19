@@ -16,8 +16,8 @@ Two-phase pipeline per the paper (AIAA SciTech '26, Sec. V-B):
     multilateration using the latest TX estimate. Feed measurements to
     per-spoofer IMM for state estimation and chance-constraint computation.
 
-  on_gcs_tick: broadcast IMM-based chance constraint + cooperative agent
-               positions + goals to benign agents.
+  on_gcs_tick: broadcast IMM-based chance constraint + cooperative benign agent
+               positions + goals (detected spoofers omitted from coop list; ellipsoid carries threat).
 
   NMAC metrics (evaluated on GCS ticks; uses ``ground_truth_positions`` from
   GcsModule when present — true mobility from OMNeT++ — else RID positions):
@@ -156,6 +156,13 @@ IMM_CA_VEL_NOISE = _env_float("ULI_IMM_CA_VEL_NOISE", IMM_CA_VEL_NOISE)
 IMM_CA_ACC_NOISE = _env_float("ULI_IMM_CA_ACC_NOISE", IMM_CA_ACC_NOISE)
 IMM_CA_MEAS_NOISE = _env_float("ULI_IMM_CA_MEAS_NOISE", IMM_CA_MEAS_NOISE)
 FORCE_DETECT_AT_S = _env_float("ULI_IMM_FORCE_DETECT_AT_S", FORCE_DETECT_AT_S)
+
+# Detected spoofers broadcast adversarial claimed positions — do **not** feed those into MDP
+# cooperative avoidance (ignored by default). Threat uses IMM + ellipsoid (+ soft terms) only.
+# Set ULI_GCS_MDP_INCLUDE_CLAIMED_SPOOFERS=1 only for TrustRID-parity / ablation (repulsion at junk claim).
+MDP_INCLUDE_CLAIMED_SPOOFERS_IN_OTHER_POSITIONS = (
+    _env_int("ULI_GCS_MDP_INCLUDE_CLAIMED_SPOOFERS", 0) != 0
+)
 
 
 class SpoofingAwareGcs:
@@ -967,8 +974,14 @@ class SpoofingAwareGcs:
             for serial, pos in self.rid_positions.items():
                 if int(serial) in self._goal_reached_hosts:
                     continue
-                if serial not in self.spoofers and int(serial) != hid:
-                    other_positions[int(serial)] = list(pos)
+                if int(serial) == hid:
+                    continue
+                if (
+                    not MDP_INCLUDE_CLAIMED_SPOOFERS_IN_OTHER_POSITIONS
+                    and int(serial) in self.spoofers
+                ):
+                    continue
+                other_positions[int(serial)] = list(pos)
 
             cmd = {
                 "unsafe_region": primary_unsafe,

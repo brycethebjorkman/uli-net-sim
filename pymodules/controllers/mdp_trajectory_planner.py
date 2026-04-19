@@ -13,8 +13,8 @@ and r is the reward magnitude. Positive peaks attract toward goal; negative
 peaks repel from intruder aircraft and spoofer unsafe regions.
 
 Each planning step:
-  1. Forward-project candidate actions through simplified kinematics (~10s)
-  2. Sample 10 future states along each trajectory (cf. neighboringStates.m + fwdProjectFast)
+  1. Forward-project candidate actions through simplified kinematics (FWD_STEPS × FWD_DT horizon)
+  2. Sample SAMPLE_COUNT states along each trajectory (cf. neighboringStates.m + fwdProjectFast)
   3. Evaluate closed-form value at each sampled state (valueFunction.m / valueOptimized.m)
   4. Score each action by the maximum value among its samples; pick the highest-scoring action
      (same as max(totalValues,[],'all') in Ownship.selectBestAction when one-step state is
@@ -38,7 +38,7 @@ GRAVITY = 9.81
 # ── Planning parameters ──────────────────────────────────────────────────────
 REPLAN_DT = 0.5
 FWD_DT = 0.5
-FWD_STEPS = 20          # 20 × 0.5s = 10s lookahead
+FWD_STEPS = 30          # 30 × 0.5s = 15s lookahead
 # Fewer samples improves runtime while keeping good trajectory discrimination.
 SAMPLE_COUNT = 8
 ONE_STEP_INDEX = 1       # ~1s ahead, used as execution target
@@ -47,18 +47,17 @@ VERTICAL_SPEED = 3.0          # m/s climb/descend rate used in forward projectio
 GOAL_REACHED_DIST = 10
 
 # ── Value function parameters (Table 1, scaled for ~500m domain) ─────────────
-# Paper uses κ_goal=0.999 for 15km world. For 500m we need steeper gradient:
-# V(0)=166,917  V(200)=91,470  V(500)=37,223 — strong pull across whole field
-GOAL_REWARD = 500.0
+# κ_goal aligned with paper (0.999); goal reward scales absolute field strength.
+GOAL_REWARD = 1000.0
 GOAL_DISCOUNT = 0.999
 
-AGENT_REWARD = 11000.0
-AGENT_DISCOUNT = 0.985
-AGENT_LIMIT = 150.0       # negative peak radius LIM (meters); GCS may override via agent_radius
+AGENT_REWARD = 9000.0
+AGENT_DISCOUNT = 0.99
+AGENT_LIMIT = 150.0     # negative peak radius LIM (meters); GCS may override via agent_radius
 
 SPOOFER_REWARD = 9000.0
 SPOOFER_DISCOUNT = 0.99
-SPOOFER_LIMIT = 150.0    # repulsion radius around unsafe region center (meters)
+SPOOFER_LIMIT = 260.0   # repulsion radius around unsafe region center (meters)
 ELLIPSOID_MARGIN = 1.0   # Mahalanobis-radius margin outside boundary for soft penalty
 
 MIN_CYCLE = 2
@@ -73,9 +72,16 @@ FLIGHT_PATH_ANGLES_DEG = [
     0.0,
     0.01, 2.94, 6.02, 9.26, 12.66, 16.24, 19.99,
 ]
+GAMMA_LEVELS_RAD = tuple(math.radians(g) for g in FLIGHT_PATH_ANGLES_DEG)
 # Allow explicit stop actions only when close enough to goal; otherwise
 # the optimizer can prefer early hover over continued goal progress.
 STOP_ACTION_GOAL_DIST = GOAL_REACHED_DIST
+
+# When True, if the max-value safe action makes < GOAL_PROGRESS_MIN_STEP_M progress toward
+# the goal in one step, substitute the safe action that minimizes one-step goal distance.
+# Leave False for purely reward-based action choice (reference MDP behavior).
+GOAL_PROGRESS_GUARD = False
+GOAL_PROGRESS_MIN_STEP_M = 0
 
 
 def _clamp(v, lo, hi):
@@ -88,6 +94,12 @@ def _peak_value(reward, discount):
     if denom < 1e-12:
         return reward * 1e6
     return reward / denom
+
+
+def _mahalanobis_squared(diff: np.ndarray, sigma: np.ndarray) -> np.ndarray:
+    """Mahalanobis m² for each row of diff (n×3); sigma is 3×3."""
+    sigma_inv = np.linalg.pinv(sigma)
+    return np.einsum("ni,ij,nj->n", diff, sigma_inv, diff)
 
 
 class MdpTrajectoryPlanner:
@@ -167,11 +179,9 @@ class MdpTrajectoryPlanner:
         """Build (heading, speed, flight_path_angle_rad) action set."""
         actions = []
         goal = self._current_goal()
-        allow_stop = True
-        if goal is not None:
-            allow_stop = np.linalg.norm(goal - pos) <= STOP_ACTION_GOAL_DIST
+        allow_stop = goal is None or np.linalg.norm(goal - pos) <= STOP_ACTION_GOAL_DIST
         speed_levels = SPEED_LEVELS if allow_stop else [s for s in SPEED_LEVELS if s > 1e-6]
-        gamma_levels = [math.radians(g) for g in FLIGHT_PATH_ANGLES_DEG]
+        gamma_levels = GAMMA_LEVELS_RAD
 
         # Uniform headings at each speed and flight-path angle level
         for k in range(NUM_HEADINGS):
@@ -292,10 +302,8 @@ class MdpTrajectoryPlanner:
             if boundary <= 1e-9:
                 continue
 
-            # Vectorized Mahalanobis radius for all sampled states.
-            sigma_inv = np.linalg.pinv(sigma)
             diff = pts - mu.reshape(1, 3)
-            m2 = np.einsum("ni,ij,nj->n", diff, sigma_inv, diff)
+            m2 = _mahalanobis_squared(diff, sigma)
             r = np.sqrt(np.maximum(m2, 0.0))
             rb = math.sqrt(boundary)
 
@@ -347,9 +355,8 @@ class MdpTrajectoryPlanner:
             if boundary <= 1e-9:
                 continue
 
-            sigma_inv = np.linalg.pinv(sigma)
             diff = flat - mu.reshape(1, 3)
-            m2 = np.einsum("ni,ij,nj->n", diff, sigma_inv, diff)
+            m2 = _mahalanobis_squared(diff, sigma)
             inside = (m2 <= boundary).reshape(n_actions, n_steps)
             enters |= np.any(inside, axis=1)
             if np.all(enters):
@@ -378,7 +385,9 @@ class MdpTrajectoryPlanner:
         actions_arr = np.asarray(actions, dtype=float)
         sample_indices = np.linspace(0, FWD_STEPS - 1, SAMPLE_COUNT, dtype=int)
         goal = self._current_goal()
-        d_goal_now = np.linalg.norm(goal - pos) if goal is not None else 0.0
+        d_goal_now = (
+            np.linalg.norm(goal - pos) if goal is not None and GOAL_PROGRESS_GUARD else 0.0
+        )
 
         trajs = self._forward_project_many(pos, actions_arr)
         unsafe_mask = self._trajectory_enters_unsafe_many(trajs)
@@ -390,7 +399,7 @@ class MdpTrajectoryPlanner:
 
         step_idx = min(ONE_STEP_INDEX, trajs.shape[1] - 1)
         one_steps = trajs[:, step_idx, :]
-        if goal is not None:
+        if goal is not None and GOAL_PROGRESS_GUARD:
             one_step_goal_dists = np.linalg.norm(one_steps - goal.reshape(1, 3), axis=1)
         else:
             one_step_goal_dists = np.zeros(actions_arr.shape[0], dtype=float)
@@ -399,24 +408,25 @@ class MdpTrajectoryPlanner:
         best_one_step = one_steps[best_idx]
 
         safe_mask = ~unsafe_mask
+        if not np.any(safe_mask):
+            return best_one_step
 
-        # Prefer safe trajectories; when not near goal, require at least small
-        # progress toward the goal. If best-value safe action stalls, choose the
-        # safe action that gets closest in one step.
-        if np.any(safe_mask):
-            safe_vals = np.where(safe_mask, max_vals, -float("inf"))
-            best_safe_idx = int(np.argmax(safe_vals))
-            best_safe_one_step = one_steps[best_safe_idx]
+        # Prefer safe trajectories; optionally enforce min progress toward goal (see GOAL_PROGRESS_GUARD).
+        safe_vals = np.where(safe_mask, max_vals, -float("inf"))
+        best_safe_idx = int(np.argmax(safe_vals))
+        best_safe_one_step = one_steps[best_safe_idx]
+
+        if GOAL_PROGRESS_GUARD and goal is not None:
             best_safe_goal_dist = one_step_goal_dists[best_safe_idx]
-
             safe_goal_dists = np.where(safe_mask, one_step_goal_dists, np.inf)
             closest_safe_idx = int(np.argmin(safe_goal_dists))
             closest_safe_step = one_steps[closest_safe_idx]
-
-            if goal is not None and d_goal_now > GOAL_REACHED_DIST and best_safe_goal_dist >= d_goal_now - 0.2:
+            if (
+                d_goal_now > GOAL_REACHED_DIST
+                and best_safe_goal_dist >= d_goal_now - GOAL_PROGRESS_MIN_STEP_M
+            ):
                 return closest_safe_step
-            return best_safe_one_step
-        return best_one_step
+        return best_safe_one_step
 
     # ── Controller entry point ───────────────────────────────────────────────
 

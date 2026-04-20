@@ -14,7 +14,7 @@ usage() {
 Usage:
   ./datagen/spoofting_aware_trajectory_planning_datagen/run_spoofing_aware_trajectory_planning_batch.sh [scenario selection] [options]
 
-Scenario selection (choose one):
+Scenario selection (optional; defaults to --paper-scenarios):
   --scenario-config NAME           Single base config (e.g., Scenario_DepotCity_4x1)
   --scenario-configs CSV           Comma-separated list of configs
   --paper-scenarios                Use default depot set:
@@ -23,9 +23,9 @@ Scenario selection (choose one):
   --include-steepz                 Deprecated; ignored for depot-only runs
 
 Options:
-  --seeds SPEC                     Seed spec: "0:29" or "0,1,2" (default: 0)
+  --seeds SPEC                     Seed spec: "0:29" or "0,1,2" (default: 0:29)
   --base-ini PATH                  Source INI (default: simulations/spoofing_aware_with_planning/omnetpp.ini)
-  --batch-root PATH                Root for outputs (default: simulations/spoofing_aware_with_planning/batches)
+  --batch-root PATH                Root for outputs (default: simulations/spoofing_aware_with_planning/batchesPaperExact0005Commit)
   --parallel N                     run_batch parallel value (default: 0 = auto)
   --image NAME                     Docker image tag (default: uli-net-sim:latest)
   --skip-build                     Skip docker build
@@ -43,10 +43,10 @@ EOF
 }
 
 BASE_INI="simulations/spoofing_aware_with_planning/omnetpp.ini"
-BATCH_ROOT="simulations/spoofing_aware_with_planning/batches"
+BATCH_ROOT="simulations/spoofing_aware_with_planning/batchesPaperExact0005Commit"
 PARALLEL="0"
 IMAGE="uli-net-sim:latest"
-SEEDS_SPEC="0"
+SEEDS_SPEC="0:29"
 SKIP_BUILD="0"
 DO_CLEAN="1"
 KEEP_VEC="1"
@@ -59,7 +59,7 @@ INSTANT_DETECT_AT_SEC="5"
 
 SINGLE_SCENARIO=""
 SCENARIOS_CSV=""
-PAPER_SCENARIOS="0"
+PAPER_SCENARIOS="1"
 INCLUDE_STEEPZ="0"
 
 next_batch_run_number() {
@@ -136,19 +136,30 @@ if [[ ! -f "$BASE_INI" ]]; then
 fi
 
 declare -a SCENARIOS=()
-if [[ "$PAPER_SCENARIOS" == "1" ]]; then
+if [[ -n "$SCENARIOS_CSV" ]]; then
+  IFS=',' read -r -a SCENARIOS <<<"$SCENARIOS_CSV"
+elif [[ -n "$SINGLE_SCENARIO" ]]; then
+  SCENARIOS=("$SINGLE_SCENARIO")
+elif [[ "$PAPER_SCENARIOS" == "1" ]]; then
   SCENARIOS=(
     "Scenario_DepotCity_4x1"
     "Scenario_DepotCity_8x1"
     "Scenario_DepotCity_12x1"
     "Scenario_DepotCity_16x1"
   )
-elif [[ -n "$SCENARIOS_CSV" ]]; then
-  IFS=',' read -r -a SCENARIOS <<<"$SCENARIOS_CSV"
-elif [[ -n "$SINGLE_SCENARIO" ]]; then
-  SCENARIOS=("$SINGLE_SCENARIO")
 else
-  echo "Choose one scenario selection: --scenario-config, --scenario-configs, or --paper-scenarios" >&2
+  echo "No scenario selection provided; defaulting to --paper-scenarios." >&2
+  PAPER_SCENARIOS="1"
+  SCENARIOS=(
+    "Scenario_DepotCity_4x1"
+    "Scenario_DepotCity_8x1"
+    "Scenario_DepotCity_12x1"
+    "Scenario_DepotCity_16x1"
+  )
+fi
+
+if [[ ${#SCENARIOS[@]} -eq 0 ]]; then
+  echo "Failed to resolve scenarios; pass --paper-scenarios or explicit scenario configs." >&2
   usage
   exit 2
 fi

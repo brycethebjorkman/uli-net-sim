@@ -125,6 +125,20 @@ def _write_distribution_table(df: pd.DataFrame, out_dir: Path) -> Path:
             "detection_mlat_skipped_insufficient_receivers_fraction_aware_instant_detect",
             None,
         ),
+        (
+            "localization_mlat_raw_rmse_m",
+            "SpoofingAware: raw RSSI/NLLS localization RMSE (m)",
+            "localization_mlat_raw_rmse_m_aware",
+            "localization_mlat_raw_rmse_m_aware_instant_detect",
+            None,
+        ),
+        (
+            "localization_mlat_raw_mae_m",
+            "SpoofingAware: raw RSSI/NLLS localization MAE (m)",
+            "localization_mlat_raw_mae_m_aware",
+            "localization_mlat_raw_mae_m_aware_instant_detect",
+            None,
+        ),
         ("localization_mae_m", "SpoofingAware: localization MAE (m)", "localization_mae_m_aware", "localization_mae_m_aware_instant_detect", None),
         ("localization_rmse_m", "SpoofingAware: localization RMSE (m)", "localization_rmse_m_aware", "localization_rmse_m_aware_instant_detect", None),
     ]
@@ -215,8 +229,15 @@ def _save_table_pdf(
 ) -> Path | None:
     if not rows:
         return None
+    n_cols = max(1, len(headers))
+    max_text_len = max(
+        [len(str(h)) for h in headers] +
+        [len(str(cell)) for row in rows for cell in row]
+    )
+    # Dynamic width prevents rightmost columns (e.g., Std values) from clipping.
+    fig_w = max(11.0, 1.55 * n_cols + 0.035 * max_text_len)
     fig_h = max(2.6, 1.6 + 0.42 * len(rows))
-    fig, ax = plt.subplots(figsize=(11.0, fig_h))
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     ax.axis("off")
     table = ax.table(
         cellText=rows,
@@ -226,9 +247,15 @@ def _save_table_pdf(
         colLoc="center",
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(10.5)
-    table.scale(1.0, 1.35)
+    table.set_fontsize(10.0)
+    table.scale(1.0, 1.30)
+    try:
+        table.auto_set_column_width(col=list(range(n_cols)))
+    except Exception:
+        # Older Matplotlib versions may not expose auto_set_column_width.
+        pass
     for (r, c), cell in table.get_celld().items():
+        cell.set_text_props(wrap=True)
         if r == 0:
             cell.set_text_props(weight="bold")
             cell.set_facecolor("#eeeeee")
@@ -483,6 +510,18 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
             "SpoofingAware: skipped MLAT fraction during detection",
             "detection_mlat_skipped_insufficient_receivers_fraction_aware",
             "detection_mlat_skipped_insufficient_receivers_fraction_aware_instant_detect",
+            None,
+        ),
+        (
+            "SpoofingAware: raw RSSI/NLLS localization RMSE (m)",
+            "localization_mlat_raw_rmse_m_aware",
+            "localization_mlat_raw_rmse_m_aware_instant_detect",
+            None,
+        ),
+        (
+            "SpoofingAware: raw RSSI/NLLS localization MAE (m)",
+            "localization_mlat_raw_mae_m_aware",
+            "localization_mlat_raw_mae_m_aware_instant_detect",
             None,
         ),
     ]

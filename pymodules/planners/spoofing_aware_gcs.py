@@ -232,6 +232,11 @@ class SpoofingAwareGcs:
         self._loc_err_sq_sum = 0.0
         self._loc_err_abs_sum = 0.0
         self._loc_samples = 0
+        # Raw localization NLLS estimate error (before IMM smoothing),
+        # measured against simulation ground truth when available.
+        self._loc_mlat_raw_err_sq_sum = 0.0
+        self._loc_mlat_raw_err_abs_sum = 0.0
+        self._loc_mlat_raw_samples = 0
         # Hosts that reached goal and should be excluded from ongoing planning metrics.
         self._goal_reached_hosts: set[int] = set()
         # Detection diagnostics: track when MLAT is skipped due to too few reports.
@@ -352,6 +357,7 @@ class SpoofingAwareGcs:
             self.federate_ids.add(r["host_id"])
 
         mlat_raw_error = 0.0
+        mlat_localization_raw_error_m = float("nan")
         mlat_score = 0.0
         kf_max_nis = 0.0
         combined_alert = 0.0
@@ -463,6 +469,20 @@ class SpoofingAwareGcs:
                         do_predict=False,
                         measurement_time_s=report_time,
                     )
+                    # Localization-only diagnostic: raw RSSI/NLLS position estimate
+                    # versus true spoofer position before IMM filtering.
+                    true_pos = data.get("tx_true_pos")
+                    if true_pos is not None:
+                        true_arr = np.asarray(true_pos, dtype=float).ravel()[:3]
+                        if true_arr.shape[0] < 3:
+                            true_arr = np.pad(true_arr, (0, 3 - true_arr.shape[0]), mode="constant")
+                        if np.all(np.isfinite(true_arr)):
+                            mlat_localization_raw_error_m = float(np.linalg.norm(est_pos_arr - true_arr))
+                            self._loc_mlat_raw_err_abs_sum += mlat_localization_raw_error_m
+                            self._loc_mlat_raw_err_sq_sum += (
+                                mlat_localization_raw_error_m * mlat_localization_raw_error_m
+                            )
+                            self._loc_mlat_raw_samples += 1
                     self._ticks_since_spoofer_meas[serial] = 0
 
                 visualization["tx_est"] = float(self._spoofer_tx_estimate_dbm[serial])
@@ -593,6 +613,7 @@ class SpoofingAwareGcs:
                 "receiver_count": float(receiver_count),
                 "mlat_skipped_insufficient_receivers": float(mlat_skipped_insufficient_receivers),
                 "mlat_score": float(mlat_score),
+                "mlat_localization_raw_error_m": float(mlat_localization_raw_error_m),
                 "combined_alert": float(combined_alert),
                 "tx_power_est_dbm": float(self._spoofer_tx_estimate_dbm.get(serial, 0.0)),
                 "tx_power_oracle_dbm": float(tx_oracle_dbm),
@@ -1145,6 +1166,17 @@ class SpoofingAwareGcs:
                     if self._loc_samples > 0 else -1.0
                 ),
                 "localization_samples_final": float(self._loc_samples),
+                "localization_mlat_raw_mae_m_final": (
+                    float(self._loc_mlat_raw_err_abs_sum / float(self._loc_mlat_raw_samples))
+                    if self._loc_mlat_raw_samples > 0
+                    else -1.0
+                ),
+                "localization_mlat_raw_rmse_m_final": (
+                    float(np.sqrt(self._loc_mlat_raw_err_sq_sum / float(self._loc_mlat_raw_samples)))
+                    if self._loc_mlat_raw_samples > 0
+                    else -1.0
+                ),
+                "localization_mlat_raw_samples_final": float(self._loc_mlat_raw_samples),
                 "imm_dt_s_final": float(IMM_DT),
                 "imm_init_mode_cv_final": float(IMM_INIT_MODE_CV),
                 "imm_p_cv_stay_final": float(IMM_P_CV_STAY),

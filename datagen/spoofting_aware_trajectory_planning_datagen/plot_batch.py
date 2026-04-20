@@ -30,8 +30,8 @@ VARIANT_COLORS = {
 }
 VARIANT_LINESTYLES = {
     "SpoofingAware": "-",
-    "SpoofingAwareInstantDetect": "-.",
-    "TrustRID": "--",
+    "SpoofingAwareInstantDetect": "-",
+    "TrustRID": "-",
 }
 
 
@@ -217,6 +217,48 @@ def _safe_axis_limits(values: list[float], pad_frac: float = 0.06) -> tuple[floa
         return vmin - span, vmax + span
     pad = (vmax - vmin) * pad_frac
     return vmin - pad, vmax + pad
+
+
+def _safe_positive_ylim(
+    values: list[float],
+    pad_frac: float = 0.18,
+    min_top_pad: float = 8.0,
+    min_top_mult: float = 1.35,
+) -> tuple[float, float] | None:
+    finite = np.asarray([v for v in values if math.isfinite(v)], dtype=float)
+    if finite.size == 0:
+        return None
+    vmin = float(np.min(finite))
+    vmax = float(np.max(finite))
+    if abs(vmax - vmin) < 1e-12:
+        pad = max(float(min_top_pad), abs(vmax) * 0.15, 1.0)
+        top = max(vmax + pad, vmax * float(min_top_mult) if vmax > 0.0 else vmax + pad)
+        return max(0.0, vmin - 0.1 * pad), top
+    span = vmax - vmin
+    pad = max(float(min_top_pad), span * float(pad_frac))
+    top = max(vmax + pad, vmax * float(min_top_mult) if vmax > 0.0 else vmax + pad)
+    return max(0.0, vmin - 0.08 * pad), top
+
+
+def _safe_shared_ylim(
+    values: list[float],
+    pad_frac: float = 0.30,
+    min_pad: float = 8.0,
+    top_mult: float = 1.35,
+) -> tuple[float, float] | None:
+    finite = np.asarray([v for v in values if math.isfinite(v)], dtype=float)
+    if finite.size == 0:
+        return None
+    vmin = float(np.min(finite))
+    vmax = float(np.max(finite))
+    if abs(vmax - vmin) < 1e-12:
+        pad = max(float(min_pad), abs(vmax) * 0.15, 1.0)
+        top = max(vmax + pad, vmax * float(top_mult) if vmax > 0.0 else vmax + pad)
+        return vmin - 0.35 * pad, top
+    span = vmax - vmin
+    pad = max(float(min_pad), span * float(pad_frac))
+    top = max(vmax + pad, vmax * float(top_mult) if vmax > 0.0 else vmax + pad)
+    return vmin - 0.28 * pad, top
 
 
 def _save_table_pdf(
@@ -783,28 +825,18 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                     scen_key = label_to_key.get(lbl, lbl)
                     scen_df = dd[dd["scenario"] == scen_key]
                     sa_rt = aware_means[labels.index(lbl)]
-                    sai_rt = instant_means[labels.index(lbl)]
                     tr_rt = trust_means[labels.index(lbl)]
                     sa_rep = float("nan")
-                    sai_rep = float("nan")
                     tr_rep = float("nan")
                     sa_tick = float("nan")
-                    sai_tick = float("nan")
                     tr_tick = float("nan")
                     sa_total = float("nan")
-                    sai_total = float("nan")
                     tr_total = float("nan")
                     if not scen_df.empty:
                         if "gcs_reports_mean_ms_aware" in scen_df.columns:
                             v = pd.to_numeric(scen_df["gcs_reports_mean_ms_aware"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
                                 sa_rep = float(np.mean(v))
-                        if "gcs_reports_mean_ms_aware_instant_detect" in scen_df.columns:
-                            v = pd.to_numeric(
-                                scen_df["gcs_reports_mean_ms_aware_instant_detect"], errors="coerce"
-                            ).dropna().to_numpy(dtype=float)
-                            if v.size > 0:
-                                sai_rep = float(np.mean(v))
                         if "gcs_reports_mean_ms_trust_rid" in scen_df.columns:
                             v = pd.to_numeric(scen_df["gcs_reports_mean_ms_trust_rid"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
@@ -813,12 +845,6 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                             v = pd.to_numeric(scen_df["gcs_tick_mean_ms_aware"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
                                 sa_tick = float(np.mean(v))
-                        if "gcs_tick_mean_ms_aware_instant_detect" in scen_df.columns:
-                            v = pd.to_numeric(
-                                scen_df["gcs_tick_mean_ms_aware_instant_detect"], errors="coerce"
-                            ).dropna().to_numpy(dtype=float)
-                            if v.size > 0:
-                                sai_tick = float(np.mean(v))
                         if "gcs_tick_mean_ms_trust_rid" in scen_df.columns:
                             v = pd.to_numeric(scen_df["gcs_tick_mean_ms_trust_rid"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
@@ -827,12 +853,6 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                             v = pd.to_numeric(scen_df["gcs_compute_total_s_aware"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
                                 sa_total = float(np.mean(v))
-                        if "gcs_compute_total_s_aware_instant_detect" in scen_df.columns:
-                            v = pd.to_numeric(
-                                scen_df["gcs_compute_total_s_aware_instant_detect"], errors="coerce"
-                            ).dropna().to_numpy(dtype=float)
-                            if v.size > 0:
-                                sai_total = float(np.mean(v))
                         if "gcs_compute_total_s_trust_rid" in scen_df.columns:
                             v = pd.to_numeric(scen_df["gcs_compute_total_s_trust_rid"], errors="coerce").dropna().to_numpy(dtype=float)
                             if v.size > 0:
@@ -841,16 +861,12 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                         [
                             lbl.replace(" ", "_").lower(),
                             _fmt_table_value(sa_rt),
-                            _fmt_table_value(sai_rt),
                             _fmt_table_value(tr_rt),
                             _fmt_table_value(sa_rep),
-                            _fmt_table_value(sai_rep),
                             _fmt_table_value(tr_rep),
                             _fmt_table_value(sa_tick),
-                            _fmt_table_value(sai_tick),
                             _fmt_table_value(tr_tick),
                             _fmt_table_value(sa_total),
-                            _fmt_table_value(sai_total),
                             _fmt_table_value(tr_total),
                         ]
                     )
@@ -861,16 +877,12 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                         columns=[
                             "Scenario",
                             "Runtime mean SA (s)",
-                            "Runtime mean SA-ID (s)",
                             "Runtime mean Trust-RID (s)",
                             "GCS report mean SA (ms)",
-                            "GCS report mean SA-ID (ms)",
                             "GCS report mean Trust-RID (ms)",
                             "GCS tick mean SA (ms)",
-                            "GCS tick mean SA-ID (ms)",
                             "GCS tick mean Trust-RID (ms)",
                             "GCS total mean SA (s)",
-                            "GCS total mean SA-ID (s)",
                             "GCS total mean Trust-RID (s)",
                         ],
                     ).to_csv(p_cb_csv, index=False)
@@ -881,20 +893,16 @@ def _make_summary_charts(summary_csv: Path, out_dir: Path) -> list[Path]:
                         headers=[
                             "Scenario",
                             "Runtime\nSA (s)",
-                            "Runtime\nSA-ID (s)",
                             "Runtime\nTR (s)",
                             "Report\nSA (ms)",
-                            "Report\nSA-ID (ms)",
                             "Report\nTR (ms)",
                             "Tick\nSA (ms)",
-                            "Tick\nSA-ID (ms)",
                             "Tick\nTR (ms)",
                             "GCS total\nSA (s)",
-                            "GCS total\nSA-ID (s)",
                             "GCS total\nTR (s)",
                         ],
                         title="TABLE VI",
-                        subtitle="Compute breakdown by scenario (means)",
+                        subtitle="Compute breakdown by scenario (means): SA vs Trust-RID",
                         out_path=out_dir / "table_vi_compute_breakdown_by_scenario.pdf",
                     )
                     if p_cb_pdf is not None:
@@ -1214,7 +1222,6 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
             return None
         n = len(scenarios)
         fig, axes = plt.subplots(1, n, figsize=(5.0 * n, 4.2), squeeze=False, sharey=True)
-        global_y_values: list[float] = []
         for i, scen in enumerate(scenarios):
             ax = axes[0][i]
             ss = sub[sub["scenario"] == scen]
@@ -1241,8 +1248,6 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                     linestyle=VARIANT_LINESTYLES.get(variant, "-"),
                     linewidth=1.9,
                 )
-                global_y_values.extend((agg["mean"] - agg["std"]).tolist())
-                global_y_values.extend((agg["mean"] + agg["std"]).tolist())
             if hline is not None:
                 ax.axhline(
                     y=hline,
@@ -1265,10 +1270,7 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
             ax.set_ylabel(ylabel)
             ax.grid(alpha=0.2)
             ax.legend(fontsize=8)
-        ylim = _safe_axis_limits(global_y_values)
-        if ylim is not None:
-            for ax in axes[0]:
-                ax.set_ylim(*ylim)
+        # Keep per-scenario autoscaling to prevent std-band clipping.
         fig.suptitle(title)
         fig.tight_layout()
         p = out_dir / out_name
@@ -1556,9 +1558,10 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
             return None
         n = len(scenarios)
         fig, axes = plt.subplots(3, n, figsize=(5.8 * n, 8.6), squeeze=False, sharex="col")
-        row1_vals: list[float] = []
-        row2_vals: list[float] = []
-        row3_vals: list[float] = []
+        row1_vals_by_scen: dict[str, list[float]] = {}
+        row2_vals_by_scen: dict[str, list[float]] = {}
+        row2_vals_all: list[float] = []
+        row3_vals_by_scen: dict[str, list[float]] = {}
         for i, scen in enumerate(scenarios):
             ax_cont = axes[0][i]
             ax_loc = axes[1][i]
@@ -1594,8 +1597,8 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                         linewidth=2.0,
                         label=variant,
                     )
-                    row1_vals.extend((ca["mean"] - ca["std"]).tolist())
-                    row1_vals.extend((ca["mean"] + ca["std"]).tolist())
+                    row1_vals_by_scen.setdefault(str(scen), []).extend((ca["mean"] - ca["std"]).tolist())
+                    row1_vals_by_scen.setdefault(str(scen), []).extend((ca["mean"] + ca["std"]).tolist())
 
                 loc_v = loc_s[loc_s["variant"] == variant]
                 if not loc_v.empty:
@@ -1617,8 +1620,10 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                         linewidth=2.0,
                         label=variant,
                     )
-                    row2_vals.extend((la["mean"] - la["std"]).tolist())
-                    row2_vals.extend((la["mean"] + la["std"]).tolist())
+                    row2_vals_by_scen.setdefault(str(scen), []).extend((la["mean"] - la["std"]).tolist())
+                    row2_vals_by_scen.setdefault(str(scen), []).extend((la["mean"] + la["std"]).tolist())
+                    row2_vals_all.extend((la["mean"] - la["std"]).tolist())
+                    row2_vals_all.extend((la["mean"] + la["std"]).tolist())
 
                 bubble_v = bubble_s[bubble_s["variant"] == variant]
                 if not bubble_v.empty:
@@ -1640,12 +1645,12 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                         linewidth=2.0,
                         label=variant,
                     )
-                    row3_vals.extend((ba["mean"] - ba["std"]).tolist())
-                    row3_vals.extend((ba["mean"] + ba["std"]).tolist())
+                    row3_vals_by_scen.setdefault(str(scen), []).extend((ba["mean"] - ba["std"]).tolist())
+                    row3_vals_by_scen.setdefault(str(scen), []).extend((ba["mean"] + ba["std"]).tolist())
 
             ax_cont.set_title(str(scen))
             ax_cont.set_ylabel("containment rate")
-            ax_cont.set_ylim(-0.02, 1.02)
+            ax_cont.set_ylim(-0.12, 1.12)
             ax_cont.grid(alpha=0.25)
 
             ax_loc.set_ylabel("localization RMSE (m)")
@@ -1660,14 +1665,15 @@ def _make_timeseries_charts(long_df: pd.DataFrame, out_dir: Path, plot_profile: 
                 if handles:
                     ax_cont.legend(handles, labels, fontsize=8, loc="best")
 
-        ylim_loc = _safe_axis_limits(row2_vals)
-        ylim_bub = _safe_axis_limits(row3_vals)
+        ylim_loc_shared = _safe_shared_ylim(row2_vals_all, pad_frac=0.32, min_pad=16.0, top_mult=1.40)
         for i in range(n):
-            axes[0][i].set_ylim(-0.02, 1.02)
-            if ylim_loc is not None:
-                axes[1][i].set_ylim(*ylim_loc)
+            axes[0][i].set_ylim(-0.12, 1.12)
+            if ylim_loc_shared is not None:
+                axes[1][i].set_ylim(ylim_loc_shared[0], ylim_loc_shared[1])
+            scen = str(scenarios[i])
+            ylim_bub = _safe_positive_ylim(row3_vals_by_scen.get(scen, []), pad_frac=0.20, min_top_pad=6.0)
             if ylim_bub is not None:
-                axes[2][i].set_ylim(*ylim_bub)
+                axes[2][i].set_ylim(ylim_bub[0], ylim_bub[1])
 
         fig.suptitle(
             "Containment, Localization RMSE, and Unsafe-Bubble Radius Through Time (mean ± std)"
@@ -1967,12 +1973,12 @@ def _set_axes_equal(ax, xr, yr, zr) -> None:
 def _plot_3d_group(group: str, by_variant: dict[str, list[Path]], out_dir: Path, sample_every: int) -> Path | None:
     import matplotlib.pyplot as plt
 
-    variants = ["SpoofingAware", "SpoofingAwareInstantDetect", "TrustRID"]
+    variants = ["SpoofingAware", "TrustRID"]
     if all(len(by_variant.get(v, [])) == 0 for v in variants):
         return None
 
-    fig = plt.figure(figsize=(21.0, 6.8))
-    axs = [fig.add_subplot(1, 3, i + 1, projection="3d") for i in range(3)]
+    fig = plt.figure(figsize=(14.2, 6.8))
+    axs = [fig.add_subplot(1, len(variants), i + 1, projection="3d") for i in range(len(variants))]
     fig.suptitle(f"3D Trajectory Overlay Across Seeds: {group}", fontsize=14)
 
     x_all: list[float] = []
@@ -1981,7 +1987,8 @@ def _plot_3d_group(group: str, by_variant: dict[str, list[Path]], out_dir: Path,
 
     for ax, variant in zip(axs, variants):
         parquets = by_variant.get(variant, [])
-        shown_serial_labels: set[int] = set()
+        shown_benign_label = False
+        shown_spoofer_label = False
         n_runs = 0
         for pq in parquets:
             try:
@@ -2002,18 +2009,21 @@ def _plot_3d_group(group: str, by_variant: dict[str, list[Path]], out_dir: Path,
                 if g.empty:
                     continue
                 is_spoofer = max_serial is not None and s == max_serial
-                color = "#cc0000" if is_spoofer else color_map[s]
+                color = "#c62828" if is_spoofer else color_map[s]
                 label = None
-                if s not in shown_serial_labels:
-                    label = f"UAV {s}" + (" (spoofer)" if is_spoofer else "")
-                    shown_serial_labels.add(s)
+                if is_spoofer and not shown_spoofer_label:
+                    label = "Spoofer"
+                    shown_spoofer_label = True
+                elif not is_spoofer and not shown_benign_label:
+                    label = "Benign UAVs"
+                    shown_benign_label = True
                 ax.plot(
                     g["pos_x"].to_numpy(),
                     g["pos_y"].to_numpy(),
                     g["pos_z"].to_numpy(),
                     color=color,
-                    alpha=0.22,
-                    linewidth=1.0 if is_spoofer else 0.8,
+                    alpha=0.92 if is_spoofer else 0.18,
+                    linewidth=1.8 if is_spoofer else 0.65,
                     label=label,
                 )
 
@@ -2022,6 +2032,7 @@ def _plot_3d_group(group: str, by_variant: dict[str, list[Path]], out_dir: Path,
         ax.set_ylabel("Y [m]")
         ax.set_zlabel("Altitude [m]")
         ax.grid(True, alpha=0.25)
+        ax.view_init(elev=24, azim=-58)
         handles, _labels = ax.get_legend_handles_labels()
         if handles:
             ax.legend(loc="upper left", fontsize=8)

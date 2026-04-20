@@ -9,7 +9,14 @@ import numpy as np
 import pandas as pd
 
 
-def _save_table(df: pd.DataFrame, title: str, out_pdf: Path, out_png: Path) -> None:
+def _save_table(
+    df: pd.DataFrame,
+    title: str,
+    out_pdf: Path,
+    out_png: Path,
+    *,
+    bold_metric_rows: frozenset[str] | None = None,
+) -> None:
     headers = [str(c) for c in df.columns.tolist()]
     rows = df.values.tolist()
     n_cols = max(1, len(headers))
@@ -39,6 +46,10 @@ def _save_table(df: pd.DataFrame, title: str, out_pdf: Path, out_png: Path) -> N
         if r == 0:
             cell.set_text_props(weight="bold")
             cell.set_facecolor("#eeeeee")
+        elif bold_metric_rows is not None and 1 <= r <= len(rows):
+            metric = str(rows[r - 1][0]).strip()
+            if metric in bold_metric_rows:
+                cell.set_text_props(weight="bold")
     fig.suptitle(title, y=0.98, fontsize=13)
     fig.tight_layout(rect=[0.01, 0.01, 0.99, 0.94])
     fig.savefig(out_pdf, dpi=240)
@@ -188,6 +199,7 @@ def main() -> int:
             "TABLE II-A\nSafety summary statistics by agent count (mean ± std)",
             out / "pdfs" / "table_ii_safety_summary_by_agent_count.pdf",
             out / "pngs" / "table_ii_safety_summary_by_agent_count.png",
+            bold_metric_rows=frozenset({"Benign-Spoofer"}),
         )
 
         # Split table format B: Spoofer localization summary by agent count (SA only).

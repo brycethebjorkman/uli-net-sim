@@ -24,8 +24,8 @@ VARIANT_COLORS = {
     "TrustRID": "#f58518",
 }
 VARIANT_LINESTYLES = {
-    "SpoofingAwareInstantDetect": "-.",
-    "TrustRID": "--",
+    "SpoofingAwareInstantDetect": "-",
+    "TrustRID": "-",
 }
 VARIANT_DISPLAY_NAMES = {
     "SpoofingAwareInstantDetect": "Spoofing Aware",
@@ -70,7 +70,14 @@ def _fmt_pm(mu: float, sd: float) -> str:
     return f"{mu:.3f} ± {sd:.3f}"
 
 
-def _save_table_df(df: pd.DataFrame, title: str, out_pdf: Path, out_png: Path) -> None:
+def _save_table_df(
+    df: pd.DataFrame,
+    title: str,
+    out_pdf: Path,
+    out_png: Path,
+    *,
+    bold_metric_rows: frozenset[str] | None = None,
+) -> None:
     headers = [str(c) for c in df.columns.tolist()]
     rows = df.values.tolist()
     n_cols = max(1, len(headers))
@@ -100,6 +107,10 @@ def _save_table_df(df: pd.DataFrame, title: str, out_pdf: Path, out_png: Path) -
         if r == 0:
             cell.set_text_props(weight="bold")
             cell.set_facecolor("#eeeeee")
+        elif bold_metric_rows is not None and 1 <= r <= len(rows):
+            metric = str(rows[r - 1][0]).strip()
+            if metric in bold_metric_rows:
+                cell.set_text_props(weight="bold")
     fig.suptitle(title, y=0.98, fontsize=13)
     fig.tight_layout(rect=[0.01, 0.01, 0.99, 0.94])
     fig.savefig(out_pdf, dpi=240)
@@ -166,6 +177,7 @@ def _write_split_agent_count_tables(run_root: Path, out_dir: Path) -> list[str]:
         "TABLE II\nSafety summary statistics by agent count (mean ± std across 30 seeds).",
         out_dir / "pdfs" / f"{safety_base}.pdf",
         out_dir / "pngs" / f"{safety_base}.png",
+        bold_metric_rows=frozenset({"Benign-Spoofer"}),
     )
 
     # Table III: localization (SA only per scenario).
@@ -250,6 +262,48 @@ def _safe_axis_limits(values: list[float], pad_frac: float = 0.06) -> tuple[floa
     span = hi - lo
     pad = span * float(pad_frac)
     return lo - pad, hi + pad
+
+
+def _safe_positive_ylim(
+    values: list[float],
+    pad_frac: float = 0.18,
+    min_top_pad: float = 8.0,
+    min_top_mult: float = 1.35,
+) -> tuple[float, float] | None:
+    vals = [float(v) for v in values if pd.notna(v)]
+    if not vals:
+        return None
+    lo = min(vals)
+    hi = max(vals)
+    if lo == hi:
+        pad = max(float(min_top_pad), abs(hi) * 0.15, 1.0)
+        top = max(hi + pad, hi * float(min_top_mult) if hi > 0.0 else hi + pad)
+        return max(0.0, lo - 0.1 * pad), top
+    span = hi - lo
+    pad = max(float(min_top_pad), span * float(pad_frac))
+    top = max(hi + pad, hi * float(min_top_mult) if hi > 0.0 else hi + pad)
+    return max(0.0, lo - 0.08 * pad), top
+
+
+def _safe_shared_ylim(
+    values: list[float],
+    pad_frac: float = 0.30,
+    min_pad: float = 8.0,
+    top_mult: float = 1.35,
+) -> tuple[float, float] | None:
+    vals = [float(v) for v in values if pd.notna(v)]
+    if not vals:
+        return None
+    lo = min(vals)
+    hi = max(vals)
+    if lo == hi:
+        pad = max(float(min_pad), abs(hi) * 0.15, 1.0)
+        top = max(hi + pad, hi * float(top_mult) if hi > 0.0 else hi + pad)
+        return lo - 0.35 * pad, top
+    span = hi - lo
+    pad = max(float(min_pad), span * float(pad_frac))
+    top = max(hi + pad, hi * float(top_mult) if hi > 0.0 else hi + pad)
+    return lo - 0.28 * pad, top
 
 
 def _bounded_band(mean: pd.Series, std: pd.Series, lower: float | None = None, upper: float | None = None) -> tuple[pd.Series, pd.Series]:
@@ -349,10 +403,8 @@ def _plot_min_distance(df: pd.DataFrame, out_pdf: Path, out_png: Path) -> None:
         ax.grid(alpha=0.2)
         ax.legend(fontsize=8)
 
-    ylim = _safe_axis_limits(all_vals)
-    if ylim is not None:
-        for ax in axes[0]:
-            ax.set_ylim(*ylim)
+    # Keep per-scenario autoscaling for distance panels to avoid clipping
+    # large scenario-specific std envelopes in shared paper figures.
     fig.suptitle(
         "Min Benign-Spoofer Distance Through Time (mean ± std, by Scenario)\n"
         "Note: benign hosts are excluded from this metric after reaching goal."
@@ -389,8 +441,9 @@ def _plot_containment_rmse_unsafe(df: pd.DataFrame, out_pdf: Path, out_png: Path
 
     n = len(scenarios)
     fig, axes = plt.subplots(3, n, figsize=(5.8 * n, 8.6), squeeze=False, sharex="col")
-    row2_vals: list[float] = []
-    row3_vals: list[float] = []
+    row2_vals_by_scen: dict[str, list[float]] = {}
+    row2_vals_all: list[float] = []
+    row3_vals_by_scen: dict[str, list[float]] = {}
 
     for i, scen in enumerate(scenarios):
         ax_cont = axes[0][i]
@@ -410,7 +463,7 @@ def _plot_containment_rmse_unsafe(df: pd.DataFrame, out_pdf: Path, out_png: Path
                 ca["std"] = ca["std"].fillna(0.0)
                 ax_cont.fill_between(
                     ca["time"],
-                    *_bounded_band(ca["mean"], ca["std"], lower=0.0, upper=1.0),
+                    *_bounded_band(ca["mean"], ca["std"]),
                     alpha=0.22,
                     color=color,
                     linewidth=0,
@@ -430,7 +483,7 @@ def _plot_containment_rmse_unsafe(df: pd.DataFrame, out_pdf: Path, out_png: Path
                 la["std"] = la["std"].fillna(0.0)
                 ax_loc.fill_between(
                     la["time"],
-                    *_bounded_band(la["mean"], la["std"], lower=0.0),
+                    *_bounded_band(la["mean"], la["std"]),
                     alpha=0.22,
                     color=color,
                     linewidth=0,
@@ -443,8 +496,10 @@ def _plot_containment_rmse_unsafe(df: pd.DataFrame, out_pdf: Path, out_png: Path
                     linewidth=2.0,
                     label=_variant_display_name(variant),
                 )
-                row2_vals.extend((la["mean"] - la["std"]).tolist())
-                row2_vals.extend((la["mean"] + la["std"]).tolist())
+                row2_vals_by_scen.setdefault(str(scen), []).extend((la["mean"] - la["std"]).tolist())
+                row2_vals_by_scen.setdefault(str(scen), []).extend((la["mean"] + la["std"]).tolist())
+                row2_vals_all.extend((la["mean"] - la["std"]).tolist())
+                row2_vals_all.extend((la["mean"] + la["std"]).tolist())
 
             bubble_v = bubble_s[bubble_s["variant"] == variant]
             if not bubble_v.empty:
@@ -465,12 +520,12 @@ def _plot_containment_rmse_unsafe(df: pd.DataFrame, out_pdf: Path, out_png: Path
                     linewidth=2.0,
                     label=_variant_display_name(variant),
                 )
-                row3_vals.extend((ba["mean"] - ba["std"]).tolist())
-                row3_vals.extend((ba["mean"] + ba["std"]).tolist())
+                row3_vals_by_scen.setdefault(str(scen), []).extend((ba["mean"] - ba["std"]).tolist())
+                row3_vals_by_scen.setdefault(str(scen), []).extend((ba["mean"] + ba["std"]).tolist())
 
         ax_cont.set_title(str(scen))
         ax_cont.set_ylabel("containment rate")
-        ax_cont.set_ylim(-0.02, 1.02)
+        ax_cont.set_ylim(-0.12, 1.12)
         ax_cont.grid(alpha=0.25)
         ax_loc.set_ylabel("localization RMSE (m)")
         ax_loc.grid(alpha=0.25)
@@ -482,14 +537,15 @@ def _plot_containment_rmse_unsafe(df: pd.DataFrame, out_pdf: Path, out_png: Path
             if handles:
                 ax_cont.legend(handles, labels, fontsize=8, loc="best")
 
-    ylim_loc = _safe_axis_limits(row2_vals)
-    ylim_bub = _safe_axis_limits(row3_vals)
+    ylim_loc_shared = _safe_shared_ylim(row2_vals_all, pad_frac=0.32, min_pad=16.0, top_mult=1.40)
     for i in range(n):
-        axes[0][i].set_ylim(-0.02, 1.02)
-        if ylim_loc is not None:
-            axes[1][i].set_ylim(*ylim_loc)
+        axes[0][i].set_ylim(-0.12, 1.12)
+        if ylim_loc_shared is not None:
+            axes[1][i].set_ylim(ylim_loc_shared[0], ylim_loc_shared[1])
+        scen = str(scenarios[i])
+        ylim_bub = _safe_positive_ylim(row3_vals_by_scen.get(scen, []), pad_frac=0.20, min_top_pad=6.0)
         if ylim_bub is not None:
-            axes[2][i].set_ylim(*ylim_bub)
+            axes[2][i].set_ylim(ylim_bub[0], ylim_bub[1])
 
     fig.suptitle("Containment, Localization RMSE, and Unsafe-Bubble Radius Through Time (mean ± std)")
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
@@ -517,7 +573,8 @@ def _plot_containment_rmse_only(df: pd.DataFrame, out_pdf: Path, out_png: Path) 
 
     n = len(scenarios)
     fig, axes = plt.subplots(2, n, figsize=(5.8 * n, 6.2), squeeze=False, sharex="col")
-    row2_vals: list[float] = []
+    row2_vals_by_scen: dict[str, list[float]] = {}
+    row2_vals_all: list[float] = []
 
     for i, scen in enumerate(scenarios):
         ax_cont = axes[0][i]
@@ -535,7 +592,7 @@ def _plot_containment_rmse_only(df: pd.DataFrame, out_pdf: Path, out_png: Path) 
                 ca["std"] = ca["std"].fillna(0.0)
                 ax_cont.fill_between(
                     ca["time"],
-                    *_bounded_band(ca["mean"], ca["std"], lower=0.0, upper=1.0),
+                    *_bounded_band(ca["mean"], ca["std"]),
                     alpha=0.22,
                     color=color,
                     linewidth=0,
@@ -555,7 +612,7 @@ def _plot_containment_rmse_only(df: pd.DataFrame, out_pdf: Path, out_png: Path) 
                 la["std"] = la["std"].fillna(0.0)
                 ax_loc.fill_between(
                     la["time"],
-                    *_bounded_band(la["mean"], la["std"], lower=0.0),
+                    *_bounded_band(la["mean"], la["std"]),
                     alpha=0.22,
                     color=color,
                     linewidth=0,
@@ -568,12 +625,14 @@ def _plot_containment_rmse_only(df: pd.DataFrame, out_pdf: Path, out_png: Path) 
                     linewidth=2.0,
                     label=_variant_display_name(variant),
                 )
-                row2_vals.extend((la["mean"] - la["std"]).tolist())
-                row2_vals.extend((la["mean"] + la["std"]).tolist())
+                row2_vals_by_scen.setdefault(str(scen), []).extend((la["mean"] - la["std"]).tolist())
+                row2_vals_by_scen.setdefault(str(scen), []).extend((la["mean"] + la["std"]).tolist())
+                row2_vals_all.extend((la["mean"] - la["std"]).tolist())
+                row2_vals_all.extend((la["mean"] + la["std"]).tolist())
 
         ax_cont.set_title(str(scen))
         ax_cont.set_ylabel("containment rate")
-        ax_cont.set_ylim(-0.02, 1.02)
+        ax_cont.set_ylim(-0.12, 1.12)
         ax_cont.grid(alpha=0.25)
         ax_loc.set_ylabel("localization RMSE (m)")
         ax_loc.set_xlabel("time (s)")
@@ -583,11 +642,11 @@ def _plot_containment_rmse_only(df: pd.DataFrame, out_pdf: Path, out_png: Path) 
             if handles:
                 ax_cont.legend(handles, labels, fontsize=8, loc="best")
 
-    ylim_loc = _safe_axis_limits(row2_vals)
+    ylim_loc_shared = _safe_shared_ylim(row2_vals_all, pad_frac=0.32, min_pad=16.0, top_mult=1.40)
     for i in range(n):
-        axes[0][i].set_ylim(-0.02, 1.02)
-        if ylim_loc is not None:
-            axes[1][i].set_ylim(*ylim_loc)
+        axes[0][i].set_ylim(-0.12, 1.12)
+        if ylim_loc_shared is not None:
+            axes[1][i].set_ylim(ylim_loc_shared[0], ylim_loc_shared[1])
 
     fig.suptitle("Containment and Localization RMSE Through Time (mean ± std)")
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])

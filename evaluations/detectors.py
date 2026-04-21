@@ -345,9 +345,9 @@ class MLPDetector:
     MLP-based spoofing detector.
 
     Trains a multilayer perceptron on per-transmission features derived from up to 4
-    benign receivers: the receiver-to-claimed-TX position vectors (x, y, z per axis)
-    and RSSI for each receiver.  The MLP learns to detect when RSSI values are
-    inconsistent with the claimed transmitter position.
+    benign receivers: the absolute per-axis distance from each receiver to the claimed
+    TX position, and RSSI for each receiver.  The MLP learns to detect when RSSI
+    values are inconsistent with the claimed transmitter position.
 
     Output granularity: one score per transmission (same as MultilatDetector).
 
@@ -380,8 +380,8 @@ class MLPDetector:
         """
         Preprocess a raw scenario DataFrame into per-transmission wide format.
 
-        Keeps only RX events from benign receivers, computes per-axis
-        receiver-to-claimed-TX position vectors, takes first 4 benign receivers
+        Keeps only RX events from benign receivers, computes absolute per-axis
+        receiver-to-claimed-TX distances, takes first 4 benign receivers
         per (serial_number, rid_timestamp), then pivots to wide format.
 
         Returns DataFrame with FEATURE_COLS + serial_number + rid_timestamp +
@@ -393,10 +393,10 @@ class MLPDetector:
         if len(rx) == 0:
             return pd.DataFrame()
 
-        # Per-axis vectors from receiver position to claimed TX position
-        rx['rx_to_claimed_x'] = rx['pos_x'] - rx['rid_pos_x']
-        rx['rx_to_claimed_y'] = rx['pos_y'] - rx['rid_pos_y']
-        rx['rx_to_claimed_z'] = rx['pos_z'] - rx['rid_pos_z']
+        # Absolute per-axis distance from receiver to claimed TX
+        rx['rx_to_claimed_x'] = (rx['pos_x'] - rx['rid_pos_x']).abs()
+        rx['rx_to_claimed_y'] = (rx['pos_y'] - rx['rid_pos_y']).abs()
+        rx['rx_to_claimed_z'] = (rx['pos_z'] - rx['rid_pos_z']).abs()
 
         # Select first 4 benign receivers per transmission (deterministic by host_id)
         rx = rx.sort_values(['serial_number', 'rid_timestamp', 'host_id'])

@@ -898,9 +898,10 @@ class SpoofingAwareGcs:
         for serial in self.spoofers:
             imm = self._imm.get(serial)
             if imm is not None and imm._initialized:
-                # Continuous motion between RID updates: propagate IMM on each tick.
+                # Continuous motion between RID updates: propagate IMM on each tick
+                # using full IMM interaction/mode mixing before model propagation.
                 max_steps = None if IMM_MAX_PREDICT_STEPS <= 0 else IMM_MAX_PREDICT_STEPS
-                imm.predict_only(max_predict_steps=max_steps, do_interaction=False)
+                imm.predict_only(max_predict_steps=max_steps, do_interaction=True)
                 self._ticks_since_spoofer_meas[serial] = self._ticks_since_spoofer_meas.get(serial, 0) + 1
                 mu, sigma = imm.get_state()
                 mu_pub, sigma_pub = self._smoothed_unsafe_state(serial, mu, sigma)

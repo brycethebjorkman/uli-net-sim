@@ -1,0 +1,6 @@
+Metric,4 Agents (SA),8 Agents (SA),12 Agents (SA),16 Agents (SA)
+Spoofer containment rate,0.426 ± 0.173,0.851 ± 0.136,0.894 ± 0.099,0.858 ± 0.122
+Raw RSSI NLLS Multilateration spoofer x error vs ground truth (m),87.248 ± 20.766,58.445 ± 15.339,53.924 ± 16.622,51.866 ± 15.208
+"Predicted spoofer $\mu$ error vs ground truth (RMSE, m)",409.737 ± 503.831,64.656 ± 21.310,62.862 ± 25.638,63.653 ± 22.992
+"Predicted spoofer $\mu$ error vs ground truth (MAE, m)",292.532 ± 359.509,53.852 ± 15.783,50.204 ± 15.735,50.425 ± 15.825
+Spoofer unsafe ellipsoid radius max (m),80.852 ± 7.877,87.475 ± 2.605,88.745 ± 1.492,88.684 ± 1.139

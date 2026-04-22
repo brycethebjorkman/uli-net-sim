@@ -1,0 +1,5 @@
+Scenario,Mean (SA) [s],Std (SA) [s],Mean (SA InstantDetect) [s],Std (SA InstantDetect) [s],Mean (Trust-RID) [s],Std (Trust-RID) [s]
+depotcity_12x1,34.267,4.168,34.133,4.257,28.667,2.998
+depotcity_16x1,48.267,5.452,48.200,5.385,41.833,4.496
+depotcity_4x1,11.867,0.860,12.167,0.834,8.700,0.651
+depotcity_8x1,20.800,2.384,20.667,2.171,15.933,1.874

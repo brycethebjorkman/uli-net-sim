@@ -1,0 +1,13 @@
+Metric,Mean (SA),Mean (SA InstantDetect),Mean (Trust-RID),Std (SA),Std (SA InstantDetect),Std (Trust-RID)
+Total NMACs (real-position),3.750,3.750,11.817,3.939,3.939,9.303
+Benign-Benign NMACs,3.517,3.517,7.975,3.857,3.857,5.869
+Benign-Spoofer NMACs,0.233,0.233,3.842,0.480,0.480,4.199
+Min distance to true spoofer (m),75.226,75.226,38.886,27.398,27.398,15.660
+SpoofingAware: chance-constraint violations,1.767,1.767,N/A,2.214,2.214,N/A
+SpoofingAware: spoofer containment percent,0.757,0.757,N/A,0.234,0.234,N/A
+SpoofingAware: detection reports processed,14.183,14.183,N/A,3.699,3.699,N/A
+SpoofingAware: detection callbacks with MLAT attempted,13.483,13.483,N/A,3.101,3.101,N/A
+SpoofingAware: detection callbacks skipped (receivers < 4),0.700,0.700,N/A,1.074,1.074,N/A
+SpoofingAware: skipped MLAT fraction during detection,0.040,0.040,N/A,0.059,0.059,N/A
+SpoofingAware: raw RSSI/NLLS localization RMSE (m),75.979,75.979,N/A,27.507,27.507,N/A
+SpoofingAware: raw RSSI/NLLS localization MAE (m),62.871,62.871,N/A,22.172,22.172,N/A

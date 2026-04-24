@@ -78,7 +78,7 @@ $$
 \begin{aligned}
 \dot{p} &= \frac{I_{yy} - I_{zz}}{I_{xx}}\,q\,r + \frac{L}{I_{xx}}\,\tau_\phi \\
 \dot{q} &= \frac{I_{zz} - I_{xx}}{I_{yy}}\,p\,r + \frac{L}{I_{yy}}\,\tau_\theta \\
-\dot{r} &= \frac{I_{xx} - I_{yy}}{I_{zz}}\,p\,r + \frac{L}{I_{zz}}\,\tau_\psi
+\dot{r} &= \frac{I_{xx} - I_{yy}}{I_{zz}}\,p\,q + \frac{L}{I_{zz}}\,\tau_\psi
 \end{aligned}
 $$
 

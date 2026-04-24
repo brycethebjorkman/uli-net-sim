@@ -106,7 +106,7 @@ Eigen::Matrix<double, STATE_DIM, 1> MultirotorMobility::dynamics(
     // Angular rate derivatives (rotational dynamics)
     dx[OMEGA_P] = (Iyy - Izz) / Ixx * q * r + armLength / Ixx * tau_phi;
     dx[OMEGA_Q] = (Izz - Ixx) / Iyy * p * r + armLength / Iyy * tau_theta;
-    dx[OMEGA_R] = (Ixx - Iyy) / Izz * p * r + armLength / Izz * tau_psi;
+    dx[OMEGA_R] = (Ixx - Iyy) / Izz * p * q + armLength / Izz * tau_psi;
 
     // Rotational drag (linear damping, ArduPilot-style)
     dx[OMEGA_P] -= rotationalDrag * p;

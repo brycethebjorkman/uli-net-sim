@@ -22,8 +22,10 @@ where $(x, y, z)$ is position in the world frame,
 $(\dot{x}, \dot{y}, \dot{z})$ is velocity,
 $(\phi, \theta, \psi)$ are Euler angles (roll, pitch, yaw in Z-Y'-X''
 convention), $(p, q, r)$ are body-frame angular rates, $T$ is total
-thrust (N), and $(\tau_\phi, \tau_\theta, \tau_\psi)$ are control
-torques (Nm).
+thrust (N), and $(\tau_\phi, \tau_\theta, \tau_\psi)$ are differential
+rotor-thrust control inputs (N). The effective body-axis torque is
+$L\,\tau$, where $L$ is the arm length — see the rotational dynamics
+equations below.
 
 ## Equations of Motion
 
@@ -96,7 +98,7 @@ inertia.
 | Pitch inertia | `Iyy` | 0.5 | kg m^2 |
 | Yaw inertia | `Izz` | 0.8 | kg m^2 |
 | Drag coefficient | `dragCd` | 1.0 | — |
-| Drag reference area | `dragArea` | 0.1 | m^2 |
+| Drag reference area | `dragArea` | 0.2 | m^2 |
 | Air density | `airDensity` | 1.225 | kg/m^3 |
 | Rotational drag | `rotationalDrag` | 3.0 | 1/s |
 
@@ -137,7 +139,9 @@ $$
 where $k_{\text{rot}}$ (`rotationalDrag`, default $3.0 s^{-1}$)
 represents the combined aerodynamic damping on the airframe.
 ArduPilot uses $\approx 3.33 s^{-1}$
-(derived from $400 °/s$ reference at $120 °/s$ terminal rotation rate).
+(derived from a $400\,°/s^2$ reference angular acceleration and a
+$120\,°/s$ terminal rotation rate: at steady state
+$\alpha_{\text{ref}} = k_{\text{rot}}\,\omega_{ss}$).
 
 ## Numerical Integration
 

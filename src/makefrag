@@ -1,19 +1,16 @@
 # Embedded Python: link headers, libpython, and bake the venv prefix.
 #
-# UV_PROJECT_ENVIRONMENT must be set:
-#   - IDE: .cproject's CDT environment storage exports it as ${ProjDirPath}/.venv.
-#   - Container / CLI: scripts/build.sh exports it (defaulting to <project>/.venv).
+# Anchor the venv location off THIS file's path: makefrag is always at
+# <project>/src/makefrag, so the venv is at ../.venv from this dir. That's
+# robust to whatever directory `make` was invoked from (IDE, container
+# build.sh, or bare `cd src && make`). UV_PROJECT_ENVIRONMENT overrides
+# for non-standard layouts (e.g. container's sibling .venv).
 #
-# We deliberately avoid $(VIRTUAL_ENV): OMNeT++'s setenv activates its own
-# bundled scave venv (often Python 3.9) and exports VIRTUAL_ENV; picking that
-# up would link the simulator against libpython3.9 instead of the project
-# venv's libpython3.12. UV_PROJECT_ENVIRONMENT is project-specific, so it
-# can't be polluted by tool-side activations.
-ifndef UV_PROJECT_ENVIRONMENT
-  $(error UV_PROJECT_ENVIRONMENT is unset. IDE: ensure .cproject is current and refresh project. CLI: source setenv or run scripts/build.sh.)
-endif
-
-VENV_PREFIX := $(UV_PROJECT_ENVIRONMENT)
+# We deliberately do not consult $(VIRTUAL_ENV): OMNeT++'s setenv activates
+# its own bundled scave venv (often Python 3.9) and exports VIRTUAL_ENV;
+# picking that up would link the simulator against libpython3.9 instead
+# of the project venv's libpython3.12.
+VENV_PREFIX := $(if $(UV_PROJECT_ENVIRONMENT),$(UV_PROJECT_ENVIRONMENT),$(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)/.venv)
 VENV_PYTHON := $(VENV_PREFIX)/bin/python3
 ifeq ($(wildcard $(VENV_PYTHON)),)
   $(error PyBridge: venv not found at $(VENV_PREFIX). Run 'uv sync'.)

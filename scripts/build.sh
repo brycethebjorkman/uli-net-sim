@@ -34,12 +34,14 @@ if [ -f "$PROJ_DIR/setenv" ]; then
 fi
 
 # Pin the venv for src/makefrag (which performs the -I/-L/-l lookups).
-# In container builds CURDIR resolves to container-build/src, so makefrag's
+# In container builds CURDIR resolves to container-build, so makefrag's
 # (<CURDIR>/..)/.venv fallback would miss the source-tree venv — export
-# VIRTUAL_ENV so makefrag uses it unconditionally.
-export VIRTUAL_ENV="${VIRTUAL_ENV:-$PROJ_DIR/.venv}"
-if [ ! -x "$VIRTUAL_ENV/bin/python3" ]; then
-    echo "Error: venv not found at $VIRTUAL_ENV. Run 'uv sync' or set VIRTUAL_ENV." >&2
+# UV_PROJECT_ENVIRONMENT so makefrag uses it unconditionally. We avoid
+# VIRTUAL_ENV here because OMNeT++'s setenv activates its own (Python 3.9)
+# scave venv via VIRTUAL_ENV, which would mislead makefrag.
+export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$PROJ_DIR/.venv}"
+if [ ! -x "$UV_PROJECT_ENVIRONMENT/bin/python3" ]; then
+    echo "Error: venv not found at $UV_PROJECT_ENVIRONMENT. Run 'uv sync' or set UV_PROJECT_ENVIRONMENT." >&2
     exit 1
 fi
 

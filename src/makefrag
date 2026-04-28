@@ -1,17 +1,30 @@
 # Embedded Python: link headers, libpython, and bake the venv prefix.
 #
-# Discovery: prefer $(VIRTUAL_ENV) (set by activate / uv / project setenv);
-# fall back to <project root>/.venv. CURDIR is src/ when the IDE invokes us,
-# so $(abspath $(CURDIR)/..) is the project root.
+# UV_PROJECT_ENVIRONMENT must be set:
+#   - IDE: .cproject's CDT environment storage exports it as ${ProjDirPath}/.venv.
+#   - Container / CLI: scripts/build.sh exports it (defaulting to <project>/.venv).
 #
-# Note: the IDE also bakes VENV_PREFIX via .cproject's "Defined symbols" →
-# opp_makemake -D. That covers the case where makefrag isn't pulled in by
-# the IDE-generated Makefile; both mechanisms produce the same value, so
-# the redundancy is benign — last -D on the cpp command line wins.
-VENV_PREFIX := $(if $(VIRTUAL_ENV),$(VIRTUAL_ENV),$(abspath $(CURDIR)/..)/.venv)
+# We deliberately avoid $(VIRTUAL_ENV): OMNeT++'s setenv activates its own
+# bundled scave venv (often Python 3.9) and exports VIRTUAL_ENV; picking that
+# up would link the simulator against libpython3.9 instead of the project
+# venv's libpython3.12. UV_PROJECT_ENVIRONMENT is project-specific, so it
+# can't be polluted by tool-side activations.
+ifndef UV_PROJECT_ENVIRONMENT
+  $(error UV_PROJECT_ENVIRONMENT is unset. IDE: ensure .cproject is current and refresh project. CLI: source setenv or run scripts/build.sh.)
+endif
+
+VENV_PREFIX := $(UV_PROJECT_ENVIRONMENT)
 VENV_PYTHON := $(VENV_PREFIX)/bin/python3
 ifeq ($(wildcard $(VENV_PYTHON)),)
-  $(error PyBridge: venv not found at $(VENV_PREFIX). Run 'uv sync' or set VIRTUAL_ENV.)
+  $(error PyBridge: venv not found at $(VENV_PREFIX). Run 'uv sync'.)
+endif
+
+# Sanity-check Python version matches pyproject.toml's requires-python.
+# Catches the "stale .venv from a previous Python" case before linking against
+# the wrong libpython and discovering it at runtime.
+VENV_PY_MM := $(shell $(VENV_PYTHON) -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+ifneq ($(VENV_PY_MM),3.12)
+  $(error PyBridge: venv at $(VENV_PREFIX) is Python $(VENV_PY_MM); pyproject.toml requires 3.12. Recreate with 'rm -rf .venv && uv sync'.)
 endif
 
 PYTHON_INCLUDE := $(shell $(VENV_PYTHON) -c "import sysconfig; print(sysconfig.get_path('include'))")

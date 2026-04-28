@@ -59,6 +59,11 @@
 				</configuration>
 			</storageModule>
 			<storageModule moduleId="org.eclipse.cdt.core.externalSettings"/>
+			<storageModule moduleId="environment">
+				<append val="true"/>
+				<appendContributed val="true"/>
+				<variable name="UV_PROJECT_ENVIRONMENT" operation="replace" value="${ProjDirPath}/.venv"/>
+			</storageModule>
 		</cconfiguration>
 		<cconfiguration id="org.omnetpp.cdt.gnu.config.release.709192042">
 			<storageModule buildSystemId="org.eclipse.cdt.managedbuilder.core.configurationDataProvider" id="org.omnetpp.cdt.gnu.config.release.709192042" moduleId="org.eclipse.cdt.core.settings" name="release">
@@ -118,6 +123,11 @@
 				</configuration>
 			</storageModule>
 			<storageModule moduleId="org.eclipse.cdt.core.externalSettings"/>
+			<storageModule moduleId="environment">
+				<append val="true"/>
+				<appendContributed val="true"/>
+				<variable name="UV_PROJECT_ENVIRONMENT" operation="replace" value="${ProjDirPath}/.venv"/>
+			</storageModule>
 		</cconfiguration>
 	</storageModule>
 	<storageModule moduleId="cdtBuildSystem" version="4.0.0">

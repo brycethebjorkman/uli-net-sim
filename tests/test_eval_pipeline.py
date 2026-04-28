@@ -6,7 +6,7 @@ inputs and seed. Parquet files are hashed by DataFrame content (not file
 bytes) so results are stable across pyarrow versions.
 
 To update hashes after intentional changes, run the tests with --update-hashes:
-    .venv/bin/pytest tests/ -v --update-hashes
+    pytest tests/ -v --update-hashes
 """
 
 import hashlib

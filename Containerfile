@@ -94,6 +94,10 @@ RUN echo '. /etc/profile.d/setenv.sh' >> /root/.bashrc
 WORKDIR /usr/uli-net-sim/uav_rid
 COPY pyproject.toml ./
 COPY uv.lock ./
+# Container venv lives outside the mounted source tree so host/container venvs
+# (different libpython ABI) don't collide. setenv exports the same value at
+# shell startup; setting it here covers the non-interactive RUN context.
+ENV UV_PROJECT_ENVIRONMENT=/usr/uli-net-sim/container-build/.venv
 RUN uv sync
 COPY . .
 RUN ./scripts/build.sh

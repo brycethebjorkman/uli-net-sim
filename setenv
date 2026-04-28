@@ -23,11 +23,16 @@ fi
 export EIGEN_DIR=/usr/uli-net-sim/eigen-5.0.0
 
 # Activate the project venv, taking precedence over the OMNeT++ venv.
+# Container's venv lives outside the mounted source tree so it doesn't
+# collide with the host's venv (which has a different libpython ABI).
+# UV_PROJECT_ENVIRONMENT directs `uv sync` to the same location.
+#
 # We set PATH directly instead of sourcing bin/activate because activate's
 # deactivate() restores _OLD_VIRTUAL_PATH set by the omnetpp venv, which
 # wipes the omnetpp/bin and inet/bin PATH entries we just added.
-if [ -d /usr/uli-net-sim/uav_rid/.venv/bin ]; then
-    export VIRTUAL_ENV=/usr/uli-net-sim/uav_rid/.venv
+export UV_PROJECT_ENVIRONMENT=/usr/uli-net-sim/container-build/.venv
+if [ -d "$UV_PROJECT_ENVIRONMENT/bin" ]; then
+    export VIRTUAL_ENV="$UV_PROJECT_ENVIRONMENT"
     export PATH="$VIRTUAL_ENV/bin:$PATH"
     unset _OLD_VIRTUAL_PATH
 fi

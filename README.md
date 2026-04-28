@@ -52,19 +52,19 @@ cd /usr/uli-net-sim/uav_rid
 ./datagen/generate_dataset.sh --num-hosts 5 --scenario-variants 10 --enable-spoofer
 
 # Train detectors and score test set
-.venv/bin/python -m evaluations.unified_eval train \
+python -m evaluations.unified_eval train \
     --train-dir datasets/my_dataset/train -o evaluations/results/
 
-.venv/bin/python -m evaluations.unified_eval score \
+python -m evaluations.unified_eval score \
     --train-dir datasets/my_dataset/train \
     --test-dir datasets/my_dataset/test -o evaluations/results/
 
 # Analyze results (iterate on thresholds/plots)
-.venv/bin/python -m evaluations.unified_eval analyze \
+python -m evaluations.unified_eval analyze \
     --scores-dir evaluations/results/ -o evaluations/results/
 
 # Run regression tests
-.venv/bin/pytest tests/ -v
+pytest tests/ -v
 ```
 
 ## Project Structure

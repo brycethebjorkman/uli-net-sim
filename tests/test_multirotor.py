@@ -7,7 +7,7 @@ exports mobility and beacon vectors, and verifies:
   - Freefall: z follows analytical z(t) = z0 - 0.5*g*t^2, thrust = 0
 
 To update hashes after intentional changes:
-    .venv/bin/pytest tests/test_multirotor.py -v
+    pytest tests/test_multirotor.py -v
 """
 
 import json

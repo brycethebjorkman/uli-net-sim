@@ -55,7 +55,7 @@ def regen_dataset():
     scenarios = discover_scenarios(
         urbanenv_dir, configs=["ScenarioOpenSpace", "ScenarioWithBuildings"])
     run_batch(scenarios, parallel=1,
-              venv_python=str(REPO_ROOT / ".venv" / "bin" / "python3"))
+              venv_python=sys.executable)
 
     # Find all parquet files in the dataset
     parquets = sorted(urbanenv_dir.rglob("*.parquet"))
@@ -94,7 +94,7 @@ def test_regeneration_round_trip(regen_dataset):
 
     # Re-run simulation for this scenario
     from datagen.run_scenario import run_scenario
-    venv_python = str(REPO_ROOT / ".venv" / "bin" / "python3")
+    venv_python = sys.executable
 
     # Determine which config to run from the parquet filename suffix
     if parquet_path.name.endswith("-o.parquet"):

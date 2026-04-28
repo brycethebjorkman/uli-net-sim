@@ -55,10 +55,9 @@ def e2e_results():
     # 3. Run simulations
     from datagen.run_batch import discover_scenarios, run_batch
     urbanenv_dir = base / "urbanenv"
-    venv_python = str(REPO_ROOT / ".venv" / "bin" / "python3")
     scenarios = discover_scenarios(
         urbanenv_dir, configs=["ScenarioOpenSpace", "ScenarioWithBuildings"])
-    run_batch(scenarios, parallel=1, venv_python=venv_python)
+    run_batch(scenarios, parallel=1, venv_python=sys.executable)
 
     # 4. Split into train/test
     from datagen.split_dataset import split_dataset

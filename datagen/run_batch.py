@@ -164,13 +164,10 @@ def main(argv=None):
                 print(f"  {d.name}  →  {c}")
         return
 
-    # Determine venv python for vec2parquet (needs pyarrow)
-    venv_python = str(PROJ_DIR / ".venv" / "bin" / "python3")
-    if not Path(venv_python).exists():
-        venv_python = None
-
+    # Use the currently-running interpreter (the project venv's python)
+    # for vec2parquet subprocesses — guarantees the same pyarrow/etc.
     run_batch(scenarios, parallel=args.parallel,
-              venv_python=venv_python, keep_vec=args.keep_vec)
+              venv_python=sys.executable, keep_vec=args.keep_vec)
 
 
 if __name__ == "__main__":

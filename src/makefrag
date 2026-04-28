@@ -1,15 +1,26 @@
-# Additional flags for pybind11 / embedded Python
-# Use the project venv's Python so the binary links against the same version
-# that the venv packages are compiled for (host and container both use uv).
-VENV_PYTHON := $(wildcard $(PROJ_DIR)/.venv/bin/python3)
-ifeq ($(VENV_PYTHON),)
-  VENV_PYTHON := python3
+# Embedded Python: link headers, libpython, and bake the venv prefix.
+#
+# Discovery: prefer $(VIRTUAL_ENV) (set by activate / uv / project setenv);
+# fall back to <project root>/.venv. CURDIR is src/ when the IDE invokes us,
+# so $(abspath $(CURDIR)/..) is the project root.
+#
+# Note: the IDE also bakes VENV_PREFIX via .cproject's "Defined symbols" →
+# opp_makemake -D. That covers the case where makefrag isn't pulled in by
+# the IDE-generated Makefile; both mechanisms produce the same value, so
+# the redundancy is benign — last -D on the cpp command line wins.
+VENV_PREFIX := $(if $(VIRTUAL_ENV),$(VIRTUAL_ENV),$(abspath $(CURDIR)/..)/.venv)
+VENV_PYTHON := $(VENV_PREFIX)/bin/python3
+ifeq ($(wildcard $(VENV_PYTHON)),)
+  $(error PyBridge: venv not found at $(VENV_PREFIX). Run 'uv sync' or set VIRTUAL_ENV.)
 endif
-PYTHON_CFLAGS := $(shell $(VENV_PYTHON) -c "import sysconfig; print('-I' + sysconfig.get_path('include'))")
-PYTHON_LDFLAGS := $(shell $(VENV_PYTHON) -c "import sysconfig; v=sysconfig.get_config_var('VERSION'); d=sysconfig.get_config_var('LIBDIR'); print(f'-L{d} -lpython{v}')")
 
-COPTS += $(PYTHON_CFLAGS)
-LIBS += $(PYTHON_LDFLAGS)
+PYTHON_INCLUDE := $(shell $(VENV_PYTHON) -c "import sysconfig; print(sysconfig.get_path('include'))")
+PYTHON_LIBDIR  := $(shell $(VENV_PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
+PYTHON_LDLIB   := $(shell $(VENV_PYTHON) -c "import sysconfig; v=sysconfig.get_config_var('VERSION'); print(f'python{v}')")
+PYBIND11_INCLUDE := $(shell $(VENV_PYTHON) -c "import pybind11; print(pybind11.get_include())")
+
+COPTS += -I$(PYTHON_INCLUDE) -I$(PYBIND11_INCLUDE) -DVENV_PREFIX=$(VENV_PREFIX)
+LIBS  += -L$(PYTHON_LIBDIR) -l$(PYTHON_LDLIB) -Wl,-rpath,$(PYTHON_LIBDIR)
 
 # OSG libraries for 3D waypoint path visualization
 LIBS += -losg -losgDB -lOpenThreads

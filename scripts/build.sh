@@ -31,20 +31,15 @@ if [ -z "$INET_ROOT" ]; then
     . "$PROJ_DIR/setenv"
 fi
 
-# Use the project venv's Python for pybind11 headers and libpython.
-# This ensures the simulation binary links against the same Python version
-# that the venv packages are compiled for (e.g. 3.12 via uv).
-VENV_PYTHON="$PROJ_DIR/.venv/bin/python3"
-if [ ! -x "$VENV_PYTHON" ]; then
-    echo "Error: project venv not found at $PROJ_DIR/.venv/"
-    echo "Run 'uv sync' in the project directory first."
+# Pin the venv for src/makefrag (which performs the -I/-L/-l lookups).
+# In container builds CURDIR resolves to container-build/src, so makefrag's
+# (<CURDIR>/..)/.venv fallback would miss the source-tree venv — export
+# VIRTUAL_ENV so makefrag uses it unconditionally.
+export VIRTUAL_ENV="${VIRTUAL_ENV:-$PROJ_DIR/.venv}"
+if [ ! -x "$VIRTUAL_ENV/bin/python3" ]; then
+    echo "Error: venv not found at $VIRTUAL_ENV. Run 'uv sync' or set VIRTUAL_ENV." >&2
     exit 1
 fi
-
-PYBIND11_DIR="$($VENV_PYTHON -c 'import pybind11; print(pybind11.get_include())')"
-PYTHON_INCLUDE="$($VENV_PYTHON -c 'import sysconfig; print(sysconfig.get_path("include"))')"
-PYTHON_LIBDIR="$($VENV_PYTHON -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-PYTHON_LDLIB="$($VENV_PYTHON -c 'import sysconfig; v=sysconfig.get_config_var("VERSION"); print(f"python{v}")')"
 
 echo "=========================================="
 echo "Container Build (Out-of-Tree)"
@@ -65,7 +60,8 @@ if [ ! -L "simulations" ]; then
     ln -sf "$SRC_DIR/simulations" simulations
 fi
 
-# Generate Makefile
+# Generate Makefile. Python flags (-I/-L/-l) and -DVENV_PREFIX come from
+# src/makefrag, included below — single source of truth for IDE + container.
 echo "Generating Makefile..."
 opp_makemake -f --deep \
     -o uav_rid \
@@ -76,13 +72,14 @@ opp_makemake -f --deep \
     -Isrc \
     -I'$(INET4_5_PROJ)/src' \
     -I"$EIGEN_DIR" \
-    -I"$PYBIND11_DIR" \
-    -I"$PYTHON_INCLUDE" \
     -L'$(INET4_5_PROJ)/out/clang-release/src' \
-    -L"$PYTHON_LIBDIR" \
-    -lINET \
-    -l"$PYTHON_LDLIB" \
-    -losg -losgDB -lOpenThreads
+    -lINET
+
+# opp_makemake --deep emits a single flat Makefile that does NOT pull in
+# makefrag (unlike per-directory mode used by the IDE). Inject the include
+# so container builds use the same Python-flag logic as IDE builds.
+echo "" >> Makefile
+echo "-include src/makefrag" >> Makefile
 
 # Build
 echo "Building..."

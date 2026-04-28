@@ -5,7 +5,7 @@ Verifies that urbanenv generators and simulation produce bit-for-bit
 identical outputs with fixed seeds.
 
 To update hashes after intentional changes, run the tests with --update-hashes:
-    .venv/bin/pytest tests/ -v --update-hashes
+    pytest tests/ -v --update-hashes
 """
 
 import json

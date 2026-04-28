@@ -7,7 +7,7 @@ Tests the PyBridge hook points:
   3. RidBeaconMgmt Python TX hook (PositionOffsetSpoofer)
 
 To update hashes after intentional changes:
-    .venv/bin/pytest tests/test_pymodules.py -v
+    pytest tests/test_pymodules.py -v
 """
 
 import json

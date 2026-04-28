@@ -8,7 +8,7 @@ Runs the example from the script's usage header and verifies:
   - RSSI values are physically plausible (negative dBm)
 
 To update hashes after intentional changes:
-    .venv/bin/pytest tests/test_rid_one_off.py -v
+    pytest tests/test_rid_one_off.py -v
 """
 
 import json

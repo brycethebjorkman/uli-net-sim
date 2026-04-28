@@ -7,11 +7,20 @@
 
 #include "PyBridgePy.h"
 #include "PyBridge.h"
-#include <filesystem>
 #include <sstream>
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
+
+// VENV_PREFIX is injected by src/makefrag (-DVENV_PREFIX=<path>). If it is
+// undefined here, makefrag did not run for this compile — meaning the IDE
+// Makefile is stale and the binary is also being linked against the default
+// (system) libpython rather than the venv's. Fail loudly: regenerate the IDE
+// Makefile via Project → Clean → Build All (or rerun scripts/build.sh).
+#ifndef VENV_PREFIX
+#error "VENV_PREFIX undefined: src/makefrag was not processed during build. " \
+       "Regenerate the Makefile (IDE: Project → Clean → Build All) or rerun scripts/build.sh."
+#endif
 
 Define_Module(PyBridge);
 
@@ -35,44 +44,28 @@ void PyBridge::initialize()
 
     // Start the interpreter once; keep it alive across network rebuilds.
     if (!interpreterReady) {
-        py::initialize_interpreter();
-        interpreterReady = true;
-
-        // Activate the .venv inside the embedded interpreter.
+        // Tell CPython where the venv's python3 lives. CPython's startup
+        // logic reads pyvenv.cfg next to that executable and configures
+        // sys.prefix / sys.base_prefix / sys.path itself, then site.py adds
+        // <venv>/lib/pythonX.Y/site-packages — exactly like running
+        // `<venv>/bin/python` from a shell. No manual prefix patching.
         //
-        // pybind11's scoped_interpreter inherits the system Python's prefix
-        // (/usr), so sys.prefix == sys.base_prefix == "/usr".  Packages
-        // installed in the venv (numpy, scipy) need sys.prefix pointing at
-        // the venv so that their C extensions resolve correctly.
-        //
-        // We replicate what the venv's activate_this.py does:
-        //   1. Set sys.prefix / sys.exec_prefix to the venv root.
-        //   2. Re-run site.addsitedir() to pick up .venv/lib/.../site-packages.
-        // sys.base_prefix stays at /usr so the stdlib is still found.
-        py::module_ sys = py::module_::import("sys");
-        std::string projDir = STR(PROJ_DIR);
-        std::string venvPrefix = projDir + "/.venv";
-        sys.attr("prefix") = venvPrefix;
-        sys.attr("exec_prefix") = venvPrefix;
+        // VENV_PREFIX is baked at compile time by src/makefrag from the
+        // same python3 whose libpython is linked into this binary, so the
+        // executable path and libpython cannot disagree.
+        std::string venvPython = std::string(STR(VENV_PREFIX)) + "/bin/python3";
 
-        // site-packages must match the *embedded* interpreter (linked libpython),
-        // not the first pythonX.Y directory under lib/ — lexical / FS order can
-        // pick e.g. python3.10 before python3.14 when a stale venv layout exists.
-        std::string venvLib = venvPrefix + "/lib";
-        py::tuple version_info = sys.attr("version_info");
-        int pyMajor = version_info[0].cast<int>();
-        int pyMinor = version_info[1].cast<int>();
-        std::ostringstream sitePath;
-        sitePath << venvLib << "/python" << pyMajor << "." << pyMinor << "/site-packages";
-        std::string venvSitePackages = sitePath.str();
-        if (!std::filesystem::exists(venvSitePackages)) {
-            throw cRuntimeError(
-                "PyBridge: expected venv site-packages at %s — use the same Python as the "
-                "simulation binary (embedded: %d.%d). Run 'uv sync' to recreate .venv/.",
-                venvSitePackages.c_str(), pyMajor, pyMinor);
+        PyConfig config;
+        PyConfig_InitPythonConfig(&config);
+        config.parse_argv = 0;
+        PyStatus status = PyConfig_SetBytesString(&config, &config.executable, venvPython.c_str());
+        if (PyStatus_Exception(status)) {
+            PyConfig_Clear(&config);
+            throw cRuntimeError("PyBridge: PyConfig_SetBytesString(executable=%s) failed: %s",
+                                venvPython.c_str(), status.err_msg ? status.err_msg : "unknown");
         }
-        py::module_ site = py::module_::import("site");
-        site.attr("addsitedir")(venvSitePackages);
+        py::initialize_interpreter(&config);
+        interpreterReady = true;
     }
 
     // (Re-)configure sys.path — user modules and extra paths must be at

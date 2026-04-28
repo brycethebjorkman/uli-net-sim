@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#
+# setenv - OMNeT++, INET, and project venv environment setup
+#
+# Installed to /etc/profile.d/ in the container so OMNeT++, INET, and the
+# project venv are available globally in every login shell. Can also be
+# sourced manually:
+#
+#   . setenv
+#
+
+# Guard: skip if already fully loaded
+[ -n "$__uav_rid_env_loaded" ] && return 0
+__uav_rid_env_loaded=1
+
+# Determine project root from this file's location.
+__SETENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+# When installed at /etc/profile.d/setenv.sh, fall back to the known container path.
+if [ ! -f "$__SETENV_DIR/scripts/omnetpp-env.sh" ]; then
+    __SETENV_DIR=/usr/uli-net-sim/uav_rid
+fi
+
+# OMNeT++/INET (cross-platform discovery: macOS app bundle, $OMNETPP_ROOT,
+# or container layout under /usr/uli-net-sim).
+if [ -f "$__SETENV_DIR/scripts/omnetpp-env.sh" ] && [ -n "$BASH_VERSION" ]; then
+    # shellcheck source=scripts/omnetpp-env.sh
+    . "$__SETENV_DIR/scripts/omnetpp-env.sh"
+fi
+
+# Project venv. Container's venv lives outside the mounted source tree so it
+# doesn't collide with the host's venv (different libpython ABI).
+# UV_PROJECT_ENVIRONMENT directs `uv sync` to the same location.
+#
+# We set PATH directly instead of sourcing bin/activate because activate's
+# deactivate() restores _OLD_VIRTUAL_PATH set by the omnetpp venv, which
+# wipes the omnetpp/bin and inet/bin PATH entries we just added.
+export UV_PROJECT_ENVIRONMENT=/usr/uli-net-sim/container-build/.venv
+if [ -d "$UV_PROJECT_ENVIRONMENT/bin" ]; then
+    export VIRTUAL_ENV="$UV_PROJECT_ENVIRONMENT"
+    export PATH="$VIRTUAL_ENV/bin:$PATH"
+    unset _OLD_VIRTUAL_PATH
+fi

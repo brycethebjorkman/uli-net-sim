@@ -1,0 +1,33 @@
+[project]
+name = "uav-rid"
+version = "0.1.0"
+description = "UAV Remote ID spoofing detection simulator (spoofing-aware-trajectory-planning branch)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Core scientific
+    "numpy>=2.2",
+    "scipy>=1.15",
+    "pandas>=2.3",
+    "pyarrow>=23.0",
+    "scikit-learn>=1.7",
+
+    # C++ build bridge
+    "pybind11>=3.0",
+
+    # Visualization
+    "matplotlib>=3.10",
+    "plotly>=6.5",
+    "kaleido>=1.2",
+
+    # Jupyter / interactive notebooks
+    "ipykernel>=7.1",
+    "nbformat>=5.10",
+
+    # Testing
+    "pytest>=9.0",
+    "pytest-timeout>=2.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 300

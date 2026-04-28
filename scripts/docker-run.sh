@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Run a command in the uli-net-sim image with the repo bind-mounted.
-# Uses /opt/uli-venv from the image (no host .venv required).
+# Uses the image's venv at /usr/uli-net-sim/container-build/.venv (no host
+# .venv required).
 #
 # Usage:
 #   ./scripts/docker-run.sh python3 datagen/spoofting_aware_trajectory_planning_datagen/generate_batch.py --help

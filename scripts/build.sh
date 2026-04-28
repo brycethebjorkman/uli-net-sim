@@ -24,32 +24,23 @@ BASE_DIR="$(cd "$PROJ_DIR/.." && pwd)"
 SRC_DIR="$PROJ_DIR"
 BUILD_DIR="$BASE_DIR/container-build"
 
-# Prefer ULI_PYTHON, else .venv, else system. Reject .venv that exists but cannot run
-# (e.g. Linux venv synced to macOS, or wrong CPU arch — "cannot execute binary file").
-if [ -n "${ULI_PYTHON:-}" ] && [ -x "$ULI_PYTHON" ] \
-        && "$ULI_PYTHON" -c "import sys" 2>/dev/null; then
-    PY="$ULI_PYTHON"
-elif [ -x "$PROJ_DIR/.venv/bin/python3" ] \
-        && "$PROJ_DIR/.venv/bin/python3" -c "import sys" 2>/dev/null; then
-    PY="$PROJ_DIR/.venv/bin/python3"
-else
-    PY=python3
+# Source the project setenv (OMNeT++/INET + venv pinning). Idempotent guard
+# inside setenv prevents double-loading. Sourcing also exports VIRTUAL_ENV /
+# UV_PROJECT_ENVIRONMENT, which src/makefrag reads to find the venv's libpython.
+if [ -f "$PROJ_DIR/setenv" ]; then
+    unset __uav_rid_env_loaded
+    # shellcheck source=../setenv
+    . "$PROJ_DIR/setenv"
 fi
-PYBIND11_DIR="$("$PY" -c 'import pybind11; print(pybind11.get_include())')"
-PYTHON_INCLUDE="$("$PY" -c 'import sysconfig; print(sysconfig.get_path("include"))')"
-PY_BINDIR="$(dirname "$PY")"
-if [ -x "$PY_BINDIR/python3-config" ]; then
-    PYTHON_LIBDIR="$("$PY_BINDIR/python3-config" --configdir)"
-else
-    PYTHON_LIBDIR="$(python3-config --configdir)"
-fi
-PY_SUFFIX="$("$PY" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 
-# OMNeT++/INET on PATH (opp_makemake, nedtool, etc.). Pre-set INET_ROOT — e.g. Docker
-# ENV — does not load setenv; always source when present.
-if [ -f "$PROJ_DIR/scripts/omnetpp-env.sh" ]; then
-    # shellcheck source=omnetpp-env.sh
-    . "$PROJ_DIR/scripts/omnetpp-env.sh"
+# Pin the venv for src/makefrag (which performs the -I/-L/-l lookups).
+# In container builds CURDIR resolves to container-build/src, so makefrag's
+# (<CURDIR>/..)/.venv fallback would miss the source-tree venv — export
+# VIRTUAL_ENV so makefrag uses it unconditionally.
+export VIRTUAL_ENV="${VIRTUAL_ENV:-$PROJ_DIR/.venv}"
+if [ ! -x "$VIRTUAL_ENV/bin/python3" ]; then
+    echo "Error: venv not found at $VIRTUAL_ENV. Run 'uv sync' or set VIRTUAL_ENV." >&2
+    exit 1
 fi
 
 # INET / Eigen: same defaults as IDE Makefile (see root Makefile -KINET4_5_PROJ).
@@ -119,7 +110,8 @@ if [ ! -L "simulations" ]; then
     ln -sf "$SRC_DIR/simulations" simulations
 fi
 
-# Generate Makefile
+# Generate Makefile. Python flags (-I/-L/-l) and -DVENV_PREFIX come from
+# src/makefrag, included below — single source of truth for IDE + container.
 echo "Generating Makefile..."
 opp_makemake -f --deep \
     -o uav_rid \
@@ -130,13 +122,14 @@ opp_makemake -f --deep \
     -Isrc \
     -I'$(INET4_5_PROJ)/src' \
     -I"$EIGEN_DIR" \
-    -I"$PYBIND11_DIR" \
-    -I"$PYTHON_INCLUDE" \
     -L'$(INET4_5_PROJ)/out/clang-release/src' \
-    -L"$PYTHON_LIBDIR" \
-    -lINET \
-    -lpython${PY_SUFFIX} \
-    -losg -losgDB -lOpenThreads
+    -lINET
+
+# opp_makemake --deep emits a single flat Makefile that does NOT pull in
+# makefrag (unlike per-directory mode used by the IDE). Inject the include
+# so container builds use the same Python-flag logic as IDE builds.
+echo "" >> Makefile
+echo "-include src/makefrag" >> Makefile
 
 # Build (nproc is Linux; macOS uses sysctl)
 echo "Building..."

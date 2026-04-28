@@ -2,8 +2,10 @@
 # Shell:  docker compose run --rm uli-net-sim
 # Batch:  docker compose run --rm uli-net-sim python3 datagen/run_batch.py ...
 #
-# The repo is mounted at /usr/uli-net-sim/uav_rid. Python deps live in /opt/uli-venv
-# (PATH), so you do not need a host .venv inside the project.
+# The repo is mounted at /usr/uli-net-sim/uav_rid. Python deps live in
+# /usr/uli-net-sim/container-build/.venv (on PATH), so you do not need a
+# host .venv inside the project — and the container's libpython ABI won't
+# collide with whatever the host's .venv was built against.
 
 services:
   uli-net-sim:

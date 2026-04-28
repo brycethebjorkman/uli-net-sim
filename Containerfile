@@ -84,23 +84,30 @@ RUN wget https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.tar
 RUN tar xf eigen-5.0.0.tar \
     && rm eigen-5.0.0.tar
 
-# Make OMNeT++/INET env available globally in every login shell
-COPY scripts/omnetpp-env.sh /etc/profile.d/omnetpp-env.sh
+# Install uv for Python dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Make OMNeT++/INET/project env available globally in every login shell
+COPY setenv /etc/profile.d/setenv.sh
+COPY scripts/omnetpp-env.sh /usr/uli-net-sim/uav_rid/scripts/omnetpp-env.sh
+RUN echo '. /etc/profile.d/setenv.sh' >> /root/.bashrc
 
 # Python venv outside project tree so bind-mounting the repo for batch runs
-# still uses pyarrow/pytest (see README Docker section).
-COPY requirements-docker.txt /tmp/requirements-docker.txt
-RUN python3 -m venv /opt/uli-venv \
-    && /opt/uli-venv/bin/pip install --upgrade pip \
-    && /opt/uli-venv/bin/pip install -r /tmp/requirements-docker.txt
+# still uses pyarrow/pytest, and so host/container venvs (different libpython
+# ABI) don't collide. setenv exports the same value at shell startup; setting
+# it here covers the non-interactive RUN context.
+WORKDIR /usr/uli-net-sim/uav_rid
+COPY pyproject.toml ./
+COPY uv.lock ./
+ENV UV_PROJECT_ENVIRONMENT=/usr/uli-net-sim/container-build/.venv
+RUN uv sync
 
-ENV ULI_PYTHON=/opt/uli-venv/bin/python3
 # opp_scavetool (vec2parquet) must be on PATH — non-login shells do not source profile.d
-ENV PATH="/usr/uli-net-sim/omnetpp-${VERSION}/bin:/opt/uli-venv/bin:${PATH}"
+ENV PATH="/usr/uli-net-sim/omnetpp-${VERSION}/bin:${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
+ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
 ENV PYTHONPATH="/usr/uli-net-sim/uav_rid"
 
 # build uli-net-sim (repository root -> /usr/uli-net-sim/uav_rid)
-WORKDIR /usr/uli-net-sim/uav_rid
 COPY . .
 
 RUN chmod +x scripts/*.sh scripts/run.sh datagen/*.py 2>/dev/null || true

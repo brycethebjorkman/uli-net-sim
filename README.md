@@ -54,7 +54,7 @@ docker build -f Containerfile -t uli-net-sim:latest .
 
 ### Run with the repo bind-mounted
 
-Python packages come from the image’s **`/opt/uli-venv`** (on `PATH`); you do **not** need a host `.venv` inside the clone.
+Python packages come from the image's venv at **`/usr/uli-net-sim/container-build/.venv`** (on `PATH`); you do **not** need a host `.venv` inside the clone, and the container's libpython ABI won't collide with whatever the host's `.venv` was built against.
 
 ```bash
 # Interactive shell
@@ -67,7 +67,7 @@ docker compose run --rm uli-net-sim
 
 ### Batch: spoofing sweep + simulations
 
-Use **`./scripts/docker-run.sh …`** so **`pandas`**, **`pyarrow`**, and OMNeT-related paths match the image. If you run **`python3 datagen/run_batch.py` directly on the host**, install **`pip install pandas pyarrow`** first (and use a working OMNeT env for **`scripts/run.sh`**).
+Use **`./scripts/docker-run.sh …`** so **`pandas`**, **`pyarrow`**, and OMNeT-related paths match the image. To run on the host instead, set up a host venv with **`uv sync`** (creates `<project>/.venv`) and use a working OMNeT env for **`scripts/run.sh`**.
 
 ```bash
 # 1) Generate seeded INI bundles (writes under simulations/.../batches/0001/generated/)
@@ -96,19 +96,19 @@ cd /usr/uli-net-sim/uav_rid
 ./datagen/generate_dataset.sh --num-hosts 5 --scenario-variants 10 --enable-spoofer
 
 # Train detectors and score test set
-.venv/bin/python -m evaluations.unified_eval train \
+python -m evaluations.unified_eval train \
     --train-dir datasets/my_dataset/train -o evaluations/results/
 
-.venv/bin/python -m evaluations.unified_eval score \
+python -m evaluations.unified_eval score \
     --train-dir datasets/my_dataset/train \
     --test-dir datasets/my_dataset/test -o evaluations/results/
 
 # Analyze results (iterate on thresholds/plots)
-.venv/bin/python -m evaluations.unified_eval analyze \
+python -m evaluations.unified_eval analyze \
     --scores-dir evaluations/results/ -o evaluations/results/
 
 # Run regression tests
-.venv/bin/pytest tests/ -v
+pytest tests/ -v
 ```
 
 ## Project Structure

@@ -64,15 +64,15 @@ def _run_with_heartbeat(
 
 
 def pick_vec2parquet_python(proj_dir: Path | None = None) -> str:
-    """Interpreter for vec2parquet: ULI_PYTHON, else usable .venv, else sys.executable.
+    """Interpreter for vec2parquet: VIRTUAL_ENV, else local .venv, else sys.executable.
 
     Skips broken .venv (wrong OS/arch — 'Exec format error' / 'cannot execute').
     """
     proj_dir = proj_dir or PROJ_DIR
     candidates: list[str] = []
-    uli = os.environ.get("ULI_PYTHON", "").strip()
-    if uli:
-        candidates.append(uli)
+    venv = os.environ.get("VIRTUAL_ENV", "").strip()
+    if venv:
+        candidates.append(str(Path(venv) / "bin" / "python3"))
     vpy = proj_dir / ".venv" / "bin" / "python3"
     if vpy.is_file():
         candidates.append(str(vpy))

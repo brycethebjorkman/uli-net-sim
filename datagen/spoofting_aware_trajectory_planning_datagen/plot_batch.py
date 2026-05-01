@@ -1974,12 +1974,15 @@ def _plot_3d_group(group: str, by_variant: dict[str, list[Path]], out_dir: Path,
     import matplotlib.pyplot as plt
 
     variants = ["SpoofingAware", "TrustRID"]
+    panel_titles = {
+        "SpoofingAware": "Spoofing Aware",
+        "TrustRID": "Trust RID",
+    }
     if all(len(by_variant.get(v, [])) == 0 for v in variants):
         return None
 
-    fig = plt.figure(figsize=(14.2, 6.8))
+    fig = plt.figure(figsize=(10.24, 4.2))
     axs = [fig.add_subplot(1, len(variants), i + 1, projection="3d") for i in range(len(variants))]
-    fig.suptitle(f"3D Trajectory Overlay Across Seeds: {group}", fontsize=14)
 
     x_all: list[float] = []
     y_all: list[float] = []
@@ -2015,7 +2018,7 @@ def _plot_3d_group(group: str, by_variant: dict[str, list[Path]], out_dir: Path,
                     label = "Spoofer"
                     shown_spoofer_label = True
                 elif not is_spoofer and not shown_benign_label:
-                    label = "Benign UAVs"
+                    label = "Benign sUAS"
                     shown_benign_label = True
                 ax.plot(
                     g["pos_x"].to_numpy(),
@@ -2027,7 +2030,7 @@ def _plot_3d_group(group: str, by_variant: dict[str, list[Path]], out_dir: Path,
                     label=label,
                 )
 
-        ax.set_title(f"{variant} (runs={n_runs})")
+        ax.set_title(panel_titles.get(variant, variant), fontsize=13, fontfamily="serif", pad=10)
         ax.set_xlabel("X [m]")
         ax.set_ylabel("Y [m]")
         ax.set_zlabel("Altitude [m]")
@@ -2044,7 +2047,7 @@ def _plot_3d_group(group: str, by_variant: dict[str, list[Path]], out_dir: Path,
         for ax in axs:
             _set_axes_equal(ax, xr, yr, zr)
 
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 1.0])
     out = out_dir / f"trajectory_overlay_3d_{group}.pdf"
     out = _save_figure_dual(fig, out, dpi=240)
     plt.close(fig)

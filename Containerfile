@@ -99,12 +99,20 @@ RUN echo '. /etc/profile.d/setenv.sh' >> /root/.bashrc
 WORKDIR /usr/uli-net-sim/uav_rid
 COPY pyproject.toml ./
 COPY uv.lock ./
+ENV UV_PYTHON_INSTALL_DIR=/usr/uli-net-sim/uv-python
 ENV UV_PROJECT_ENVIRONMENT=/usr/uli-net-sim/container-build/.venv
 RUN uv sync
+RUN UV_PY="$(readlink -f /usr/uli-net-sim/container-build/.venv/bin/python3)" \
+    && UV_LIB_DIR="$(dirname "$UV_PY")/../lib" \
+    && cp "$UV_LIB_DIR/libpython3.12.so.1.0" /usr/local/lib/libpython3.12.so.1.0 \
+    && ln -sf /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/libpython3.12.so \
+    && ldconfig
+RUN /usr/uli-net-sim/omnetpp-${VERSION}/.venv/bin/python3 -m pip install --no-cache-dir pandas pyarrow
+ENV UV_PROJECT_ENVIRONMENT=/usr/uli-net-sim/container-build/.venv
 
 # opp_scavetool (vec2parquet) must be on PATH — non-login shells do not source profile.d
-ENV PATH="/usr/uli-net-sim/omnetpp-${VERSION}/bin:${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
-ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
+ENV PATH="/usr/uli-net-sim/omnetpp-${VERSION}/.venv/bin:/usr/uli-net-sim/omnetpp-${VERSION}/bin:${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
+ENV VIRTUAL_ENV="/usr/uli-net-sim/omnetpp-${VERSION}/.venv"
 ENV PYTHONPATH="/usr/uli-net-sim/uav_rid"
 
 # build uli-net-sim (repository root -> /usr/uli-net-sim/uav_rid)

@@ -27,4 +27,4 @@ exec docker run --rm \
   -v "$ROOT:/usr/uli-net-sim/uav_rid" \
   -w /usr/uli-net-sim/uav_rid \
   "$IMAGE" \
-  "$@"
+  env -u VIRTUAL_ENV "$@"

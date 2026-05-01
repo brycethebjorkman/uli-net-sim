@@ -56,6 +56,22 @@ def _scenario_group_from_tag(tag: str) -> str:
     return _SEED_SUFFIX_RE.sub("", str(tag))
 
 
+def _scenario_group_from_source_file(name: str) -> str:
+    # e.g. "depotcity_8x1_s00000-Scenario_DepotCity_8x1_s00000_TrustRid-#0-gcs.csv"
+    prefix = str(name).split("-", 1)[0]
+    return _SEED_SUFFIX_RE.sub("", prefix)
+
+
+def _variant_from_name(name: str) -> str:
+    if "TrustRid" in name:
+        return "TrustRID"
+    if "AwareInstantDetect" in name:
+        return "SpoofingAwareInstantDetect"
+    if "Aware" in name:
+        return "SpoofingAware"
+    return "Unknown"
+
+
 def _safe_std(vals: np.ndarray) -> float:
     vals = np.asarray(vals, dtype=float)
     vals = vals[np.isfinite(vals)]
@@ -318,9 +334,21 @@ def _bounded_band(mean: pd.Series, std: pd.Series, lower: float | None = None, u
 
 def _load_long_csv(run_root: Path) -> pd.DataFrame:
     long_csv = run_root / "charts" / "gcs_timeseries_long.csv"
-    if not long_csv.exists():
-        raise FileNotFoundError(f"Missing expected file: {long_csv}")
-    df = pd.read_csv(long_csv)
+    if long_csv.exists():
+        df = pd.read_csv(long_csv)
+    else:
+        gcs_vectors_dir = run_root / "gcs_vectors"
+        if not gcs_vectors_dir.is_dir():
+            raise FileNotFoundError(
+                f"Missing expected file: {long_csv} and fallback directory not found: {gcs_vectors_dir}"
+            )
+        df = _load_long_from_gcs_vectors(gcs_vectors_dir)
+        if df.empty:
+            raise ValueError(
+                "No parseable rows found in gcs_vectors fallback; "
+                f"checked directory: {gcs_vectors_dir}"
+            )
+
     required = {"scenario", "variant", "time", "name", "value"}
     missing = sorted(required - set(df.columns))
     if missing:
@@ -346,6 +374,47 @@ def _load_long_csv(run_root: Path) -> pd.DataFrame:
     df.loc[prob_mask & ((df["value"] < 0.0) | (df["value"] > 1.0)), "value"] = float("nan")
     df = df.dropna(subset=["value"])
     return df
+
+
+def _load_long_from_gcs_vectors(gcs_vectors_dir: Path) -> pd.DataFrame:
+    rows: list[dict] = []
+    for p in sorted(gcs_vectors_dir.glob("*.csv")):
+        try:
+            df = pd.read_csv(p)
+        except Exception:
+            continue
+        for _, r in df.iterrows():
+            if str(r.get("type", "")).strip().lower() != "vector":
+                continue
+            name = str(r.get("name", ""))
+            vectime = str(r.get("vectime", ""))
+            vecvalue = str(r.get("vecvalue", ""))
+            if not vectime or not vecvalue:
+                continue
+            if vectime.strip().lower() == "nan" or vecvalue.strip().lower() == "nan":
+                continue
+            ts = vectime.split()
+            vs = vecvalue.split()
+            n = min(len(ts), len(vs))
+            for i in range(n):
+                try:
+                    t = float(ts[i])
+                    v = float(vs[i])
+                    if not math.isfinite(t) or not math.isfinite(v):
+                        continue
+                    rows.append(
+                        {
+                            "source_file": p.name,
+                            "scenario": _scenario_group_from_source_file(p.name),
+                            "variant": _variant_from_name(p.name),
+                            "name": name,
+                            "time": t,
+                            "value": v,
+                        }
+                    )
+                except ValueError:
+                    continue
+    return pd.DataFrame(rows)
 
 
 def _plot_min_distance(df: pd.DataFrame, out_pdf: Path, out_png: Path) -> None:
@@ -695,12 +764,33 @@ def _copy_trajectory_overlays(run_root: Path, out_dir: Path) -> int:
     return copied
 
 
-def main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("--run-root", required=True, help="Batch run root directory")
-    args = p.parse_args()
+def _resolve_run_roots(
+    run_root: Path | None,
+    paper_result_root: Path | None,
+    run_id: str | None,
+    process_all_runs: bool,
+) -> list[Path]:
+    if run_root is not None:
+        return [run_root.resolve()]
+    if paper_result_root is None:
+        raise ValueError("Either --run-root or --paper-result-root must be provided.")
+    root = paper_result_root.resolve()
+    if process_all_runs:
+        runs: list[Path] = []
+        for p in sorted(root.iterdir()):
+            if p.is_dir() and re.fullmatch(r"\d{4}", p.name):
+                runs.append(p.resolve())
+        if not runs:
+            raise FileNotFoundError(f"No run directories (0001, 0002, ...) found under: {root}")
+        return runs
+    rid = run_id or "0001"
+    candidate = root / rid
+    if not candidate.is_dir():
+        raise FileNotFoundError(f"Run directory not found: {candidate}")
+    return [candidate.resolve()]
 
-    run_root = Path(args.run_root).resolve()
+
+def _process_run_root(run_root: Path) -> None:
     out_dir = run_root / "variants" / "paper_instant_detect_vs_trustRID" / "charts"
     pdf_dir = out_dir / "pdfs"
     png_dir = out_dir / "pngs"
@@ -753,6 +843,48 @@ def main() -> None:
         encoding="utf-8",
     )
     print(f"Wrote paper-only plots under: {out_dir}")
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(
+        description=(
+            "Generate paper-only variant charts (SpoofingAwareInstantDetect vs TrustRID) "
+            "under variants/paper_instant_detect_vs_trustRID/charts."
+        )
+    )
+    p.add_argument(
+        "--run-root",
+        default=None,
+        help="Single run root directory (contains charts/, gcs_vectors/, summary.csv).",
+    )
+    p.add_argument(
+        "--paper-result-root",
+        default="simulations/spoofing_aware_with_planning/PAPER-RESULT-2",
+        help="Root directory containing run folders (0001, 0002, ...).",
+    )
+    p.add_argument(
+        "--run-id",
+        default="0001",
+        help="Run folder under --paper-result-root to process (default: 0001).",
+    )
+    p.add_argument(
+        "--all-runs",
+        action="store_true",
+        help="Process every numeric run directory under --paper-result-root.",
+    )
+    args = p.parse_args()
+
+    run_root_arg = Path(args.run_root).resolve() if args.run_root else None
+    paper_result_root_arg = Path(args.paper_result_root).resolve() if args.paper_result_root else None
+
+    run_roots = _resolve_run_roots(
+        run_root=run_root_arg,
+        paper_result_root=paper_result_root_arg,
+        run_id=str(args.run_id) if args.run_id else None,
+        process_all_runs=bool(args.all_runs),
+    )
+    for rr in run_roots:
+        _process_run_root(rr)
 
 
 if __name__ == "__main__":

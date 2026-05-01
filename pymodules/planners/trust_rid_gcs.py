@@ -23,6 +23,7 @@ from pymodules.gcs.chance_constraint import is_safe
 
 NMAC_PROXIMITY_M = 50.0
 DEFAULT_AGENT_RADIUS = 120.0
+GOAL_REACHED_DIST_M = 10.0
 
 
 def _claimed_velocity_to_xyz(claimed_vel) -> tuple[float, float, float]:
@@ -82,6 +83,8 @@ class TrustRidGcs:
         self._max_host_count = 0
         # OSG claimed-position trail (red spheres): same convention as SpoofingAwareGcs.
         self._visual_spoofer_serial: int | None = None
+        # Hosts that reached goal and should be excluded from ongoing planning metrics.
+        self._goal_reached_hosts: set[int] = set()
 
     def _ingest_host_goals(self, host_goals: dict | None) -> None:
         if not host_goals:
@@ -95,6 +98,52 @@ class TrustRidGcs:
             if g.shape[0] < 3:
                 g = np.pad(g, (0, 3 - g.shape[0]), mode="constant")
             self._goals_by_host[hid] = g
+
+    def _refresh_goal_reached_hosts(self, ground_truth: dict | None) -> None:
+        """Update host set considered complete and excluded from planning/NMAC."""
+        if not ground_truth:
+            return
+        reached: set[int] = set()
+        for k, v in ground_truth.items():
+            hid = int(k)
+            goal = self._goals_by_host.get(hid)
+            if goal is None:
+                g_raw = self.goals.get(hid, self.goals.get(str(hid)))
+                if g_raw is not None:
+                    g = np.asarray(g_raw, dtype=float).ravel()[:3]
+                    if g.shape[0] >= 3:
+                        self._goals_by_host[hid] = g
+                        goal = g
+            if goal is None:
+                continue
+            pos = np.asarray(v, dtype=float).ravel()[:3]
+            if pos.shape[0] < 3:
+                continue
+            if float(np.linalg.norm(pos - goal)) <= GOAL_REACHED_DIST_M:
+                reached.add(hid)
+        # Never exclude true spoofer host from localization/safety counters.
+        if self._spoofer_host is not None:
+            reached.discard(int(self._spoofer_host))
+        # Latch completion once reached to avoid hover jitter re-inclusion.
+        self._goal_reached_hosts |= reached
+        if self._spoofer_host is not None:
+            self._goal_reached_hosts.discard(int(self._spoofer_host))
+
+    def _goal_reached_hosts_for_nmac(self, positions: dict[int, np.ndarray]) -> set[int]:
+        """Return hosts considered complete and excluded from NMAC metrics."""
+        reached: set[int] = set()
+        for hid, pos in positions.items():
+            goal = self._goals_by_host.get(int(hid))
+            if goal is None:
+                goal = self.goals.get(int(hid), self.goals.get(str(int(hid))))
+            if goal is None:
+                continue
+            goal_arr = np.asarray(goal, dtype=float).ravel()[:3]
+            if goal_arr.shape[0] < 3:
+                goal_arr = np.pad(goal_arr, (0, 3 - goal_arr.shape[0]), mode="constant")
+            if float(np.linalg.norm(pos - goal_arr)) <= GOAL_REACHED_DIST_M:
+                reached.add(int(hid))
+        return reached
 
     def on_gcs_reports(self, data: dict) -> dict | None:
         t0 = time.perf_counter()
@@ -158,18 +207,24 @@ class TrustRidGcs:
             benign: dict[int, np.ndarray] = {}
             for k, v in ground_truth.items():
                 hid = int(k)
+                if hid in self._goal_reached_hosts:
+                    continue
                 if spoofer_hid is not None and hid == spoofer_hid:
                     continue
                 benign[hid] = np.asarray(v, dtype=float).ravel()[:3]
-            return benign
+            reached = self._goal_reached_hosts_for_nmac(benign)
+            return {hid: pos for hid, pos in benign.items() if hid not in reached}
         # Fall back to RID; still exclude spoofer index if known
         out: dict[int, np.ndarray] = {}
         for s, p in self.rid_positions.items():
             hid = int(s)
+            if hid in self._goal_reached_hosts:
+                continue
             if spoofer_hid is not None and hid == spoofer_hid:
                 continue
             out[hid] = np.array(p, dtype=float)
-        return out
+        reached = self._goal_reached_hosts_for_nmac(out)
+        return {hid: pos for hid, pos in out.items() if hid not in reached}
 
     def _update_nmac_metrics(
         self,
@@ -266,6 +321,7 @@ class TrustRidGcs:
         num_hosts = int(data.get("num_hosts", 0))
         self._max_host_count = max(self._max_host_count, len(host_ids))
         self._ingest_host_goals(data.get("host_goals"))
+        self._refresh_goal_reached_hosts(data.get("ground_truth_positions"))
 
         if self._spoofer_host is None:
             if num_hosts > 0:
@@ -284,7 +340,8 @@ class TrustRidGcs:
         )
 
         commands = {}
-        for hid in host_ids:
+        active_host_ids = [int(h) for h in host_ids if int(h) not in self._goal_reached_hosts]
+        for hid in active_host_ids:
             if spoofer_hid is not None and int(hid) == spoofer_hid:
                 continue
 
@@ -294,6 +351,8 @@ class TrustRidGcs:
             other_positions = {}
             other_velocities = {}
             for serial, pos in self.rid_positions.items():
+                if int(serial) in self._goal_reached_hosts:
+                    continue
                 if int(serial) != hid:
                     other_positions[int(serial)] = list(pos)
                     vel = self.rid_velocities.get(serial, self.rid_velocities.get(int(serial)))

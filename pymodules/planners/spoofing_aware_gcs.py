@@ -41,6 +41,7 @@ INI usage:
 import numpy as np
 import os
 import time
+import math
 
 from pymodules.gcs.chance_constraint import (
     is_safe,
@@ -138,6 +139,21 @@ def _env_int(name: str, default: int) -> int:
         return int(default)
 
 
+def _claimed_velocity_to_xyz(claimed_vel) -> tuple[float, float, float]:
+    """Convert RID claimed (v_up, v_horizontal, heading_deg) to XYZ velocity."""
+    if claimed_vel is None:
+        return (0.0, 0.0, 0.0)
+    vals = np.asarray(claimed_vel, dtype=float).ravel()[:3]
+    if vals.shape[0] < 3 or not np.all(np.isfinite(vals)):
+        return (0.0, 0.0, 0.0)
+    v_up, v_horizontal, heading_deg = float(vals[0]), float(vals[1]), float(vals[2])
+    heading_rad = math.radians(heading_deg)
+    vx = v_horizontal * math.cos(heading_rad)
+    vy = v_horizontal * math.sin(heading_rad)
+    vz = v_up
+    return (float(vx), float(vy), float(vz))
+
+
 NMAC_PROXIMITY_M = _env_float("ULI_IMM_NMAC_PROXIMITY_M", NMAC_PROXIMITY_M)
 NMAC_GOAL_REACHED_DIST_M = _env_float(
     "ULI_IMM_NMAC_GOAL_REACHED_DIST_M",
@@ -206,6 +222,7 @@ class SpoofingAwareGcs:
 
         # Latest RID positions for cooperative agents
         self.rid_positions: dict[int, tuple[float, float, float]] = {}
+        self.rid_velocities: dict[int, tuple[float, float, float]] = {}
         self.federate_ids: set[int] = set()
 
         # NMAC: edge-detection state (see module docstring)
@@ -342,14 +359,17 @@ class SpoofingAwareGcs:
         report_time = float(data.get("time", data.get("sim_time", 0.0)))
         serial = data["serial_number"]
         claimed_pos = np.array(data["claimed_pos"])
+        claimed_vel_xyz = _claimed_velocity_to_xyz(data.get("claimed_vel"))
         reports = data["reports"]
         self._first_seen_time_s.setdefault(int(serial), report_time)
 
         # Once identified as spoofed, claimed positions are ignored for control.
         if serial not in self.spoofers:
             self.rid_positions[serial] = tuple(claimed_pos)
+            self.rid_velocities[serial] = claimed_vel_xyz
         else:
             self.rid_positions.pop(serial, None)
+            self.rid_velocities.pop(serial, None)
 
         rx_positions = np.array([r["pos"] for r in reports])
         rssi_values = np.array([r["rssi_dbm"] for r in reports])
@@ -602,6 +622,7 @@ class SpoofingAwareGcs:
 
         if serial in self.spoofers:
             self.rid_positions.pop(serial, None)
+            self.rid_velocities.pop(serial, None)
 
         result = {
             "log": {
@@ -993,6 +1014,7 @@ class SpoofingAwareGcs:
                 continue
 
             other_positions = {}
+            other_velocities = {}
             for serial, pos in self.rid_positions.items():
                 if int(serial) in self._goal_reached_hosts:
                     continue
@@ -1004,11 +1026,15 @@ class SpoofingAwareGcs:
                 ):
                     continue
                 other_positions[int(serial)] = list(pos)
+                vel = self.rid_velocities.get(serial, self.rid_velocities.get(int(serial)))
+                if vel is not None:
+                    other_velocities[int(serial)] = [float(v) for v in vel]
 
             cmd = {
                 "unsafe_region": primary_unsafe,
                 "unsafe_regions": unsafe_regions,
                 "other_positions": other_positions,
+                "other_velocities": other_velocities,
                 "agent_radius": self.agent_radius,
                 "alpha": self.alpha,
                 "host_id": hid,

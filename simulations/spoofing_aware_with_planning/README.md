@@ -2,6 +2,107 @@
 
 Simulation entry point for decentralized trajectory planning under broadcast RID and an optional spoofing-aware GCS.
 
+## New machine setup (step-by-step)
+
+Use this section when you are setting up the project from scratch on a new host.
+
+### 1) Install required software
+
+Install these first:
+
+- OMNeT++ 6.3.x (with OSG support)
+- INET 4.5 (under your OMNeT++ workspace)
+- Eigen 5.0.0 (same workspace level as INET)
+- Git
+- `uv` (Python package/dependency manager)
+
+Install `uv` on macOS:
+
+```bash
+brew install uv
+# or: curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### 2) Clone and enter the repo
+
+```bash
+git clone <your-repo-url> uav_rid
+cd uav_rid
+```
+
+### 3) Load OMNeT++ tools in this shell
+
+This ensures commands like `opp_configfilepath` and `opp_makemake` are on `PATH`.
+
+```bash
+. ./scripts/omnetpp-env.sh
+opp_configfilepath
+```
+
+If `opp_configfilepath` still fails, source OMNeT directly (example default path):
+
+```bash
+. /Applications/omnetpp-6.3.0/setenv
+opp_configfilepath
+```
+
+### 4) Create project Python environment (Python 3.12)
+
+This project requires Python 3.12 (`pyproject.toml` enforces `>=3.12,<3.13`).
+
+```bash
+uv python install 3.12
+rm -rf .venv
+uv sync --python 3.12
+./.venv/bin/python3 -V
+```
+
+Expected output includes `Python 3.12.x`.
+
+### 5) Build the simulator
+
+```bash
+./scripts/build.sh
+```
+
+If you are using OMNeT++ IDE-style in-tree builds, you can also run:
+
+```bash
+make MODE=release all
+```
+
+### 6) Run one scenario (headless)
+
+```bash
+./scripts/run.sh \
+  -f simulations/spoofing_aware_with_planning/omnetpp.ini \
+  -c Scenario_DepotCity_8x1
+```
+
+### 7) Optional: run paired batch generation/execution
+
+```bash
+python3 datagen/spoofting_aware_trajectory_planning_datagen/generate_batch.py \
+  --layout circle8 --seed-range 0 9 \
+  --output-dir simulations/spoofing_aware_with_planning/batches/0001/generated
+
+python3 datagen/run_batch.py \
+  simulations/spoofing_aware_with_planning/batches/0001/generated/ \
+  --parallel 4
+```
+
+### Troubleshooting
+
+- `zsh: command not found: uv`
+  - Install `uv` and open a new shell (or run `exec zsh`).
+- `opp_configfilepath: Command not found`
+  - OMNeT++ environment is not loaded; run `. ./scripts/omnetpp-env.sh`.
+- `PyBridge: ... is Python 3.14; pyproject.toml requires 3.12`
+  - Recreate venv with:
+    - `rm -rf .venv && uv sync --python 3.12`
+- `zsh: parse error near ')'` with prompt starting `>`
+  - Previous command was pasted incompletely; press `Ctrl+C` and rerun clean commands line-by-line.
+
 ## SpoofingAware vs TrustRID
 
 | | **SpoofingAware** (`SpoofingAwareGcs`) | **TrustRID baseline** (`TrustRidGcs`) |

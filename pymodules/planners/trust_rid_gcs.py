@@ -15,6 +15,7 @@ INI:
 
 from __future__ import annotations
 
+import math
 import numpy as np
 import time
 
@@ -22,6 +23,21 @@ from pymodules.gcs.chance_constraint import is_safe
 
 NMAC_PROXIMITY_M = 50.0
 DEFAULT_AGENT_RADIUS = 120.0
+
+
+def _claimed_velocity_to_xyz(claimed_vel) -> tuple[float, float, float]:
+    """Convert RID claimed (v_up, v_horizontal, heading_deg) to XYZ velocity."""
+    if claimed_vel is None:
+        return (0.0, 0.0, 0.0)
+    vals = np.asarray(claimed_vel, dtype=float).ravel()[:3]
+    if vals.shape[0] < 3 or not np.all(np.isfinite(vals)):
+        return (0.0, 0.0, 0.0)
+    v_up, v_horizontal, heading_deg = float(vals[0]), float(vals[1]), float(vals[2])
+    heading_rad = math.radians(heading_deg)
+    vx = v_horizontal * math.cos(heading_rad)
+    vy = v_horizontal * math.sin(heading_rad)
+    vz = v_up
+    return (float(vx), float(vy), float(vz))
 
 
 class TrustRidGcs:
@@ -48,6 +64,7 @@ class TrustRidGcs:
         self._spoofer_host = spoofer_host
 
         self.rid_positions: dict[int, tuple[float, float, float]] = {}
+        self.rid_velocities: dict[int, tuple[float, float, float]] = {}
         self.federate_ids: set[int] = set()
 
         self._nmac_proximity_pairs_active: set[tuple[int, int]] = set()
@@ -83,9 +100,11 @@ class TrustRidGcs:
         t0 = time.perf_counter()
         serial = data["serial_number"]
         claimed_pos = np.array(data["claimed_pos"])
+        claimed_vel_xyz = _claimed_velocity_to_xyz(data.get("claimed_vel"))
         reports = data["reports"]
 
         self.rid_positions[serial] = tuple(claimed_pos)
+        self.rid_velocities[serial] = claimed_vel_xyz
         for r in reports:
             self.federate_ids.add(r["host_id"])
 
@@ -273,14 +292,19 @@ class TrustRidGcs:
             # all claimed positions (including the spoofer's claimed RID track).
             # MDP controller treats everything in other_positions as intruders.
             other_positions = {}
+            other_velocities = {}
             for serial, pos in self.rid_positions.items():
                 if int(serial) != hid:
                     other_positions[int(serial)] = list(pos)
+                    vel = self.rid_velocities.get(serial, self.rid_velocities.get(int(serial)))
+                    if vel is not None:
+                        other_velocities[int(serial)] = [float(v) for v in vel]
 
             cmd = {
                 "unsafe_region": None,
                 "unsafe_regions": unsafe_regions,
                 "other_positions": other_positions,
+                "other_velocities": other_velocities,
                 "agent_radius": self.agent_radius,
                 "alpha": self.alpha,
                 "host_id": hid,

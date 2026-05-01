@@ -61,6 +61,7 @@ SPOOFER_LIMIT = 260.0   # repulsion radius around unsafe region center (meters)
 ELLIPSOID_MARGIN = 1.0   # Mahalanobis-radius margin outside boundary for soft penalty
 
 MIN_CYCLE = 2
+USE_CPA_FOR_AGENT_REPULSION = True
 
 # ── Action space ─────────────────────────────────────────────────────────────
 NUM_HEADINGS = 16
@@ -112,6 +113,7 @@ class MdpTrajectoryPlanner:
         self.plan_counter = 0
         self.last_time = None
         self.initialized = False
+        self.other_velocities = {}
 
         # GCS data
         self.unsafe_region = None
@@ -161,6 +163,8 @@ class MdpTrajectoryPlanner:
                 self.host_id = cmd["host_id"]
             if "goal" in cmd:
                 self.goal = np.array(cmd["goal"], dtype=float)
+            if "other_velocities" in cmd:
+                self.other_velocities = cmd["other_velocities"]
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -257,12 +261,25 @@ class MdpTrajectoryPlanner:
 
     # ── Value function (Eq. 6) ───────────────────────────────────────────────
 
-    def _value_many(self, positions: np.ndarray) -> np.ndarray:
+    def _value_many(
+        self,
+        positions: np.ndarray,
+        own_velocities: np.ndarray | None = None,
+    ) -> np.ndarray:
         """Closed-form value for N states: V = V+ − V−."""
         pts = np.asarray(positions, dtype=float)
         if pts.ndim == 1:
             pts = pts.reshape(1, -1)
         n = pts.shape[0]
+        own_vel = None
+        if own_velocities is not None:
+            own_vel_arr = np.asarray(own_velocities, dtype=float)
+            if own_vel_arr.ndim == 1:
+                own_vel_arr = own_vel_arr.reshape(1, -1)
+            if own_vel_arr.shape[0] == n:
+                own_vel = own_vel_arr[:, :3]
+                if own_vel.shape[1] < 3:
+                    own_vel = np.pad(own_vel, ((0, 0), (0, 3 - own_vel.shape[1])), mode="constant")
 
         # ── Positive value: goal attraction ──
         v_pos = np.zeros(n, dtype=float)
@@ -274,18 +291,61 @@ class MdpTrajectoryPlanner:
         # ── Negative value: agent repulsion ──
         v_neg = np.zeros(n, dtype=float)
         intruders = []
+        intruder_ids = []
         for oid, op in self.other_positions.items():
             oid_int = int(oid) if isinstance(oid, str) else oid
             if self.host_id is not None and oid_int == self.host_id:
                 continue
             intruders.append(np.asarray(op, dtype=float))
+            intruder_ids.append(oid_int)
         if intruders:
             intr_arr = np.asarray(intruders, dtype=float)
-            d_agent = np.linalg.norm(pts[:, None, :] - intr_arr[None, :, :], axis=2)
+            if USE_CPA_FOR_AGENT_REPULSION:
+                horizon = float(FWD_STEPS * FWD_DT)
+                vel_rows = []
+                for oid in intruder_ids:
+                    vel_raw = self.other_velocities.get(
+                        oid,
+                        self.other_velocities.get(str(oid), [0.0, 0.0, 0.0]),
+                    )
+                    intr_vel = np.asarray(vel_raw, dtype=float).ravel()[:3]
+                    if intr_vel.shape[0] < 3:
+                        intr_vel = np.pad(intr_vel, (0, 3 - intr_vel.shape[0]), mode="constant")
+                    vel_rows.append(intr_vel)
+                vel_arr = np.asarray(vel_rows, dtype=float)
+
+                # Vectorized CPA for all candidate states × intruders:
+                # p_rel[n,m,:] = own_pos[n] - intruder_pos[m]
+                # v_rel[n,m,:] = own_vel[n] - intruder_vel[m]
+                p_rel = pts[:, None, :] - intr_arr[None, :, :]
+                if own_vel is None:
+                    own_vel_used = np.zeros((n, 3), dtype=float)
+                else:
+                    own_vel_used = own_vel
+                v_rel = own_vel_used[:, None, :] - vel_arr[None, :, :]
+                v_norm_sq = np.sum(v_rel * v_rel, axis=2)  # [n,m]
+                moving = v_norm_sq >= 1e-6
+
+                d_now = np.linalg.norm(p_rel, axis=2)  # [n,m], fallback for near-static intruders
+                dot = np.sum(p_rel * v_rel, axis=2)  # [n,m]
+                t_cpa = np.zeros_like(v_norm_sq)
+                np.divide(-dot, v_norm_sq, out=t_cpa, where=moving)
+                t_cpa = np.clip(t_cpa, 0.0, horizon)
+                closest = p_rel + v_rel * t_cpa[:, :, None]
+                d_move = np.linalg.norm(closest, axis=2)
+                d_cpa = np.where(moving, d_move, d_now)
+                d_agent = d_cpa
+            else:
+                # Baseline repulsion (no CPA): instantaneous Euclidean separation only.
+                d_agent = np.linalg.norm(pts[:, None, :] - intr_arr[None, :, :], axis=2)
+
             within = d_agent < float(self.agent_radius)
-            agent_terms = self._agent_peak * np.power(AGENT_DISCOUNT, d_agent)
-            agent_terms = np.where(within, agent_terms, 0.0)
-            v_neg += np.max(agent_terms, axis=1)
+            penalties = np.where(
+                within,
+                self._agent_peak * np.power(AGENT_DISCOUNT, d_agent),
+                0.0,
+            )
+            v_neg += np.max(penalties, axis=1)
 
         # ── Negative value: chance-constraint boundary-aware spoofing risk ──
         regions = self._regions_for_unsafe_test()
@@ -394,7 +454,24 @@ class MdpTrajectoryPlanner:
 
         # Ownship.selectBestAction: max over trajectory samples × actions.
         sampled_states = trajs[:, sample_indices, :].reshape(-1, 3)
-        sampled_values = self._value_many(sampled_states).reshape(actions_arr.shape[0], -1)
+        heading = actions_arr[:, 0]
+        speed = actions_arr[:, 1]
+        flight_path_angle = actions_arr[:, 2]
+        speed_xy = speed * np.cos(flight_path_angle)
+        sampled_action_vels = np.stack(
+            [
+                speed_xy * np.cos(heading),
+                speed_xy * np.sin(heading),
+                np.clip(speed * np.sin(flight_path_angle), -VERTICAL_SPEED, VERTICAL_SPEED),
+            ],
+            axis=1,
+        )
+        sampled_own_vels = np.repeat(sampled_action_vels[:, None, :], sample_indices.size, axis=1)
+        sampled_own_vels = sampled_own_vels.reshape(-1, 3)
+        sampled_values = self._value_many(
+            sampled_states,
+            own_velocities=sampled_own_vels,
+        ).reshape(actions_arr.shape[0], -1)
         max_vals = np.max(sampled_values, axis=1)
 
         step_idx = min(ONE_STEP_INDEX, trajs.shape[1] - 1)

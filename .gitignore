@@ -2,6 +2,8 @@
 .nedexclusions
 .oppfeaturestate
 .venv/
+.venv*/
+venv*/
 .devcontainer/
 .vscode/
 .dockerignore
@@ -27,6 +29,7 @@ simulations/spoofing_aware_with_planning/batches/
 simulations/spoofing_aware_with_planning/sweeps/
 simulations/spoofing_aware_with_planning/batches_imm_grid_balanced
 logs
+pybind11/
 simulations/spoofing_aware_with_planning/prev
 simulations/spoofing_aware_with_planning/batches_mdp_grid_12x1_validate_top3
 simulations/spoofing_aware_with_planning/batches_imm_grid_balanced

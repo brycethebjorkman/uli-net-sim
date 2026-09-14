@@ -75,3 +75,28 @@ pytest tests/ -v
 - **`scripts/`** - Build, environment, and utility scripts
 - **`evaluations/`** - Detection evaluation framework (train/score/analyze CLI)
 - **`tests/`** - Regression tests (pytest, hash-based)
+
+## Publications
+This project was used for a paper studying Remote ID Spoofing Attacks and Defenses which was presented at AIAA SciTech 2026 (snapshot tracked in branch `scitech26`):
+```
+@inbook{scitech26,
+    author = {Bryce Bjorkman and Stanley Zheng and Austin Coursey and Cailani Lemieux-Mack and Samuel Gonzalez and Abel Diaz-Gonzalez and Noah W. Dahle and Neils Koroma and Robert E. Canady and Xenofon Koutsoukos and Gautam Biswas and Abenezer Taye and Bryan Ward},
+    title = {Remote ID Spoofing Attacks and Defenses},
+    booktitle = {AIAA SCITECH 2026 Forum},
+    doi = {10.2514/6.2026-2665},
+    URL = {https://arc.aiaa.org/doi/abs/10.2514/6.2026-2665},
+    eprint = {https://arc.aiaa.org/doi/pdf/10.2514/6.2026-2665},
+}
+```
+This project was used for a paper studying Remote ID Spoofing-Aware Trajectory Planning for Small Unmanned Aerial Systems which is to be presented at the Digital Avionics Systems Conference 2026 (snapshot tracked in branch `spoofing-aware-trajectory-planning`):
+```
+@misc{spoofing-aware-trajectory-planning,
+    title = {Remote ID Spoofing-Aware Trajectory Planning for Small Unmanned Aerial Systems}, 
+    author = {Jeremiah Webb and Bryce Bjorkman and Abel Diaz Gonzalez and Austin Coursey and Noah Dahle and Kailani Lemieux Mack and Filippos Fotiadis and Gautam Biswas and Bryan C. Ward and Abenezer Taye},
+    year = {2026},
+    eprint = {2607.19650},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.RO},
+    url = {https://arxiv.org/abs/2607.19650}, 
+}
+```

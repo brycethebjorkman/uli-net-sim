@@ -10,16 +10,22 @@ import inet.physicallayer.wireless.ieee80211.packetlevel.Ieee80211DimensionalRad
 import inet.visualizer.common.IntegratedVisualizer;
 
 import uav_rid.rid_host.DroneHost;
+import uav_rid.pybridge.PyBridge;
+import uav_rid.gcs.GcsModule;
 
 network BasicUav
 {
     parameters:
         int numHosts;
+        int numGcs = default(0);
         @display("bgb=1000,1000");
         bool hasVisualizer = default(true);
     submodules:
-        visualizer: IntegratedVisualizer if hasVisualizer {
-            @display("p=100,50");
+        pyBridge: PyBridge {
+            @display("p=850,50");
+        }
+        gcs[numGcs]: GcsModule {
+            @display("p=850,150");
         }
         host[numHosts]: <default("DroneHost")> like INetworkNode {
             @display("i=misc/node_vs;p=217,472");
@@ -29,5 +35,34 @@ network BasicUav
         }
         radioMedium: Ieee80211DimensionalRadioMedium {
             @display("p=624,470");
+            backgroundNoise.power = default(-100dBm);
+        }
+        visualizer: IntegratedVisualizer if hasVisualizer {
+            @display("p=100,50");
+
+			// Note: defaults set here may be spuriously flagged with "no such parameter" by the IDE
+
+            // Scene visualization defaults
+            osgVisualizer.sceneVisualizer.axisLength = default(4000m);
+            osgVisualizer.sceneVisualizer.clearColor = default("skyblue");
+            osgVisualizer.sceneVisualizer.sceneMinZ = default(0m);
+
+            // Medium visualization defaults
+            osgVisualizer.mediumVisualizer.displaySignals = default(true);
+            osgVisualizer.mediumVisualizer.signalColor = default("red");
+            osgVisualizer.mediumVisualizer.signalFadingDistance = default(50m);
+            osgVisualizer.mediumVisualizer.signalRingSize = default(50m);
+            osgVisualizer.mediumVisualizer.signalShape = default("ring");
+
+            // Mobility visualization defaults
+            osgVisualizer.mobilityVisualizer.displayMobility = default(true);
+            osgVisualizer.mobilityVisualizer.displayMovementTrails = default(true);
+            osgVisualizer.mobilityVisualizer.displayOrientations = default(true);
+            osgVisualizer.mobilityVisualizer.displayPositions = default(true);
+            osgVisualizer.mobilityVisualizer.displayVelocities = default(true);
+            osgVisualizer.mobilityVisualizer.trailLength = default(1000);
+
+            // Network Node visualization defaults
+            osgVisualizer.networkNodeVisualizer.displayModuleName = default(false);
         }
 }

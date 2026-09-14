@@ -64,7 +64,7 @@ RUN wget https://github.com/inet-framework/inet/releases/download/v$VERSION/$I_N
 
 # build OMNeT++
 WORKDIR /usr/uli-net-sim/$O_NAME
-COPY container/install.sh .
+COPY scripts/install.sh .
 RUN chmod +x install.sh
 RUN ./install.sh -y --no-gui
 
@@ -77,19 +77,27 @@ RUN . ../omnetpp-6.2.0/setenv \
     && make makefiles \
     && make -j $(nproc) MODE=release
 
+# download eigen library
+WORKDIR /usr/uli-net-sim
+RUN wget https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.tar
+RUN tar xf eigen-5.0.0.tar \
+    && rm eigen-5.0.0.tar
+
+# Install uv for Python dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Make OMNeT++/INET/project env available in every shell
+COPY setenv /etc/profile.d/setenv.sh
+RUN echo '. /etc/profile.d/setenv.sh' >> /root/.bashrc
+
 # build uli-net-sim
 WORKDIR /usr/uli-net-sim/uav_rid
-COPY simulations simulations
-COPY src src
-WORKDIR /usr/uli-net-sim
-COPY container/setenv .
-RUN chmod +x setenv
-COPY container/build.sh .
-RUN chmod +x build.sh
-COPY container/run.sh .
-RUN chmod +x run.sh
-COPY container/rid-one-off.sh .
-RUN chmod +x rid-one-off.sh
-COPY container/rid-csv-extract.py .
-RUN chmod +x rid-csv-extract.py
-RUN ./build.sh
+COPY pyproject.toml ./
+COPY uv.lock ./
+# Container venv lives outside the mounted source tree so host/container venvs
+# (different libpython ABI) don't collide. setenv exports the same value at
+# shell startup; setting it here covers the non-interactive RUN context.
+ENV UV_PROJECT_ENVIRONMENT=/usr/uli-net-sim/container-build/.venv
+RUN uv sync
+COPY . .
+RUN ./scripts/build.sh

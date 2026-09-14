@@ -17,6 +17,7 @@ import uav_rid.rid_beacon.RidBeaconMgmt;
 module DroneHost extends WirelessHost
 {
     parameters:
+        string hostType = default("benign");
         @display("bgb=1806,1526");
         wlan[0].agent.typename = "";
         wlan[0].mgmt.typename = default("RidBeaconMgmt");
@@ -24,5 +25,13 @@ module DroneHost extends WirelessHost
         wlan[0].radio.antenna.typename = "DipoleAntenna";
         wlan[0].radio.antenna.length = 0.059m;
         wlan[0].radio.channelNumber = 6;
+        
+		// Typical transmitter conducted power ranges (in dBm):
+		//	0 to  5 (min)
+		//  5 to 10 (low; 10 typical for Bluetooth, 13 typical for Wi-Fi clients)
+		// 10 to 20 (mid; 20 typical for Wi-Fi access points)
+		// 20 to 30 (max; FCC limit on EIRP is 36 which means conducted power of 30 for typical antenna gain)
         wlan[0].radio.transmitter.power = default(13dBm);
+        
+        osgModel = "3d/drone.ive.25.scale.0,0,90.rot";
 }

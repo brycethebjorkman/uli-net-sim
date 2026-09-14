@@ -4,7 +4,7 @@
         <input pattern="results/PerpendicularDrones-#0.vec"/>
     </inputs>
     <charts>
-        <chart createdWith="OMNeT++ 6.1.0.241008-f7568267cd" icon="icons/full/obj/linechart.png" id="1572815074" name="Line Chart with Matplotlib 1" resultTypes="vector" template="linechart_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.1.0.241008-f7568267cd" icon="icons/full/obj/linechart.png" id="1593343679" name="Distance to Beacon with RSSI" resultTypes="vector" template="linechart_mpl" type="MATPLOTLIB">
             <script><![CDATA[import math
 from omnetpp.scave import results, chart, utils
 
@@ -888,7 +888,7 @@ utils.export_data_if_needed(distance_df, props)
             <property name="legend_manual" value="false"/>
             <property name="yaxis_title" value=""/>
             <property name="legend_replacements" value=""/>
-            <property name="title" value=""/>
+            <property name="title" value="Distance to Beacon with RSSI"/>
             <property name="legend_automatic" value="true"/>
             <property name="vector_operations" value=""/>
             <property name="cycle_seed" value="0"/>

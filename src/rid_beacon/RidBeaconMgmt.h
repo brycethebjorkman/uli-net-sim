@@ -11,6 +11,8 @@
 
 #include "RidBeaconFrame_m.h"
 
+#include <cmath>
+
 using namespace inet;
 using namespace inet::ieee80211;
 
@@ -22,12 +24,20 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     int channelNumber = -1;
     simtime_t beaconInterval;
     simtime_t startupJitter;
+    simtime_t beaconOffset;
     bool transmitBeacon;
     bool oneOff;
     Ieee80211SupportedRatesElement supportedRates;
     cMessage *beaconTimer = nullptr;
     cMessage *terminateMsg = nullptr;
     cModule *medium = nullptr;
+
+    // GCS report forwarding
+    cModule *gcsModule = nullptr;
+
+    // Latest KF NIS for GCS report (NaN if no KF ran for this RX event).
+    // Written by KalmanFilterDetectMgmt::update(), read by forwardToGcs().
+    double lastKfNis = NAN;
 
     struct OutputVectors {
         cOutVector power;
@@ -38,6 +48,7 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector txPosX;
         cOutVector txPosY;
         cOutVector txPosZ;
+        cOutVector txPower;
         cOutVector rxPosX;
         cOutVector rxPosY;
         cOutVector rxPosZ;
@@ -50,7 +61,44 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
         cOutVector rxMyPosX;
         cOutVector rxMyPosY;
         cOutVector rxMyPosZ;
+        cOutVector rxMySpeedVertical;
+        cOutVector rxMySpeedHorizontal;
+        cOutVector rxMyHeading;
+        cOutVector txMyPosX;
+        cOutVector txMyPosY;
+        cOutVector txMyPosZ;
+        cOutVector txMySpeedVertical;
+        cOutVector txMySpeedHorizontal;
+        cOutVector txMyHeading;
+        cOutVector txPacketId;
+        cOutVector txIsSpoofed;
     } recvec;
+
+    struct DetectionSample {
+        double power;
+        double timestamp;
+        int serialNumber;
+
+        double txPosX;
+        double txPosY;
+        double txPosZ;
+
+        double rxPosX;
+        double rxPosY;
+        double rxPosZ;
+
+        double txSpeedVertical;
+        double txSpeedHorizontal;
+        double txHeading;
+
+        double rxSpeedVertical;
+        double rxSpeedHorizontal;
+        double rxHeading;
+
+
+    };
+
+    std::vector<DetectionSample> detectVector;
 
   public:
     RidBeaconMgmt() {}
@@ -73,14 +121,18 @@ class RidBeaconMgmt : public Ieee80211MgmtApBase, protected cListener
     /** Utility function: creates and sends a beacon frame */
     virtual void sendBeacon();
 
-    /** Utility function: fills in Remote ID message fields */
-    virtual void fillRidMsg(const inet::Ptr<RidBeaconFrame> & body);
+    /** Fills in Remote ID message fields. Returns true if this
+     *  transmission was spoofed (fields differ from host's true state). */
+    virtual bool fillRidMsg(const inet::Ptr<RidBeaconFrame> & body);
 
     /** Utility function: handles a received beacon frame */
     virtual void handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
 
     /** Utility function: hook for derived classes to process received Remote ID message */
     virtual void hookRidMsg(Packet *packet, const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm) {};
+
+    /** Forward RX report to GCS module */
+    void forwardToGcs(const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm, int64_t packetId = -1);
 
     /** lifecycle support */
     //@{

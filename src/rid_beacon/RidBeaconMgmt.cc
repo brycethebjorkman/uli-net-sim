@@ -6,6 +6,8 @@
 
 #include "RidBeaconMgmt.h"
 
+#include "gcs/GcsReport_m.h"
+
 #include "inet/linklayer/common/MacAddressTag_m.h"
 #include "inet/linklayer/ieee80211/mac/Ieee80211SubtypeTag_m.h"
 #include "inet/physicallayer/wireless/common/contract/packetlevel/SignalTag_m.h"
@@ -31,6 +33,7 @@ void RidBeaconMgmt::initialize(int stage)
         serialNumber = par("serialNumber");
         beaconInterval = par("beaconInterval");
         startupJitter = par("startupJitter");
+        beaconOffset = par("beaconOffset");
         transmitBeacon = par("transmitBeacon");
         oneOff = par("oneOff");
         channelNumber = -1; // value will arrive from physical layer in receiveChangeNotification()
@@ -47,6 +50,7 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.txPosX.setName("Transmission X Coordinate");
         recvec.txPosY.setName("Transmission Y Coordinate");
         recvec.txPosZ.setName("Transmission Z Coordinate");
+        recvec.txPower.setName("Transmission Power");
         recvec.rxPosX.setName("Reception X Coordinate");
         recvec.rxPosY.setName("Reception Y Coordinate");
         recvec.rxPosZ.setName("Reception Z Coordinate");
@@ -59,6 +63,17 @@ void RidBeaconMgmt::initialize(int stage)
         recvec.rxMyPosX.setName("Reception My X Coordinate");
         recvec.rxMyPosY.setName("Reception My Y Coordinate");
         recvec.rxMyPosZ.setName("Reception My Z Coordinate");
+        recvec.rxMySpeedVertical.setName("Reception My Vertical Speed");
+        recvec.rxMySpeedHorizontal.setName("Reception My Horizontal Speed");
+        recvec.rxMyHeading.setName("Reception My Heading");
+        recvec.txMyPosX.setName("Transmission My X Coordinate");
+        recvec.txMyPosY.setName("Transmission My Y Coordinate");
+        recvec.txMyPosZ.setName("Transmission My Z Coordinate");
+        recvec.txMySpeedVertical.setName("Transmission My Vertical Speed");
+        recvec.txMySpeedHorizontal.setName("Transmission My Horizontal Speed");
+        recvec.txMyHeading.setName("Transmission My Heading");
+        recvec.txPacketId.setName("Transmission Packet ID");
+        recvec.txIsSpoofed.setName("Transmission Is Spoofed");
 
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
@@ -73,6 +88,15 @@ void RidBeaconMgmt::initialize(int stage)
         // initialize timed messages but do not start them
         beaconTimer = new cMessage("beaconTimer");
         terminateMsg = new cMessage("terminateMsg");
+
+        // Resolve GCS module for RX report forwarding
+        std::string gcsPath = par("gcsModulePath").stdstringValue();
+        if (!gcsPath.empty()) {
+            gcsModule = getModuleByPath(gcsPath.c_str());
+            if (!gcsModule) {
+                throw cRuntimeError("GCS module not found at path: %s", gcsPath.c_str());
+            }
+        }
     }
 }
 
@@ -112,6 +136,7 @@ void RidBeaconMgmt::receiveSignal(cComponent *src, simsignal_t id, cObject *obj,
 void RidBeaconMgmt::sendManagementFrame(const char *name, const Ptr<Ieee80211MgmtFrame>& body, int subtype, const MacAddress& destAddr)
 {
     auto packet = new Packet(name);
+    recvec.txPacketId.record(packet->getTreeId());
     packet->addTag<MacAddressReq>()->setDestAddress(destAddr);
     packet->addTag<Ieee80211SubtypeReq>()->setSubtype(subtype);
     packet->insertAtBack(body);
@@ -129,7 +154,7 @@ void RidBeaconMgmt::sendBeacon()
     body->setChunkLength(B(8 + 2 + 2 + (2 + ssid.length()) + (2 + supportedRates.numRates)));
 
     // use specific implementation logic to fill in Remote ID message fields
-    fillRidMsg(body);
+    bool isSpoofed = fillRidMsg(body);
 
     EV << "BODY: " << body << std::endl;
     recvec.txPosX.record(body->getPosX());
@@ -138,10 +163,37 @@ void RidBeaconMgmt::sendBeacon()
     recvec.txSpeedVertical.record(body->getSpeedVertical());
     recvec.txSpeedHorizontal.record(body->getSpeedHorizontal());
     recvec.txHeading.record(body->getHeading());
+
+    // Record transmitter's actual position/velocity at TX time
+    auto host = getContainingNode(this);
+    auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
+    auto myPos = mobility->getCurrentPosition();
+    auto myVelocity = mobility->getCurrentVelocity();
+    recvec.txMyPosX.record(myPos.getX());
+    recvec.txMyPosY.record(myPos.getY());
+    recvec.txMyPosZ.record(myPos.getZ());
+    double mySpeedVertical = myVelocity.getZ();
+    auto myHorizontal = Coord(myVelocity.getX(), myVelocity.getY(), 0.0);
+    double mySpeedHorizontal = myHorizontal.length();
+    auto north = Coord(0,1,0);
+    double myHeading = north.angle(myHorizontal) * (180.00 / M_PI);
+    recvec.txMySpeedVertical.record(mySpeedVertical);
+    recvec.txMySpeedHorizontal.record(mySpeedHorizontal);
+    recvec.txMyHeading.record(myHeading);
+    recvec.txIsSpoofed.record(isSpoofed ? 1.0 : 0.0);
+
+    // Record transmission power from radio
+    cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
+    cModule *transmitter = radioModule->getSubmodule("transmitter");
+    if (transmitter) {
+        double txPowerDbm = transmitter->par("power").doubleValueInUnit("dBm");
+        recvec.txPower.record(txPowerDbm);
+    }
+
     sendManagementFrame("Beacon", body, ST_BEACON, MacAddress::BROADCAST_ADDRESS);
 }
 
-void RidBeaconMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
+bool RidBeaconMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
 {
     auto currentTime = simTime();
     body->setTimestamp(currentTime.inUnit(SimTimeUnit::SIMTIME_MS));
@@ -166,13 +218,15 @@ void RidBeaconMgmt::fillRidMsg(const inet::Ptr<RidBeaconFrame> & body)
     body->setSpeedVertical(speedVertical);
     body->setSpeedHorizontal(speedHorizontal);
     body->setHeading(heading);
+    return false;  // not spoofed
 }
 
 void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header)
 {
-    msgid_t packetId = packet->getId();
-    if (packetId >= 0) {
-        recvec.packetId.record(packetId);
+    DetectionSample sample;
+    msgid_t packetTreeId = packet->getTreeId();
+    if (packetTreeId >= 0) {
+        recvec.packetId.record(packetTreeId);
     }
 
     double rssiDbm = 0.0;
@@ -190,6 +244,7 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
         // convert to dBm for more readable values
         rssiDbm = 10 * std::log10(receivedPower.get() * 1000);
         recvec.power.record(rssiDbm);
+        sample.power = rssiDbm;
     }
 
     // get reception time
@@ -209,6 +264,26 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
         recvec.rxSpeedVertical.record(beaconBody->getSpeedVertical());
         recvec.rxSpeedHorizontal.record(beaconBody->getSpeedHorizontal());
         recvec.rxHeading.record(beaconBody->getHeading());
+
+        // should be tx, because we are recieving from the transmitter
+        sample.timestamp = beaconBody->getTimestamp();
+        sample.serialNumber = beaconBody->getSerialNumber();
+        sample.txPosX = beaconBody->getPosX();
+        sample.txPosY = beaconBody->getPosY();
+        sample.txPosZ = beaconBody->getPosZ();
+        sample.txSpeedVertical = beaconBody->getSpeedVertical();
+        sample.txSpeedHorizontal = beaconBody->getSpeedHorizontal();
+        sample.txHeading = beaconBody->getHeading();
+
+        // get curr positions
+        auto host = getContainingNode(this);
+        auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
+        Coord rxPos = mobility->getCurrentPosition();
+        sample.rxPosX = rxPos.x;
+        sample.rxPosY = rxPos.y;
+        sample.rxPosZ = rxPos.z;
+
+        detectVector.push_back(sample);
     } else {
         throw cRuntimeError("Missing RidBeaconFrame header in received Packet");
     }
@@ -220,7 +295,23 @@ void RidBeaconMgmt::handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211M
     recvec.rxMyPosY.record(pos.getY());
     recvec.rxMyPosZ.record(pos.getZ());
 
+    // Record receiver's own velocity
+    auto velocity = mobility->getCurrentVelocity();
+    double mySpeedVertical = velocity.getZ();
+    auto myHorizontal = Coord(velocity.getX(), velocity.getY(), 0.0);
+    double mySpeedHorizontal = myHorizontal.length();
+    auto north = Coord(0,1,0);
+    double myHeading = north.angle(myHorizontal) * (180.00 / M_PI);
+    recvec.rxMySpeedVertical.record(mySpeedVertical);
+    recvec.rxMySpeedHorizontal.record(mySpeedHorizontal);
+    recvec.rxMyHeading.record(myHeading);
+
     hookRidMsg(packet, beaconBody, rssiDbm);
+
+    // Forward report to GCS if configured
+    if (gcsModule) {
+        forwardToGcs(beaconBody, rssiDbm, packetTreeId);
+    }
 
     dropManagementFrame(packet);
 }
@@ -229,7 +320,7 @@ void RidBeaconMgmt::start()
 {
     Ieee80211MgmtApBase::start();
     if (transmitBeacon) {
-        scheduleAfter(uniform(0, startupJitter), beaconTimer);
+        scheduleAfter(beaconOffset + uniform(0, startupJitter), beaconTimer);
     }
 }
 
@@ -239,3 +330,36 @@ void RidBeaconMgmt::stop()
     cancelEvent(terminateMsg);
     Ieee80211MgmtApBase::stop();
 }
+
+// ── GCS report forwarding ───────────────────────────────────────────────────
+
+void RidBeaconMgmt::forwardToGcs(const Ptr<const RidBeaconFrame>& beaconBody, double rssiDbm, int64_t packetId)
+{
+    auto host = getContainingNode(this);
+    auto mobility = check_and_cast<IMobility*>(host->getSubmodule("mobility"));
+    auto rxPos = mobility->getCurrentPosition();
+
+    GcsReport *report = new GcsReport("GcsReport");
+    report->setReceiverHostId(host->getIndex());
+    report->setSenderSerialNumber(beaconBody->getSerialNumber());
+    report->setRidTimestamp(beaconBody->getTimestamp());
+
+    report->setRxPosX(rxPos.getX());
+    report->setRxPosY(rxPos.getY());
+    report->setRxPosZ(rxPos.getZ());
+
+    report->setClaimedPosX(beaconBody->getPosX());
+    report->setClaimedPosY(beaconBody->getPosY());
+    report->setClaimedPosZ(beaconBody->getPosZ());
+    report->setClaimedSpeedVertical(beaconBody->getSpeedVertical());
+    report->setClaimedSpeedHorizontal(beaconBody->getSpeedHorizontal());
+    report->setClaimedHeading(beaconBody->getHeading());
+
+    report->setRssiDbm(rssiDbm);
+    report->setKfNis(std::isnan(lastKfNis) ? -1.0 : lastKfNis);
+    report->setPacketId(packetId);
+    lastKfNis = NAN;  // Reset for next RX event
+
+    sendDirect(report, gcsModule, "directIn");
+}
+

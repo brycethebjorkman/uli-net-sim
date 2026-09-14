@@ -19,7 +19,7 @@ protected:
     double spoofPosZ;
 
     /** Utility function: fills in Remote ID message fields */
-    virtual void fillRidMsg(const inet::Ptr<RidBeaconFrame> & body) override;
+    virtual bool fillRidMsg(const inet::Ptr<RidBeaconFrame> & body) override;
 };
 
 #endif

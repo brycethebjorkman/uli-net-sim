@@ -1,0 +1,118 @@
+//
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+
+package uav_rid.mobility;
+
+import inet.mobility.base.MovingMobilityBase;
+
+//
+// 6-DoF multirotor dynamics model with optional Python-based control.
+//
+// Implements the lumped-mass dynamics from Eq 3.2 of the reference paper:
+//   state  x = [pos, vel, euler, omega]  (12 elements)
+//   control u = {T, tau_phi, tau_theta, tau_psi}
+//
+// Integrates with RK4 at dynamicsDt resolution.  A Python controller class
+// (if configured) is called every controlDt to produce new control inputs.
+// Between Python calls, the last control input is held constant.
+//
+// Without a Python controller, the module applies a default hover thrust
+// (T = mass * g, zero torques) so the aircraft stays at its initial position.
+//
+simple MultirotorMobility extends MovingMobilityBase
+{
+    parameters:
+        @class(MultirotorMobility);
+
+        // Signal declarations and vector recording
+        @signal[posX](type=double);
+        @signal[posY](type=double);
+        @signal[posZ](type=double);
+        @signal[velX](type=double);
+        @signal[velY](type=double);
+        @signal[velZ](type=double);
+        @signal[thrust](type=double);
+        @signal[tauPhi](type=double);
+        @signal[tauTheta](type=double);
+        @signal[tauPsi](type=double);
+        @signal[phi](type=double);
+        @signal[theta](type=double);
+        @signal[psi](type=double);
+        @signal[omegaP](type=double);
+        @signal[omegaQ](type=double);
+        @signal[omegaR](type=double);
+
+        @statistic[posX](title="Position X"; source=posX; record=vector);
+        @statistic[posY](title="Position Y"; source=posY; record=vector);
+        @statistic[posZ](title="Position Z"; source=posZ; record=vector);
+        @statistic[velX](title="Velocity X"; source=velX; record=vector);
+        @statistic[velY](title="Velocity Y"; source=velY; record=vector);
+        @statistic[velZ](title="Velocity Z"; source=velZ; record=vector);
+        @statistic[thrust](title="Thrust"; source=thrust; record=vector);
+        @statistic[tauPhi](title="Torque phi"; source=tauPhi; record=vector);
+        @statistic[tauTheta](title="Torque theta"; source=tauTheta; record=vector);
+        @statistic[tauPsi](title="Torque psi"; source=tauPsi; record=vector);
+        @statistic[phi](title="Roll angle"; source=phi; record=vector);
+        @statistic[theta](title="Pitch angle"; source=theta; record=vector);
+        @statistic[psi](title="Yaw angle"; source=psi; record=vector);
+        @statistic[omegaP](title="Roll rate"; source=omegaP; record=vector);
+        @statistic[omegaQ](title="Pitch rate"; source=omegaQ; record=vector);
+        @statistic[omegaR](title="Yaw rate"; source=omegaR; record=vector);
+
+        // Initial position (required when initFromDisplayString=false)
+        double initialX @unit(m) = default(0m);
+        double initialY @unit(m) = default(0m);
+        double initialZ @unit(m) = default(0m);
+
+        // Dynamics integration step (should be small for RK4 stability)
+        double dynamicsDt @unit(s) = default(0.001s);
+
+        // Python controller call interval
+        double controlDt @unit(s) = default(0.01s);
+
+        // Physical parameters
+        double mass @unit(kg) = default(5kg);
+        double armLength @unit(m) = default(0.5m);
+        double Ixx = default(0.5);  // kg*m^2 — moment of inertia about body x-axis
+        double Iyy = default(0.5);  // kg*m^2 — moment of inertia about body y-axis
+        double Izz = default(0.8);  // kg*m^2 — moment of inertia about body z-axis
+
+        // Initial Euler angles (rad) — phi (roll), theta (pitch), psi (yaw)
+        double initialPhi = default(0);
+        double initialTheta = default(0);
+        double initialPsi = default(0);
+
+        // Initial velocity (m/s)
+        double initialVx = default(0);
+        double initialVy = default(0);
+        double initialVz = default(0);
+
+        // Initial angular rates (rad/s)
+        double initialP = default(0);
+        double initialQ = default(0);
+        double initialR = default(0);
+
+        // Default thrust (N). Use -1 for hover (mass * g). Set to 0 for freefall.
+        double defaultThrust = default(-1);
+
+        // Aerodynamic drag parameters
+        double dragCd = default(1.0);        // Drag coefficient (dimensionless)
+        double dragArea = default(0.2);      // Reference frontal area (m^2)
+        double airDensity = default(1.225);  // Air density (kg/m^3)
+        double rotationalDrag = default(3.0); // Rotational damping coefficient (1/s)
+
+        // Python controller class (empty = hover, no Python)
+        string pyClass = default("");
+
+        // Waypoint script (TurtleMobility-compatible XML: <set x y z speed/> + <moveto x y z/>)
+        // Use xmldoc("file.xml", "movements/movement[@id='N']") to load from file.
+        xml waypointScript = default(xml("<movement/>"));
+
+        // Path to PyBridge module
+        string pyBridgePath = default("^.^.pyBridge");
+
+        // Accept external messages (GCS commands)
+        gates:
+            input commandIn @directIn;
+}

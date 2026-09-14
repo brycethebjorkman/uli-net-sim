@@ -17,12 +17,18 @@ simple RidBeaconMgmt like IIeee80211Mgmt
 
         // upper bound on random delay for first transmission
         double startupJitter @unit(s) = default(beaconInterval);
-        
+
+        // fixed offset added to first transmission time (after jitter)
+        double beaconOffset @unit(s) = default(0s);
+
         // if false this instance should not transmit at all
         bool transmitBeacon = default(true);
         
         // if true this instance terminates simulation after one transmission
         bool oneOff = default(false);
+
+        // Path to GCS module for RX report forwarding (empty = no forwarding)
+        string gcsModulePath = default("");
 
 		// like Ieee80211MgmtAp for Ieee80211Interface compatibility
         string mibModule;
